@@ -135,17 +135,18 @@ namespace Utility {
         return true;
     }
 
-    bool FileCreateManager::CreateCsvFile(FILE **filefp, std::string devId, std::string filePrefix, std::string taskDir,
+    bool FileCreateManager::CreateCsvFile(FILE **filefp, int32_t devId, std::string filePrefix, std::string taskDir,
         std::string headers)
     {
         std::lock_guard<std::mutex> lock(createCsvFileMutex_);
         if (*filefp == nullptr) {
             std::string fileName = filePrefix + GetDateStr() + ".csv";
             std::string dirPath;
-            if (devId.empty()) {
+            constexpr const int32_t GD_INVALID_NUM = 9999;
+            if (devId == GD_INVALID_NUM) {
                 dirPath = projectDir_ + "/" + taskDir;
             } else {
-                dirPath = projectDir_ + "/" + "device_" + devId + "/" + taskDir;
+                dirPath = projectDir_ + "/" + "device_" + std::to_string(devId) + "/" + taskDir;
             }
             std::string filePath = dirPath + "/" + fileName;
             FILE* fp = CreateFile(dirPath, fileName, DEFAULT_UMASK_FOR_CSV_FILE);
@@ -161,7 +162,7 @@ namespace Utility {
         return true;
     }
 
-    bool FileCreateManager::CreateDbFile(sqlite3 **filefp, std::string devId, std::string filePrefix,
+    bool FileCreateManager::CreateDbFile(sqlite3 **filefp, int32_t devId, std::string filePrefix,
         std::string taskDir, std::string tableName, std::string tableCreateSql)
     {
         std::lock_guard<std::mutex> lock(createDbFileMutex_);
@@ -171,10 +172,11 @@ namespace Utility {
             }
             std::string fileName = filePrefix + dbDateStr_ + ".db";
             std::string dirPath;
-            if (devId.empty()) {
+            constexpr const int32_t GD_INVALID_NUM = 9999;
+            if (devId == GD_INVALID_NUM) {
                 dirPath = projectDir_ + "/" + taskDir;
             } else {
-                dirPath = projectDir_ + "/" + "device_" + devId + "/" + taskDir;
+                dirPath = projectDir_ + "/" + "device_" + std::to_string(devId) + "/" + taskDir;
             }
             std::string filePath = dirPath + "/" + fileName;
             // 在sqlite3_open前先创建好db文件
@@ -208,20 +210,23 @@ namespace Utility {
         return true;
     }
 
-    bool FileCreateManager::CreateLogFile(FILE **filefp, std::string taskDir, std::string& logFilePath)
+    bool FileCreateManager::CreateLogFile(FILE **filefp, const char* taskDir, char* logFilePath, size_t size)
     {
         std::lock_guard<std::mutex> lock(createLogFileMutex_);
         if (*filefp == nullptr) {
             std::string fileName = "msmemscope_" + GetDateStr() + ".log";
             std::string dirPath = projectDir_ + "/" + taskDir;
-            logFilePath = dirPath + "/" + fileName;
+            std::string filePath = dirPath + "/" + fileName;
             FILE* fp = CreateFile(dirPath, fileName, DEFAULT_UMASK_FOR_LOG_FILE);
             if (fp == nullptr) {
-                std::cout << "[msmemscope] Error: Create log file failed: " << logFilePath << std::endl;
+                std::cout << "[msmemscope] Error: Create log file failed: " << filePath << std::endl;
                 return false;
             } else {
-                std::cout << "[msmemscope] Info: logging into file " << logFilePath << std::endl;
+                std::cout << "[msmemscope] Info: logging into file " << filePath << std::endl;
                 *filefp = fp;
+                if (strncpy_s(logFilePath, size, filePath.c_str(), filePath.length()) != EOK) {
+                    std::cout << "[msmemscope] Error: Save log file path failed: " << filePath << std::endl;
+                }
             }
         }
         return true;

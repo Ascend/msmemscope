@@ -72,12 +72,8 @@ static PyObject* PyMemScopeReportTensor(PyObject *self,  PyObject *arg)
             PyErr_SetString(PyExc_TypeError, "Tuple elements must be (int, str)");
             return nullptr;
         }
-        
-        RecordBuffer buffer = RecordBuffer::CreateRecordBuffer<AddrInfo>(TLVBlockType::ADDR_OWNER, owner);
-        AddrInfo* info = buffer.Cast<AddrInfo>();
-        info->subtype = RecordSubType::PTA_OPTIMIZER_STEP;
-        info->addr = addr;
-        if (!EventReport::Instance(MemScopeCommType::SHARED_MEMORY).ReportAddrInfo(buffer)) {
+
+        if (!EventReport::Instance(MemScopeCommType::SHARED_MEMORY).ReportAddrInfo(EventSubType::TORCH_OPTIMIZER_STEP_OWNER, addr, owner)) {
             LOG_ERROR("Report optimizer step hook info failed.\n");
         }
     }

@@ -105,8 +105,7 @@ void AtenManager::ReportAtenLaunch(const char* msg, int32_t streamId, bool isAte
         }
     }
 
-    if (!EventTraceManager::Instance().IsNeedTrace(RecordType::ATEN_OP_LAUNCH_RECORD)) {
-        LOG_WARN("no need aten op launch");
+    if (!EventTraceManager::Instance().IsNeedTrace(EventBaseType::OP_LAUNCH)) {
         return ;
     }
 
@@ -114,14 +113,8 @@ void AtenManager::ReportAtenLaunch(const char* msg, int32_t streamId, bool isAte
     if (GetConfig().enablePyStack) {
         Utility::GetPythonCallstack(GetConfig().pyStackDepth, pyStack);
     }
-    TLVBlockType pyStackType = pyStack.empty() ? TLVBlockType::SKIP : TLVBlockType::CALL_STACK_PYTHON;
-    RecordBuffer buffer = RecordBuffer::CreateRecordBuffer<AtenOpLaunchRecord>(
-        TLVBlockType::ATEN_NAME, name, pyStackType, pyStack);
 
-    AtenOpLaunchRecord* record = buffer.Cast<AtenOpLaunchRecord>();
-    record->subtype = isAtenBegin ? RecordSubType::ATEN_START : RecordSubType::ATEN_END;
-
-    if (!EventReport::Instance(MemScopeCommType::SHARED_MEMORY).ReportAtenLaunch(buffer)) {
+    if (!EventReport::Instance(MemScopeCommType::SHARED_MEMORY).ReportAtenLaunch(name, isAtenBegin, std::move(pyStack))) {
         LOG_ERROR("Report Aten Launch FAILED");
     }
     return;
@@ -165,40 +158,39 @@ void AtenManager::ReportAtenAccess(const char* msg, int32_t streamId)
     if (GetConfig().enablePyStack) {
         Utility::GetPythonCallstack(GetConfig().pyStackDepth, pyStack);
     }
-    TLVBlockType pyStackType = pyStack.empty() ? TLVBlockType::SKIP : TLVBlockType::CALL_STACK_PYTHON;
-    RecordBuffer buffer = RecordBuffer::CreateRecordBuffer<MemAccessRecord>(
-        TLVBlockType::OP_NAME, atenInfo.name.c_str(), TLVBlockType::MEM_ATTR, attr.c_str(), pyStackType, pyStack);
-    MemAccessRecord* record = buffer.Cast<MemAccessRecord>();
+    AccessType type;
+    uint64_t addr = 0;
+    uint64_t size = 0;
+
 
     if (atenInfo.isWrite == "False" && atenInfo.isRead == "False") {
-        record->eventType = AccessType::UNKNOWN;
+        type = AccessType::UNKNOWN;
     } else if (atenInfo.isWrite == "True") {
-        record->eventType = AccessType::WRITE;
+        type = AccessType::WRITE;
     } else {
-        record->eventType = AccessType::READ;
+        type = AccessType::READ;
     }
-    record->memType = AccessMemType::ATEN;
  
-    if (!Utility::StrToUint64(record->addr, atenInfo.addr)) {
+    if (!Utility::StrToUint64(addr, atenInfo.addr)) {
         LOG_ERROR("Aten Tensor's addr StrToUint64 failed");
     }
-    if (!Utility::StrToUint64(record->memSize, atenInfo.size)) {
+    if (!Utility::StrToUint64(size, atenInfo.size)) {
         LOG_ERROR("Aten Tensor's memSize StrToUint64 failed");
     }
 
     if (atenInfo.isOutput == "True" && isWatchEnable_ && IsFirstWatchedOp(atenInfo.name.c_str())
         && !isfirstWatchOpSet_) {
         MonitoredTensor tensorInfo{};
-        tensorInfo.data =  reinterpret_cast<void*>(reinterpret_cast<std::uintptr_t>(record->addr));
-        tensorInfo.dataSize = record->memSize;
+        tensorInfo.data =  reinterpret_cast<void*>(reinterpret_cast<std::uintptr_t>(addr));
+        tensorInfo.dataSize = size;
         outputTensors_.push_back(tensorInfo);
     }
 
-    if (!EventTraceManager::Instance().IsNeedTrace(RecordType::MEM_ACCESS_RECORD)) {
+    if (!EventTraceManager::Instance().IsNeedTrace(EventBaseType::ACCESS)) {
         return ;
     }
     
-    if (!EventReport::Instance(MemScopeCommType::SHARED_MEMORY).ReportAtenAccess(buffer)) {
+    if (!EventReport::Instance(MemScopeCommType::SHARED_MEMORY).ReportAtenAccess(atenInfo.name, attr, type, addr, size, std::move(pyStack))) {
         LOG_ERROR("Report Aten Access FAILED");
     }
     return;

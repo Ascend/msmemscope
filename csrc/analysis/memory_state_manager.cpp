@@ -47,7 +47,7 @@ bool MemoryStateManager::AddEvent(std::shared_ptr<MemoryEvent>& event)
     auto& statesMap = statesPool.statesMap;
 
     // 如果device信息是缺失的，尝试补全
-    if (IsInvalidDevice(event->device)
+    if (event->device == GD_INVALID_NUM
         && statesMap.find(key) != statesMap.end()
         && !statesMap[key].events.empty()) {
         event->device = statesMap[key].events[0]->device;

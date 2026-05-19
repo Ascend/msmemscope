@@ -202,21 +202,17 @@ bool IsNeedTraceMemory()
 void EventTraceManager::InitJudgeFuncTable()
 {
     judgeFuncTable_ = {
-        {RecordType::KERNEL_LAUNCH_RECORD, []() { return IsNeedTraceKernelLaunch(); }},
-        {RecordType::KERNEL_EXCUTE_RECORD, []() { return IsNeedTraceKernelLaunch(); }},
-        {RecordType::MEMORY_POOL_RECORD, []() { return IsNeedTraceMemory(); }},
-        {RecordType::MEMORY_RECORD, []() { return IsNeedTraceMemory(); }},
-        {RecordType::ATB_OP_EXECUTE_RECORD, []() { return IsNeedTraceOp(); }},
-        {RecordType::ATEN_OP_LAUNCH_RECORD, []() { return IsNeedTraceOpLaunch(); }},
-        {RecordType::ATB_KERNEL_RECORD, []() { return IsNeedTraceKernel(); }},
-        {RecordType::MEM_ACCESS_RECORD, []() { return IsNeedTraceAccess(); }},
-        {RecordType::OP_LAUNCH_RECORD, []() { return IsNeedTraceOpLaunch(); }},
+        {EventBaseType::KERNEL_LAUNCH, []() { return IsNeedTraceKernelLaunch(); }},
+        {EventBaseType::MALLOC, []() { return IsNeedTraceMemory(); }},
+        {EventBaseType::FREE, []() { return IsNeedTraceMemory(); }},
+        {EventBaseType::OP_LAUNCH, []() { return IsNeedTraceOpLaunch(); }},
+        {EventBaseType::ACCESS, []() { return IsNeedTraceAccess(); }},
     };
 };
 
 // 1、判断是否处在采集范围
 // 2、判断当前的采集项是否需要采集
-bool EventTraceManager::IsNeedTrace(const RecordType type)
+bool EventTraceManager::IsNeedTrace(EventBaseType type)
 {
     if (status_ != EventTraceStatus::IN_TRACING) {
         return false;
@@ -235,7 +231,6 @@ bool EventTraceManager::IsNeedTrace(const RecordType type)
     return itr->second();
 }
 
-// 1. 判断当前是否处于可采集状态（全局开关）
 bool EventTraceManager::IsTracingEnabled()
 {
     if (status_ != EventTraceStatus::IN_TRACING) {
@@ -243,22 +238,6 @@ bool EventTraceManager::IsTracingEnabled()
     }
 
     return true;
-}
-
-// 2. 判断指定采集项是否需要采集（按类型判断）
-bool EventTraceManager::ShouldTraceType(const RecordType type)
-{
-    // 单例类析构之后不再访问其成员变量
-    if (destroyed_.load()) {
-        return false;
-    }
-
-    auto itr = judgeFuncTable_.find(type);
-    if (itr == judgeFuncTable_.end()) {
-        return true; // 默认需要采集
-    }
-
-    return itr->second();
 }
 
 

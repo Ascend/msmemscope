@@ -31,7 +31,7 @@ aclError GetStreamID(aclrtStream stream, int32_t *streamId)
         vallina = VallinaSymbol<ACLImplLibLoader>::Instance().Get<AclrtGetStreamID>(sym);
     }
     if (vallina == nullptr) {
-        LOG_ERROR("vallina func get FAILED: " + std::string(__func__));
+        LOG_ERROR("vallina func get FAILED: %s", __func__);
         return ACL_ERROR_RT_FAILURE;
     }
     aclError ret = vallina(stream, streamId);

@@ -30,8 +30,8 @@ using namespace MemScope;
 // 通用OOM错误处理函数
 void HandleOOM(size_t size, uint64_t flag, int ret) {
 
-    if (!EventTraceManager::Instance().IsTracingEnabled() ||
-        !EventTraceManager::Instance().ShouldTraceType(RecordType::MEMORY_RECORD)) {
+    if (!EventTraceManager::Instance().IsNeedTrace(EventBaseType::MALLOC) &&
+        !EventTraceManager::Instance().IsNeedTrace(EventBaseType::FREE)) {
         return;
     }
     // 在OOM时直接获取C和Python调用栈，不依赖配置
@@ -46,7 +46,13 @@ void HandleOOM(size_t size, uint64_t flag, int ret) {
 
 drvError_t halMemAlloc(void **pp, unsigned long long size, unsigned long long flag)
 {
-    drvError_t ret = halMemAllocInner(pp, size, flag);
+    static auto inner_func = reinterpret_cast<drvError_t (*)(void **pp, unsigned long long size,
+        unsigned long long flag)>(dlsym(RTLD_DEFAULT, "halMemAllocInner"));
+    if (inner_func == nullptr) {
+        LOG_ERROR("HAL memory alloc func not found");
+        return DRV_ERROR_NOT_SUPPORT;
+    }
+    drvError_t ret = inner_func(pp, size, flag);
     if (ret != DRV_ERROR_NONE) {
         // Check for OOM errors
         if (ret == DRV_ERROR_OUT_OF_MEMORY) {
@@ -54,8 +60,8 @@ drvError_t halMemAlloc(void **pp, unsigned long long size, unsigned long long fl
         }
         return ret;
     }
-    if (!EventTraceManager::Instance().IsTracingEnabled() ||
-        !EventTraceManager::Instance().ShouldTraceType(RecordType::MEMORY_RECORD)) {
+    if (!EventTraceManager::Instance().IsNeedTrace(EventBaseType::MALLOC) &&
+        !EventTraceManager::Instance().IsNeedTrace(EventBaseType::FREE)) {
         return ret;
     }
 
@@ -65,7 +71,7 @@ drvError_t halMemAlloc(void **pp, unsigned long long size, unsigned long long fl
     // report to memscope here
     uintptr_t addr = reinterpret_cast<uintptr_t>(*pp);
     if (!EventReport::Instance(MemScopeCommType::SHARED_MEMORY)
-             .ReportHalMalloc(reinterpret_cast<uint64_t>(addr), size, flag, stack)) {
+             .ReportHalMalloc(reinterpret_cast<uint64_t>(addr), size, flag, std::move(stack))) {
         LOG_ERROR("halMemAlloc report failed");
     }
 
@@ -74,13 +80,18 @@ drvError_t halMemAlloc(void **pp, unsigned long long size, unsigned long long fl
 
 drvError_t halMemFree(void *pp)
 {
-    drvError_t ret = halMemFreeInner(pp);
+    static auto inner_func = reinterpret_cast<drvError_t (*)(void *pp)>(dlsym(RTLD_DEFAULT, "halMemFreeInner"));
+    if (inner_func == nullptr) {
+        LOG_ERROR("HAL memory free func not found");
+        return DRV_ERROR_NOT_SUPPORT;
+    }
+    drvError_t ret = inner_func(pp);
     if (ret != DRV_ERROR_NONE) {
         return ret;
     }
 
-    if (!EventTraceManager::Instance().IsTracingEnabled() ||
-        !EventTraceManager::Instance().ShouldTraceType(RecordType::MEMORY_RECORD)) {
+    if (!EventTraceManager::Instance().IsNeedTrace(EventBaseType::MALLOC) &&
+        !EventTraceManager::Instance().IsNeedTrace(EventBaseType::FREE)) {
         return ret;
     }
 
@@ -88,7 +99,8 @@ drvError_t halMemFree(void *pp)
     Utility::GetCallstack(stack);
     
     uintptr_t addr = reinterpret_cast<uintptr_t>(pp);
-    if (!EventReport::Instance(MemScopeCommType::SHARED_MEMORY).ReportHalFree(reinterpret_cast<uint64_t>(addr), stack)) {
+    if (!EventReport::Instance(MemScopeCommType::SHARED_MEMORY).ReportHalFree(reinterpret_cast<uint64_t>(addr),
+        std::move(stack))) {
         LOG_ERROR("halMemFree report failed");
     }
 
@@ -126,8 +138,8 @@ drvError_t halMemCreate(drv_mem_handle_t **handle, size_t size, const struct drv
         return ret;
     }
  
-    if (!EventTraceManager::Instance().IsTracingEnabled() ||
-        !EventTraceManager::Instance().ShouldTraceType(RecordType::MEMORY_RECORD)) {
+    if (!EventTraceManager::Instance().IsNeedTrace(EventBaseType::MALLOC) &&
+        !EventTraceManager::Instance().IsNeedTrace(EventBaseType::FREE)) {
         return ret;
     }
  
@@ -141,7 +153,7 @@ drvError_t halMemCreate(drv_mem_handle_t **handle, size_t size, const struct drv
  
     uintptr_t addr = reinterpret_cast<uintptr_t>(*handle);
     if (!EventReport::Instance(MemScopeCommType::SHARED_MEMORY)
-             .ReportHalCreate(reinterpret_cast<uint64_t>(addr), size, *prop, stack)) {
+             .ReportHalCreate(reinterpret_cast<uint64_t>(addr), size, *prop, std::move(stack))) {
         LOG_ERROR("halMemCreate report failed");
     }
  
@@ -174,8 +186,8 @@ drvError_t halMemRelease(drv_mem_handle_t *handle)
         return ret;
     }
  
-    if (!EventTraceManager::Instance().IsTracingEnabled() ||
-        !EventTraceManager::Instance().ShouldTraceType(RecordType::MEMORY_RECORD)) {
+    if (!EventTraceManager::Instance().IsNeedTrace(EventBaseType::MALLOC) &&
+        !EventTraceManager::Instance().IsNeedTrace(EventBaseType::FREE)) {
         return ret;
     }
  
@@ -183,7 +195,8 @@ drvError_t halMemRelease(drv_mem_handle_t *handle)
     Utility::GetCallstack(stack);
     
     uintptr_t addr = reinterpret_cast<uintptr_t>(handle);
-    if (!EventReport::Instance(MemScopeCommType::SHARED_MEMORY).ReportHalRelease(reinterpret_cast<uint64_t>(addr), stack)) {
+    if (!EventReport::Instance(MemScopeCommType::SHARED_MEMORY).ReportHalRelease(reinterpret_cast<uint64_t>(addr),
+        std::move(stack))) {
         LOG_ERROR("halMemRelease report failed");
     }
 

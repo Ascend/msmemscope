@@ -40,18 +40,9 @@ void MstxManager::ReportMarkA(const char* msg, int32_t streamId, MemScopeCommTyp
         AtenManager::GetInstance().ProcessMsg(atenMsg, streamId);
         return ;
     }
-    std::string pyStack;
 
-    TLVBlockType pyStackType = pyStack.empty() ? TLVBlockType::SKIP : TLVBlockType::CALL_STACK_PYTHON;
-    RecordBuffer buffer = RecordBuffer::CreateRecordBuffer<MstxRecord>(
-        TLVBlockType::MARK_MESSAGE, msg, pyStackType, pyStack);
- 
-    MstxRecord* record = buffer.Cast<MstxRecord>();
-    record->markType = MarkType::MARK_A;
-    record->rangeId = onlyMarkId_;
-    record->streamId = streamId;
-
-    if (!EventReport::Instance(type).ReportMark(buffer)) {
+    std::string markMsg = std::string(msg);
+    if (!EventReport::Instance(type).ReportMark(MarkType::MARK_A, markMsg, streamId, onlyMarkId_)) {
         LOG_ERROR("Report Mark FAILED");
     }
 }
@@ -59,31 +50,19 @@ void MstxManager::ReportMarkA(const char* msg, int32_t streamId, MemScopeCommTyp
 // 组装Range开始打点信息
 uint64_t MstxManager::ReportRangeStart(const char* msg, int32_t streamId)
 {
-    RecordBuffer buffer = RecordBuffer::CreateRecordBuffer<MstxRecord>(TLVBlockType::MARK_MESSAGE, msg);
- 
-    MstxRecord* record = buffer.Cast<MstxRecord>();
-    record->markType = MarkType::RANGE_START_A;
-    record->streamId = streamId;
-    record->rangeId = GetRangeId();
-    const TLVBlock* msgTlv = GetTlvBlock(*record, TLVBlockType::MARK_MESSAGE);
-    std::string mstxMsgString = msgTlv == nullptr ? "N/A" : msgTlv->data;
-    if (!EventReport::Instance(MemScopeCommType::SHARED_MEMORY).ReportMark(buffer)) {
+    uint64_t rangeId = GetRangeId();
+    std::string markMsg = std::string(msg);
+    if (!EventReport::Instance(MemScopeCommType::SHARED_MEMORY).ReportMark(MarkType::RANGE_START_A, markMsg, streamId, rangeId)) {
         LOG_ERROR("Report Mark FAILED");
     }
-    return record->rangeId;
+    return rangeId;
 }
 
 // 组装Range结束打点信息
 void MstxManager::ReportRangeEnd(uint64_t id)
 {
     std::string msg = "Range end from id " + std::to_string(id);
-    RecordBuffer buffer = RecordBuffer::CreateRecordBuffer<MstxRecord>(TLVBlockType::MARK_MESSAGE, msg);
-    MstxRecord* record = buffer.Cast<MstxRecord>();
-    record->markType = MarkType::RANGE_END;
-    record->streamId = -1;
-    record->rangeId = id;
-
-    if (!EventReport::Instance(MemScopeCommType::SHARED_MEMORY).ReportMark(buffer)) {
+    if (!EventReport::Instance(MemScopeCommType::SHARED_MEMORY).ReportMark(MarkType::RANGE_END, msg, -1, id)) {
         LOG_ERROR("Report Mark FAILED");
     }
 }

@@ -15,7 +15,7 @@ class FileWriteManager {
         return instance;
      }
 
-     std::mutex& GetLock(const std::string& device_id) {
+     std::mutex& GetLock(const int32_t& device_id) {
          std::lock_guard<std::mutex> lock(map_mutex_);
          auto it = device_locks_.find(device_id);
          if (it == device_locks_.end()) {
@@ -35,7 +35,7 @@ class FileWriteManager {
      FileWriteManager& operator=(const FileWriteManager&) = delete;
 
      std::mutex map_mutex_;
-     std::unordered_map<std::string, std::shared_ptr<std::mutex>> device_locks_;
+     std::unordered_map<int32_t, std::shared_ptr<std::mutex>> device_locks_;
  };
 
 }

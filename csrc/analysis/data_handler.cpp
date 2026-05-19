@@ -28,7 +28,7 @@ DataHandler::DataHandler(const Config config)
 }
 
 // csv handler
-CsvHandler::CsvHandler(const Config config, DataType dataType, std::string devId) : DataHandler(config),
+CsvHandler::CsvHandler(const Config config, DataType dataType, int32_t devId) : DataHandler(config),
     dataType_(dataType), devId_(devId)
 {
     InitSetParm();
@@ -107,9 +107,13 @@ bool CsvHandler::WriteDumpRecord(std::shared_ptr<EventBase>& event)
     std::string addr = (event->eventType == EventBaseType::MALLOC
         || event->eventType == EventBaseType::FREE
         || event->eventType == EventBaseType::ACCESS) ? Uint64ToHexString(event->addr) : "N/A";
+    std::string devId = event->device == GD_INVALID_NUM ? "N/A" : std::to_string(event->device);
+    if (event->eventType == EventBaseType::MSTX) {
+        event->name = "\"" + event->name + "\"";
+    }
     if (!Utility::Fprintf(file_, "%lu,%s,%s,%s,%lu,%s,%s,%s,%s,%s,%s,%s",
         event->id, eventType.c_str(), eventSubType.c_str(), event->name.c_str(), event->timestamp,
-        pid.c_str(), tid.c_str(), event->device.c_str(), addr.c_str(), event->attr.c_str(),
+        pid.c_str(), tid.c_str(), devId.c_str(), addr.c_str(), event->attr.c_str(),
         event->pyCallStack.c_str(), event->cCallStack.c_str())) {
         return false;
     }
@@ -148,7 +152,7 @@ CsvHandler::~CsvHandler()
     }
 }
 
-DbHandler::DbHandler(const Config config, DataType dataType, std::string devId) : DataHandler(config),
+DbHandler::DbHandler(const Config config, DataType dataType, int32_t devId) : DataHandler(config),
     dataType_(dataType), devId_(devId)
 {
     InitSetParm();
@@ -253,10 +257,14 @@ bool DbHandler::WriteDumpRecord(std::shared_ptr<EventBase>& event)
         || event->eventType == EventBaseType::FREE
         || event->eventType == EventBaseType::ACCESS) ? Uint64ToHexString(event->addr) : "N/A";
     std::string attrJson = FixJson(event->attr);
+    std::string devId = event->device == GD_INVALID_NUM ? "N/A" : std::to_string(event->device);
     int paramIndex = 1;
     if (!insertEventStmt_) {
         LOG_ERROR("Sqlite prepare failed.");
         return false;
+    }
+    if (event->eventType == EventBaseType::MSTX) {
+        event->name = "\"" + event->name + "\"";
     }
     sqlite3_bind_int64(insertEventStmt_, paramIndex++, event->id);
     sqlite3_bind_text(insertEventStmt_, paramIndex++, eventType.c_str(), -1, SQLITE_STATIC);
@@ -265,7 +273,7 @@ bool DbHandler::WriteDumpRecord(std::shared_ptr<EventBase>& event)
     sqlite3_bind_int64(insertEventStmt_, paramIndex++, event->timestamp);
     sqlite3_bind_int(insertEventStmt_, paramIndex++, event->pid);
     sqlite3_bind_int(insertEventStmt_, paramIndex++, event->tid);
-    sqlite3_bind_text(insertEventStmt_, paramIndex++, event->device.c_str(), -1, SQLITE_STATIC);
+    sqlite3_bind_text(insertEventStmt_, paramIndex++, devId.c_str(), -1, SQLITE_STATIC);
     sqlite3_bind_text(insertEventStmt_, paramIndex++, addr.c_str(), -1, SQLITE_STATIC);
     sqlite3_bind_text(insertEventStmt_, paramIndex++, attrJson.c_str(), -1, SQLITE_STATIC);
     sqlite3_bind_text(insertEventStmt_, paramIndex++, event->pyCallStack.c_str(), -1, SQLITE_STATIC);
@@ -369,7 +377,7 @@ std::string BuildCreateStatement(const std::string& table,
     return oss.str();
 }
 
-std::unique_ptr<DataHandler> MakeDataHandler(Config config, DataType data, std::string devId)
+std::unique_ptr<DataHandler> MakeDataHandler(Config config, DataType data, int32_t devId)
 {
     switch (config.dataFormat) {
         case static_cast<uint8_t>(DataFormat::CSV):

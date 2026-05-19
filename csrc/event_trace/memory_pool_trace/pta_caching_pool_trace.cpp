@@ -79,24 +79,17 @@ void PTACachingPoolTrace::Reallocate(mstxDomainHandle_t domain, mstxMemRegionsRe
 
     for (size_t i = 0; i < desc->regionCount; i++) {
         uint32_t devId = rangeDescArray[i].deviceId;
-        memUsageMp_[devId].dataType = 0;
-        memUsageMp_[devId].deviceIndex = devId;
-        memUsageMp_[devId].ptr = reinterpret_cast<int64_t>(rangeDescArray[i].ptr);
-        memUsageMp_[devId].allocSize = rangeDescArray[i].size;
-        memUsageMp_[devId].totalAllocated =
-            Utility::GetAddResult(memUsageMp_[devId].totalAllocated, memUsageMp_[devId].allocSize);
+        MemoryUsage& usage = memUsageMp_[devId];
+        usage.dataType = 0;
+        usage.deviceIndex = devId;
+        usage.ptr = reinterpret_cast<int64_t>(rangeDescArray[i].ptr);
+        usage.allocSize = rangeDescArray[i].size;
+        usage.totalAllocated = Utility::GetAddResult(usage.totalAllocated, usage.allocSize);
         regionHandleMp_[rangeDescArray[i].ptr] = rangeDescArray[i];
-
         std::string owner = DescribeTrace::GetInstance().GetDescribe();
-        TLVBlockType cStackType = stack.cStack.empty() ? TLVBlockType::SKIP : TLVBlockType::CALL_STACK_C;
-        TLVBlockType pyStackType = stack.pyStack.empty() ? TLVBlockType::SKIP : TLVBlockType::CALL_STACK_PYTHON;
-        RecordBuffer buffer = RecordBuffer::CreateRecordBuffer<MemPoolRecord>(
-            TLVBlockType::ADDR_OWNER, owner, cStackType, stack.cStack, pyStackType, stack.pyStack);
-        MemPoolRecord* record = buffer.Cast<MemPoolRecord>();
-        record->type = RecordType::PTA_CACHING_POOL_RECORD;
-        record->memoryUsage = memUsageMp_[devId];
 
-        if (!EventReport::Instance(MemScopeCommType::SHARED_MEMORY).ReportMemPoolRecord(buffer)) {
+        if (!EventReport::Instance(MemScopeCommType::SHARED_MEMORY).ReportMemPoolRecord(
+                EventSubType::PTA_CACHING, usage, owner, std::move(stack))) {
             LOG_ERROR("Report PTA Caching Data Failed");
         }
     }
@@ -117,22 +110,15 @@ void PTACachingPoolTrace::Release(mstxDomainHandle_t domain, mstxMemRegionsUnreg
             continue;
         }
         mstxMemVirtualRangeDesc_t rangeDesc = regionHandleMp_[desc->refArray[i].pointer];
-        memUsageMp_[rangeDesc.deviceId].dataType = 1;
-        memUsageMp_[rangeDesc.deviceId].deviceIndex = rangeDesc.deviceId;
-        memUsageMp_[rangeDesc.deviceId].ptr = reinterpret_cast<int64_t>(rangeDesc.ptr);
-        memUsageMp_[rangeDesc.deviceId].totalAllocated =
-            Utility::GetSubResult(memUsageMp_[rangeDesc.deviceId].totalAllocated, rangeDesc.size);
-        memUsageMp_[rangeDesc.deviceId].allocSize = rangeDesc.size;
-        std::string owner = "";
-        TLVBlockType cStackType = stack.cStack.empty() ? TLVBlockType::SKIP : TLVBlockType::CALL_STACK_C;
-        TLVBlockType pyStackType = stack.pyStack.empty() ? TLVBlockType::SKIP : TLVBlockType::CALL_STACK_PYTHON;
-        RecordBuffer buffer = RecordBuffer::CreateRecordBuffer<MemPoolRecord>(
-            TLVBlockType::ADDR_OWNER, owner, cStackType, stack.cStack, pyStackType, stack.pyStack);
-        MemPoolRecord* record = buffer.Cast<MemPoolRecord>();
-        record->type = RecordType::PTA_CACHING_POOL_RECORD;
-        record->memoryUsage = memUsageMp_[rangeDesc.deviceId];
+        MemoryUsage& usage = memUsageMp_[rangeDesc.deviceId];
+        usage.dataType = 1;
+        usage.deviceIndex = rangeDesc.deviceId;
+        usage.ptr = reinterpret_cast<int64_t>(rangeDesc.ptr);
+        usage.totalAllocated = Utility::GetSubResult(usage.totalAllocated, rangeDesc.size);
+        usage.allocSize = rangeDesc.size;
 
-        if (!EventReport::Instance(MemScopeCommType::SHARED_MEMORY).ReportMemPoolRecord(buffer)) {
+        if (!EventReport::Instance(MemScopeCommType::SHARED_MEMORY).ReportMemPoolRecord(
+                EventSubType::PTA_CACHING, usage, "", std::move(stack))) {
             LOG_ERROR("Report PTA Caching Data Failed");
         }
     }

@@ -71,7 +71,7 @@ void TensorMonitor::DeleteWatchTensor(MonitoredTensor& tensorInfo)
     if (it != pythonWatchedTensorsMap_.end()) {
         pythonWatchedTensorsMap_.erase(ptr);
     } else {
-        LOG_WARN("Failed to delete the tensor. The tensor ptr of " + std::to_string(ptr) + " is not watched.");
+        LOG_WARN("Failed to delete the tensor. The tensor ptr of %llu is not watched.", ptr);
     }
 }
 

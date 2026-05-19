@@ -10,9 +10,4 @@ target_include_directories(_msmemscope PUBLIC
 
 file(GLOB_RECURSE SOURCES "${CMAKE_CURRENT_LIST_DIR}/*.cpp")
 target_sources(_msmemscope PRIVATE ${SOURCES})
-target_sources(_msmemscope PRIVATE
-  ${EVENT_TRACE_INC_DIR}/python_trace.cpp
-  ${EVENT_TRACE_INC_DIR}/describe_trace.cpp
-  ${UTILITY_INC_DIR}/ustring.cpp
-)
 target_link_libraries(_msmemscope PUBLIC ascend_leaks)

@@ -64,7 +64,7 @@ MemOpSpace GetMemOpSpace(unsigned long long flag)
             space = MemOpSpace::DVPP;
             break;
         default:
-            LOG_ERROR("No matching memType for " + std::to_string(memType));
+            LOG_ERROR("No matching memType for %d", memType);
     }
     return space;
 }
@@ -114,7 +114,7 @@ bool GetDeviceInfo::GetDeviceId(int32_t &devId)
         vallina = VallinaSymbol<ACLImplLibLoader>::Instance().Get<AclrtGetDevice>(sym);
     }
     if (vallina == nullptr) {
-        LOG_ERROR("vallina func get FAILED: " + std::string(__func__) + ", try to get it in legacy way.");
+        LOG_ERROR("vallina func get FAILED: %s, try to get it in legacy way.", __func__);
         
         // 添加老版本的GetDevice逻辑，用于兼容情况如开放态场景
         char const *l_sym = "rtGetDevice";
@@ -124,7 +124,7 @@ bool GetDeviceInfo::GetDeviceId(int32_t &devId)
             l_vallina = VallinaSymbol<RuntimeLibLoader>::Instance().Get<RtGetDevice>(l_sym);
         }
         if (l_vallina == nullptr) {
-            LOG_ERROR("vallina func get FAILED in legacy way: " + std::string(__func__));
+            LOG_ERROR("vallina func get FAILED in legacy way: %s", __func__);
             return false;
         }
 
@@ -140,15 +140,21 @@ bool GetDeviceInfo::GetDeviceId(int32_t &devId)
         return false;
     }
 
+    return TransDeviceId(devId);
+}
+
+bool GetDeviceInfo::TransDeviceId(int32_t &devId)
+{
     // 新增可见卡选项
-    if(GetDeviceInfo::Instance().setVisibleDevice) {
-        auto it = GetDeviceInfo::Instance().visibleDeviceMap.find(devId);
-        if (it == GetDeviceInfo::Instance().visibleDeviceMap.end()) {
-            LOG_ERROR("Key {} not found in visibleDeviceMap!", devId);
-            return false;
-        }
-        devId = it->second;
+    if(!setVisibleDevice) {
+        return true;
     }
+    auto it = visibleDeviceMap.find(devId);
+    if (it == visibleDeviceMap.end()) {
+        LOG_ERROR("Key %d not found in visibleDeviceMap!", devId);
+        return false;
+    }
+    devId = it->second;
     return true;
 }
 
@@ -163,16 +169,12 @@ bool GetDeviceInfo::GetDeviceMemInfo(size_t &freeMem, size_t &totalMem)
 
     int ret = vallina(ACL_HBM_MEM, &freeMem, &totalMem);
     if (ret != ACL_SUCCESS) {
-        LOG_ERROR("Get device mem info failed, ret is " + std::to_string(ret));
+        LOG_ERROR("Get device mem info failed, ret is %d", ret);
         return false;
     }
     return true;
 }
 
-void EventReport::ReportRecordEvent(const RecordBuffer& record)
-{
-    Process::GetInstance(initConfig_).RecordHandler(record);
-}
 
 EventReport& EventReport::Instance(MemScopeCommType type)
 {
@@ -184,7 +186,6 @@ void EventReport::Init()
 {
     recordIndex_.store(0);
     kernelLaunchRecordIndex_.store(0);
-    aclItfRecordIndex_.store(0);
     pyStepId_.store(0);
 }
 
@@ -258,17 +259,22 @@ bool EventReport::IsNeedSkip(int32_t devid)
     return true;
 }
 
-bool EventReport::ReportAddrInfo(RecordBuffer &infoBuffer)
+bool EventReport::ReportAddrInfo(EventSubType type, uint64_t addr, std::string owner)
 {
     int32_t devId = GD_INVALID_NUM;
     GetDeviceInfo::Instance().GetDeviceId(devId);
     if (IsNeedSkip(devId)) {
         return true;
     }
+    Utility::ToSafeString(owner);
+    std::shared_ptr<MemoryOwnerEvent> event = std::make_shared<MemoryOwnerEvent>();
+    event->eventType = EventBaseType::MEMORY_OWNER;
+    event->eventSubType = type;
+    event->owner = owner;
+    event->addr = addr;
+    event->device = devId;
 
-    AddrInfo* info = infoBuffer.Cast<AddrInfo>();
-    info->type = RecordType::ADDR_INFO_RECORD;
-    ReportRecordEvent(infoBuffer);
+    Process::GetInstance(initConfig_).SendEvent(event);
     return true;
 }
 
@@ -279,62 +285,83 @@ bool EventReport::ReportPyStepRecord()
     if (IsNeedSkip(devId)) {
         return true;
     }
- 
-    RecordBuffer buffer = RecordBuffer::CreateRecordBuffer<PyStepRecord>();
-    PyStepRecord* info = buffer.Cast<PyStepRecord>();
-    info->type = RecordType::PY_STEP_RECORD;
-    info->recordIndex = ++recordIndex_;
-    info->stepId = ++pyStepId_;
-    info->devId = devId;
-    ReportRecordEvent(buffer);
+
+    std::shared_ptr<SystemEvent> event = std::make_shared<SystemEvent>();
+    event->eventType = EventBaseType::SYSTEM;
+    event->eventSubType = EventSubType::STEP;
+    event->device = devId;
+    event->name = std::to_string(++pyStepId_);
+
+    Process::GetInstance(initConfig_).SendEvent(event);
+
     return true;
 }
  
-bool EventReport::ReportMemPoolRecord(RecordBuffer &memPoolRecordBuffer)
+bool EventReport::ReportMemPoolRecord(EventSubType type, const MemoryUsage& info, const std::string& owner,
+                                      CallStackString&& stack)
 {
-    if (!EventTraceManager::Instance().IsTracingEnabled() ||
-        !EventTraceManager::Instance().ShouldTraceType(RecordType::MEMORY_POOL_RECORD)) {
+    if (!EventTraceManager::Instance().IsNeedTrace(EventBaseType::MALLOC) &&
+        !EventTraceManager::Instance().IsNeedTrace(EventBaseType::FREE)) {
         return true;
     }
 
-    MemPoolRecord* record = memPoolRecordBuffer.Cast<MemPoolRecord>();
-    int32_t devId = static_cast<int32_t>(record->memoryUsage.deviceIndex);
-    GetDeviceInfo::Instance().GetDeviceId(devId);
-    if (IsNeedSkip(devId)) {
-        return true;
+    std::shared_ptr<MemoryEvent> event = std::make_shared<MemoryEvent>();
+    event->eventType = info.dataType == 0 ? EventBaseType::MALLOC : EventBaseType::FREE;
+    if (type == EventSubType::PTA_CACHING) {
+        event->poolType = PoolType::PTA_CACHING;
+        event->eventSubType = EventSubType::PTA_CACHING;
+    } else if (type == EventSubType::PTA_WORKSPACE) {
+        event->poolType = PoolType::PTA_WORKSPACE;
+        event->eventSubType = EventSubType::PTA_WORKSPACE;
+    } else if (type == EventSubType::ATB) {
+        event->poolType = PoolType::ATB;
+        event->eventSubType = EventSubType::ATB;
+    } else {
+        event->poolType = PoolType::MINDSPORE;
+        event->eventSubType = EventSubType::MINDSPORE;
     }
-    record->kernelIndex = kernelLaunchRecordIndex_;
-    record->devId = devId;
-    record->recordIndex = ++recordIndex_;
-    ReportRecordEvent(memPoolRecordBuffer);
+
+    int32_t realDevice = static_cast<int32_t>(info.deviceIndex);
+    GetDeviceInfo::Instance().TransDeviceId(realDevice);
+    event->addr = info.ptr;
+    event->name = "N/A";
+    event->device = realDevice;
+    event->size = info.allocSize;
+    event->total = info.totalReserved;
+    event->used = info.totalAllocated;
+    event->describeOwner = owner;
+    event->kernelIndex = kernelLaunchRecordIndex_;
+    event->cCallStack = std::move(stack.cStack);
+    event->pyCallStack = std::move(stack.pyStack);
+
+    Process::GetInstance(initConfig_).SendEvent(event);
 
     return true;
 }
 
-bool EventReport::ReportHalCreate(uint64_t addr, uint64_t size, const drv_mem_prop& prop, CallStackString& stack)
+bool EventReport::ReportHalCreate(uint64_t addr, uint64_t size, const drv_mem_prop& prop, CallStackString&& stack)
 {
     if (IsNeedSkip(prop.devid)) {
         return true;
     }
- 
-    std::string owner = DescribeTrace::GetInstance().GetDescribe();
-    TLVBlockType cStack = stack.cStack.empty() ? TLVBlockType::SKIP : TLVBlockType::CALL_STACK_C;
-    TLVBlockType pyStack = stack.pyStack.empty() ? TLVBlockType::SKIP : TLVBlockType::CALL_STACK_PYTHON;
-    RecordBuffer buffer = RecordBuffer::CreateRecordBuffer<MemOpRecord>(
-        TLVBlockType::MEM_OWNER, owner, cStack, stack.cStack, pyStack, stack.pyStack);
-    MemOpRecord* record = buffer.Cast<MemOpRecord>();
-    record->type = RecordType::MEMORY_RECORD;
-    record->subtype = RecordSubType::MALLOC;
-    record->flag = FLAG_INVALID;
-    record->space = MemOpSpace::DEVICE;
-    record->pageType = static_cast<MemScope::MemPageType>(prop.pg_type);
-    record->addr = addr;
-    record->memSize = size;
-    record->devId = prop.devid;
-    record->modid = prop.module_id;
-    record->recordIndex = ++recordIndex_;
-    record->kernelIndex = kernelLaunchRecordIndex_;
- 
+
+    std::shared_ptr<MemoryEvent> event = std::make_shared<MemoryEvent>();
+    event->eventType = EventBaseType::MALLOC;
+    event->eventSubType = EventSubType::HAL;
+    event->describeOwner = DescribeTrace::GetInstance().GetDescribe();
+    event->cCallStack = std::move(stack.cStack);
+    event->pyCallStack = std::move(stack.pyStack);
+    event->poolType = PoolType::HAL;
+    event->addr = addr;
+    event->name = "N/A";
+    event->space = MemOpSpace::DEVICE;
+    event->device = prop.devid;
+    event->size = size;
+    event->moduleId = prop.module_id;
+    event->pageType = static_cast<MemScope::MemPageType>(prop.pg_type);
+    event->flag = FLAG_INVALID;
+    event->kernelIndex = kernelLaunchRecordIndex_;
+
     {
         if (!destroyed_.load()) {
             std::lock_guard<std::mutex> lock(mutex_);
@@ -342,12 +369,11 @@ bool EventReport::ReportHalCreate(uint64_t addr, uint64_t size, const drv_mem_pr
         }
     }
  
-    ReportRecordEvent(buffer);
- 
+    Process::GetInstance(initConfig_).SendEvent(event);
     return true;
 }
  
-bool EventReport::ReportHalRelease(uint64_t addr, CallStackString& stack)
+bool EventReport::ReportHalRelease(uint64_t addr, CallStackString&& stack)
 {
     if (IsNeedSkip(GD_INVALID_NUM)) {
         return true;
@@ -365,28 +391,28 @@ bool EventReport::ReportHalRelease(uint64_t addr, CallStackString& stack)
         }
         halPtrs_.erase(it);
     }
+
+    std::shared_ptr<MemoryEvent> event = std::make_shared<MemoryEvent>();
+    event->eventType = EventBaseType::FREE;
+    event->eventSubType = EventSubType::HAL;
+    event->cCallStack = std::move(stack.cStack);
+    event->pyCallStack = std::move(stack.pyStack);
+    event->poolType = PoolType::HAL;
+    event->addr = addr;
+    event->name = "N/A";
+    event->space = MemOpSpace::INVALID;
+    event->device = GD_INVALID_NUM;
+    event->size = 0;
+    event->moduleId = INVALID_MODID;
+    event->flag = FLAG_INVALID;
+    event->kernelIndex = kernelLaunchRecordIndex_;
  
-    TLVBlockType cStack = stack.cStack.empty() ? TLVBlockType::SKIP : TLVBlockType::CALL_STACK_C;
-    TLVBlockType pyStack = stack.pyStack.empty() ? TLVBlockType::SKIP : TLVBlockType::CALL_STACK_PYTHON;
-    RecordBuffer buffer = RecordBuffer::CreateRecordBuffer<MemOpRecord>(cStack, stack.cStack, pyStack, stack.pyStack);
-    MemOpRecord* record = buffer.Cast<MemOpRecord>();
-    record->type = RecordType::MEMORY_RECORD;
-    record->subtype = RecordSubType::FREE;
-    record->flag = FLAG_INVALID;
-    record->space = MemOpSpace::INVALID;
-    record->addr = addr;
-    record->memSize = 0;
-    record->devId = GD_INVALID_NUM;
-    record->modid = INVALID_MODID;
-    record->recordIndex = ++recordIndex_;
-    record->kernelIndex = kernelLaunchRecordIndex_;
- 
-    ReportRecordEvent(buffer);
+    Process::GetInstance(initConfig_).SendEvent(event);
  
     return true;
 }
 
-bool EventReport::ReportHalMalloc(uint64_t addr, uint64_t size, unsigned long long flag, CallStackString& stack)
+bool EventReport::ReportHalMalloc(uint64_t addr, uint64_t size, unsigned long long flag, CallStackString&& stack)
 {
     // bit0~9 devId
     int32_t devId = (flag & 0x3FF);
@@ -401,21 +427,21 @@ bool EventReport::ReportHalMalloc(uint64_t addr, uint64_t size, unsigned long lo
     }
     int32_t moduleId = GetMallocModuleId(flag);
     std::string owner = DescribeTrace::GetInstance().GetDescribe();
-    TLVBlockType cStack = stack.cStack.empty() ? TLVBlockType::SKIP : TLVBlockType::CALL_STACK_C;
-    TLVBlockType pyStack = stack.pyStack.empty() ? TLVBlockType::SKIP : TLVBlockType::CALL_STACK_PYTHON;
-    RecordBuffer buffer = RecordBuffer::CreateRecordBuffer<MemOpRecord>(
-        TLVBlockType::MEM_OWNER, owner, cStack, stack.cStack, pyStack, stack.pyStack);
-    MemOpRecord* record = buffer.Cast<MemOpRecord>();
-    record->type = RecordType::MEMORY_RECORD;
-    record->subtype = RecordSubType::MALLOC;
-    record->flag = flag;
-    record->space = space;
-    record->addr = addr;
-    record->memSize = size;
-    record->devId = devId;
-    record->modid = moduleId;
-    record->recordIndex = ++recordIndex_;
-    record->kernelIndex = kernelLaunchRecordIndex_;
+
+    std::shared_ptr<MemoryEvent> event = std::make_shared<MemoryEvent>();
+    event->eventType = EventBaseType::MALLOC;
+    event->eventSubType = EventSubType::HAL;
+    event->cCallStack = std::move(stack.cStack);
+    event->pyCallStack = std::move(stack.pyStack);
+    event->poolType = PoolType::HAL;
+    event->addr = addr;
+    event->name = "N/A";
+    event->space = space;
+    event->device = devId;
+    event->size = size;
+    event->moduleId = moduleId;
+    event->flag = flag;
+    event->kernelIndex = kernelLaunchRecordIndex_;
 
     {
         if (!destroyed_.load()) {
@@ -424,12 +450,12 @@ bool EventReport::ReportHalMalloc(uint64_t addr, uint64_t size, unsigned long lo
         }
     }
 
-    ReportRecordEvent(buffer);
+    Process::GetInstance(initConfig_).SendEvent(event);
 
     return true;
 }
 
-bool EventReport::ReportHalFree(uint64_t addr, CallStackString& stack)
+bool EventReport::ReportHalFree(uint64_t addr, CallStackString&& stack)
 {
     if (IsNeedSkip(GD_INVALID_NUM)) {
         return true;
@@ -448,47 +474,45 @@ bool EventReport::ReportHalFree(uint64_t addr, CallStackString& stack)
         halPtrs_.erase(it);
     }
 
-    TLVBlockType cStack = stack.cStack.empty() ? TLVBlockType::SKIP : TLVBlockType::CALL_STACK_C;
-    TLVBlockType pyStack = stack.pyStack.empty() ? TLVBlockType::SKIP : TLVBlockType::CALL_STACK_PYTHON;
-    RecordBuffer buffer = RecordBuffer::CreateRecordBuffer<MemOpRecord>(cStack, stack.cStack, pyStack, stack.pyStack);
-    MemOpRecord* record = buffer.Cast<MemOpRecord>();
-    record->type = RecordType::MEMORY_RECORD;
-    record->subtype = RecordSubType::FREE;
-    record->flag = FLAG_INVALID;
-    record->space = MemOpSpace::INVALID;
-    record->addr = addr;
-    record->memSize = 0;
-    record->devId = GD_INVALID_NUM;
-    record->modid = INVALID_MODID;
-    record->recordIndex = ++recordIndex_;
-    record->kernelIndex = kernelLaunchRecordIndex_;
+    std::shared_ptr<MemoryEvent> event = std::make_shared<MemoryEvent>();
+    event->eventType = EventBaseType::FREE;
+    event->eventSubType = EventSubType::HAL;
+    event->cCallStack = std::move(stack.cStack);
+    event->pyCallStack = std::move(stack.pyStack);
+    event->poolType = PoolType::HAL;
+    event->addr = addr;
+    event->name = "N/A";
+    event->space = MemOpSpace::INVALID;
+    event->device = GD_INVALID_NUM;
+    event->size = 0;
+    event->moduleId = INVALID_MODID;
+    event->flag = FLAG_INVALID;
+    event->kernelIndex = kernelLaunchRecordIndex_;
 
-    ReportRecordEvent(buffer);
+    Process::GetInstance(initConfig_).SendEvent(event);
 
     return true;
 }
 
-void EventReport::SetStepInfo(const MstxRecord &mstxRecord)
+void EventReport::SetStepInfo(MarkType type, std::string msg, uint64_t rangeId)
 {
-    if (mstxRecord.markType == MarkType::MARK_A) {
+    if (type == MarkType::MARK_A) {
         return;
     }
 
     std::lock_guard<std::mutex> lock(mutex_);
-    const TLVBlock* tlv = GetTlvBlock(mstxRecord, TLVBlockType::MARK_MESSAGE);
-    std::string markMessage = tlv == nullptr ? "N/A" : tlv->data;
-    if (mstxRecord.markType == MarkType::RANGE_START_A) {
-        if (strcmp(markMessage.c_str(), "step start") != 0) {
+    if (type == MarkType::RANGE_START_A) {
+        if (strcmp(msg.c_str(), "step start") != 0) {
             return;
         }
         stepInfo_.currentStepId++;
         stepInfo_.inStepRange = true;
-        stepInfo_.stepMarkRangeIdList.emplace_back(mstxRecord.rangeId);
+        stepInfo_.stepMarkRangeIdList.emplace_back(rangeId);
         return;
     }
 
-    if (mstxRecord.markType == MarkType::RANGE_END) {
-        auto ret = find(stepInfo_.stepMarkRangeIdList.begin(), stepInfo_.stepMarkRangeIdList.end(), mstxRecord.rangeId);
+    if (type == MarkType::RANGE_END) {
+        auto ret = find(stepInfo_.stepMarkRangeIdList.begin(), stepInfo_.stepMarkRangeIdList.end(), rangeId);
         if (ret == stepInfo_.stepMarkRangeIdList.end()) {
             return;
         }
@@ -500,84 +524,102 @@ void EventReport::SetStepInfo(const MstxRecord &mstxRecord)
     return;
 }
 
-bool EventReport::ReportMark(RecordBuffer &mstxRecordBuffer)
+bool EventReport::ReportMark(MarkType type, std::string& msg, uint32_t streamId, uint64_t rangeId)
 {
     int32_t devId = GD_INVALID_NUM;
     if (!GetDeviceInfo::Instance().GetDeviceId(devId) || devId == GD_INVALID_NUM) {
-        LOG_ERROR("[mark] RT_ERROR_INVALID_VALUE, " + std::to_string(devId));
+        LOG_ERROR("[mark] RT_ERROR_INVALID_VALUE, %d", devId);
     }
 
-    MstxRecord* record = mstxRecordBuffer.Cast<MstxRecord>();
-    record->type = RecordType::MSTX_MARK_RECORD;
-    record->devId = devId;
-    record->recordIndex = ++recordIndex_;
-    record->kernelIndex = kernelLaunchRecordIndex_;
-
-    SetStepInfo(*record);
-    record->stepId = stepInfo_.currentStepId;
-
+    SetStepInfo(type, msg, rangeId);
     if (IsNeedSkip(devId)) {
         return true;
     }
 
-    ReportRecordEvent(mstxRecordBuffer);
+    std::shared_ptr<MstxEvent> event = std::make_shared<MstxEvent>();
+    event->eventType = EventBaseType::MSTX;
+    event->eventSubType = (type == MarkType::MARK_A) ? EventSubType::MSTX_MARK :
+            (type == MarkType::RANGE_START_A) ? EventSubType::MSTX_RANGE_START :
+            EventSubType::MSTX_RANGE_END;
+    event->device = devId;
+    if (Utility::CheckStrIsStartsWithInvalidChar(msg.c_str())) {
+        Utility::ToSafeString(msg);
+        LOG_ERROR("mstx msg %s is invalid!", msg.c_str());
+        msg = "";
+    }
+    event->name = msg;
+    event->streamId = streamId;
+    event->stepId = stepInfo_.currentStepId;
+    event->kernelIndex = kernelLaunchRecordIndex_;
+
+    Process::GetInstance(initConfig_).SendEvent(event);
 
     return true;
 }
 
-bool EventReport::ReportAtenLaunch(RecordBuffer &atenOpLaunchRecordBuffer)
+bool EventReport::ReportAtenLaunch(const std::string& name, bool isStart, std::string&& pystack)
 {
     int32_t devId = GD_INVALID_NUM;
     if (!GetDeviceInfo::Instance().GetDeviceId(devId) || devId == GD_INVALID_NUM) {
-        LOG_ERROR("[mark] RT_ERROR_INVALID_VALUE, " + std::to_string(devId));
+        LOG_ERROR("[mark] RT_ERROR_INVALID_VALUE, %d", devId);
     }
 
     if (IsNeedSkip(devId)) {
         return true;
     }
 
-    AtenOpLaunchRecord* record = atenOpLaunchRecordBuffer.Cast<AtenOpLaunchRecord>();
-    record->type = RecordType::ATEN_OP_LAUNCH_RECORD;
-    record->devId = devId;
-    record->recordIndex = ++recordIndex_;
+    std::shared_ptr<OpLaunchEvent> event = std::make_shared<OpLaunchEvent>();
+    event->eventType = EventBaseType::OP_LAUNCH;
+    event->eventSubType = isStart ? EventSubType::ATEN_START : EventSubType::ATEN_END;
+    event->device = devId;
+    event->name = name;
+    event->pyCallStack = std::move(pystack);
 
-    ReportRecordEvent(atenOpLaunchRecordBuffer);
+    Process::GetInstance(initConfig_).SendEvent(event);
 
     return true;
 }
 
-bool EventReport::ReportAtenAccess(RecordBuffer &memAccessRecordBuffer)
+bool EventReport::ReportAtenAccess(const std::string& name, const std::string& attr, AccessType type,
+                                   uint64_t addr, uint64_t size, std::string&& pystack)
 {
     int32_t devId = GD_INVALID_NUM;
     if (!GetDeviceInfo::Instance().GetDeviceId(devId) || devId == GD_INVALID_NUM) {
-        LOG_ERROR("[mark] RT_ERROR_INVALID_VALUE, " + std::to_string(devId));
+        LOG_ERROR("[mark] RT_ERROR_INVALID_VALUE, %d", devId);
     }
 
     if (IsNeedSkip(devId)) {
         return true;
     }
 
-    MemAccessRecord* record = memAccessRecordBuffer.Cast<MemAccessRecord>();
-    record->type = RecordType::MEM_ACCESS_RECORD;
-    record->devId = devId;
-    record->recordIndex = ++recordIndex_;
+    std::shared_ptr<MemoryEvent> event = std::make_shared<MemoryEvent>();
+    event->eventType = EventBaseType::ACCESS;
+    event->eventSubType = type == AccessType::READ ? EventSubType::ATEN_READ :
+        type == AccessType::WRITE ? EventSubType::ATEN_WRITE : EventSubType::ATEN_READ_OR_WRITE;
+    event->poolType = PoolType::PTA_CACHING;
+    event->device = devId;
+    event->name = name;
+    event->addr = addr;
+    event->size = size;
+    event->attr = attr;
+    event->pyCallStack = std::move(pystack);
 
-    ReportRecordEvent(memAccessRecordBuffer);
+    Process::GetInstance(initConfig_).SendEvent(event);
 
     return true;
 }
 
 bool EventReport::ReportKernelLaunch(const AclnnKernelMapInfo &kernelLaunchInfo)
 {
-    if (!EventTraceManager::Instance().IsTracingEnabled() ||
-        !EventTraceManager::Instance().ShouldTraceType(RecordType::KERNEL_LAUNCH_RECORD)) {
+    if (!EventTraceManager::Instance().IsNeedTrace(EventBaseType::MALLOC) &&
+        !EventTraceManager::Instance().IsNeedTrace(EventBaseType::FREE)) {
         return true;
     }
 
     int32_t devId = std::get<0>(kernelLaunchInfo.taskKey);
     if (devId < 0) {
         if (!GetDeviceInfo::Instance().GetDeviceId(devId) || devId == GD_INVALID_NUM) {
-            LOG_ERROR("[mark] RT_ERROR_INVALID_VALUE, " + std::to_string(devId));
+            LOG_ERROR("[mark] RT_ERROR_INVALID_VALUE, %d", devId);
         }
     }
 
@@ -585,26 +627,23 @@ bool EventReport::ReportKernelLaunch(const AclnnKernelMapInfo &kernelLaunchInfo)
         return true;
     }
 
-    RecordBuffer buffer = RecordBuffer::CreateRecordBuffer<KernelLaunchRecord>(
-        TLVBlockType::KERNEL_NAME, kernelLaunchInfo.kernelName);
-    KernelLaunchRecord* record = buffer.Cast<KernelLaunchRecord>();
-    record->type = RecordType::KERNEL_LAUNCH_RECORD;
-    record->devId = devId;
-    record->streamId = std::get<1>(kernelLaunchInfo.taskKey);
-    record->taskId = std::get<2>(kernelLaunchInfo.taskKey);
-    record->kernelLaunchIndex = ++kernelLaunchRecordIndex_;
-    record->recordIndex = ++recordIndex_;
-    record->timestamp = kernelLaunchInfo.timestamp;
+    std::shared_ptr<KernelLaunchEvent> event = std::make_shared<KernelLaunchEvent>();
+    event->eventType = EventBaseType::KERNEL_LAUNCH;
+    event->eventSubType = EventSubType::KERNEL_LAUNCH;
+    event->device = devId;
+    event->streamId = std::to_string(std::get<1>(kernelLaunchInfo.taskKey));
+    event->taskId = std::to_string(std::get<2>(kernelLaunchInfo.taskKey));
+    event->name = kernelLaunchInfo.kernelName;
+    event->kernelIndex = ++kernelLaunchRecordIndex_;
 
-    ReportRecordEvent(buffer);
+    Process::GetInstance(initConfig_).SendEvent(event);
 
     return true;
 }
 
 bool EventReport::ReportKernelExcute(const TaskKey &key, std::string &name, uint64_t time, RecordSubType type)
 {
-    if (!EventTraceManager::Instance().IsTracingEnabled() ||
-        !EventTraceManager::Instance().ShouldTraceType(RecordType::KERNEL_EXCUTE_RECORD)) {
+    if (!EventTraceManager::Instance().IsNeedTrace(EventBaseType::KERNEL_LAUNCH)) {
         return true;
     }
     
@@ -612,17 +651,16 @@ bool EventReport::ReportKernelExcute(const TaskKey &key, std::string &name, uint
         return true;
     }
 
-    RecordBuffer buffer = RecordBuffer::CreateRecordBuffer<KernelExcuteRecord>(TLVBlockType::KERNEL_NAME, name);
-    KernelExcuteRecord* record = buffer.Cast<KernelExcuteRecord>();
-    record->type = RecordType::KERNEL_EXCUTE_RECORD;
-    record->subtype = type;
-    record->devId = std::get<0>(key);
-    record->streamId = std::get<1>(key);
-    record->taskId = std::get<2>(key);
-    record->recordIndex = ++recordIndex_;
-    record->timestamp = time;
+    std::shared_ptr<KernelLaunchEvent> event = std::make_shared<KernelLaunchEvent>();
+    event->eventType = EventBaseType::KERNEL_LAUNCH;
+    event->eventSubType = type == RecordSubType::KERNEL_START ?
+        EventSubType::KERNEL_EXECUTE_START : EventSubType::KERNEL_EXECUTE_END;
+    event->device = std::get<0>(key);
+    event->streamId = std::to_string(std::get<1>(key));
+    event->taskId = std::to_string(std::get<2>(key));
+    event->name = name;
 
-    ReportRecordEvent(buffer);
+    Process::GetInstance(initConfig_).SendEvent(event);
 
     return true;
 }
@@ -635,18 +673,14 @@ bool EventReport::ReportAclItf(RecordSubType subtype)
     if (subtype == RecordSubType::FINALIZE) {
         KernelEventTrace::GetInstance().EndKernelEventTrace();
     }
-    int32_t devId = GD_INVALID_NUM;
 
-    RecordBuffer buffer = RecordBuffer::CreateRecordBuffer<AclItfRecord>();
-    AclItfRecord* record = buffer.Cast<AclItfRecord>();
-    record->type = RecordType::ACL_ITF_RECORD;
-    record->subtype = subtype;
-    record->devId = devId;
-    record->recordIndex = ++recordIndex_;
-    record->aclItfRecordIndex = ++aclItfRecordIndex_;
-    record->kernelIndex = kernelLaunchRecordIndex_;
+    std::shared_ptr<SystemEvent> event = std::make_shared<SystemEvent>();
+    event->eventType = EventBaseType::SYSTEM;
+    event->eventSubType = subtype == RecordSubType::INIT ? EventSubType::ACL_INIT : EventSubType::ACL_FINI;
+    event->device = GD_INVALID_NUM;
+    event->name = "N/A";
 
-    ReportRecordEvent(buffer);
+    Process::GetInstance(initConfig_).SendEvent(event);
 
     return true;
 }
@@ -657,134 +691,124 @@ bool EventReport::ReportTraceStatus(const EventTraceStatus status)
         return true;
     }
 
-    RecordBuffer buffer = RecordBuffer::CreateRecordBuffer<TraceStatusRecord>();
-    TraceStatusRecord* record = buffer.Cast<TraceStatusRecord>();
-    record->type = RecordType::TRACE_STATUS_RECORD;
-    record->devId = GD_INVALID_NUM;
-    record->recordIndex = ++recordIndex_;
-    record->status = static_cast<uint8_t>(status);
+    std::shared_ptr<SystemEvent> event = std::make_shared<SystemEvent>();
+    event->eventType = EventBaseType::SYSTEM;
+    event->eventSubType = (status == EventTraceStatus::IN_TRACING) ?
+        EventSubType::TRACE_START : EventSubType::TRACE_STOP;
+    event->device = GD_INVALID_NUM;
+    event->name = "N/A";
 
-    ReportRecordEvent(buffer);
+    Process::GetInstance(initConfig_).SendEvent(event);
 
     return true;
 }
 
-bool EventReport::ReportAtbOpExecute(char* name, uint32_t nameLength,
-    char* attr, uint32_t attrLength, RecordSubType type)
+bool EventReport::ReportAtbOpExecute(const char* name, size_t nameSize, const char* attr, size_t attrSize,
+                                     RecordSubType type)
 {
     int32_t devId = GD_INVALID_NUM;
     if (!GetDeviceInfo::Instance().GetDeviceId(devId) || devId == GD_INVALID_NUM) {
-        LOG_ERROR("[mark] RT_ERROR_INVALID_VALUE, " + std::to_string(devId));
+        LOG_ERROR("[mark] RT_ERROR_INVALID_VALUE, %d", devId);
     }
 
     if (IsNeedSkip(devId)) {
         return true;
     }
 
-    RecordBuffer buffer = RecordBuffer::CreateRecordBuffer<AtbOpExecuteRecord>(
-        TLVBlockType::ATB_NAME, name, TLVBlockType::ATB_PARAMS, attr);
-    AtbOpExecuteRecord* record = buffer.Cast<AtbOpExecuteRecord>();
-    record->subtype = type;
-    record->type = RecordType::ATB_OP_EXECUTE_RECORD;
-    record->devId = devId;
-    record->recordIndex = ++recordIndex_;
+    std::shared_ptr<OpLaunchEvent> event = std::make_shared<OpLaunchEvent>();
+    event->eventType = EventBaseType::OP_LAUNCH;
+    event->eventSubType = type == RecordSubType::ATB_START ? EventSubType::ATB_START : EventSubType::ATB_END;
+    event->device = devId;
+    event->name = name;
+    event->attr = attr;
 
-    ReportRecordEvent(buffer);
-
-    return true;
-}
-
-bool EventReport::ReportAtbKernel(char* name, uint32_t nameLength,
-    char* attr, uint32_t attrLength, RecordSubType type)
-{
-    int32_t devId = GD_INVALID_NUM;
-    if (!GetDeviceInfo::Instance().GetDeviceId(devId) || devId == GD_INVALID_NUM) {
-        LOG_ERROR("[mark] RT_ERROR_INVALID_VALUE, " + std::to_string(devId));
-    }
-
-    if (IsNeedSkip(devId)) {
-        return true;
-    }
-
-    RecordBuffer buffer = RecordBuffer::CreateRecordBuffer<AtbKernelRecord>(
-        TLVBlockType::ATB_NAME, name, TLVBlockType::ATB_PARAMS, attr);
-    AtbKernelRecord* record = buffer.Cast<AtbKernelRecord>();
-    record->subtype = type;
-    record->type = RecordType::ATB_KERNEL_RECORD;
-    record->devId = devId;
-    record->recordIndex = ++recordIndex_;
-
-    ReportRecordEvent(buffer);
+    Process::GetInstance(initConfig_).SendEvent(event);
 
     return true;
 }
 
-bool EventReport::ReportAtbAccessMemory(char* name, char* attr, uint64_t addr, uint64_t size, AccessType type)
+bool EventReport::ReportAtbKernel(const char* name, size_t nameSize, const char* attr, size_t attrSize,
+                                  RecordSubType type)
 {
     int32_t devId = GD_INVALID_NUM;
     if (!GetDeviceInfo::Instance().GetDeviceId(devId) || devId == GD_INVALID_NUM) {
-        LOG_ERROR("[mark] RT_ERROR_INVALID_VALUE, " + std::to_string(devId));
-    }
-
-    if (IsNeedSkip(devId)) {
-        return true;
-    }
-
-    RecordBuffer buffer = RecordBuffer::CreateRecordBuffer<MemAccessRecord>(
-        TLVBlockType::OP_NAME, name, TLVBlockType::MEM_ATTR, attr);
-    MemAccessRecord* record = buffer.Cast<MemAccessRecord>();
-    record->addr = addr;
-    record->memSize = size;
-    record->eventType = type;
-
-    record->memType = AccessMemType::ATB;
-    record->type = RecordType::MEM_ACCESS_RECORD;
-    record->devId = devId;
-    record->recordIndex = ++recordIndex_;
-
-    ReportRecordEvent(buffer);
-
-    return true;
-}
-
-bool EventReport::ReportMemorySnapshot(const MemorySnapshotRecord& memory_info, const CallStackString& stack)
-{
-    int32_t devId = GD_INVALID_NUM;
-    if (!GetDeviceInfo::Instance().GetDeviceId(devId) || devId == GD_INVALID_NUM) {
-        LOG_ERROR("[mark] RT_ERROR_INVALID_VALUE, " + std::to_string(devId));
+        LOG_ERROR("[mark] RT_ERROR_INVALID_VALUE, %d", devId);
     }
 
     if (IsNeedSkip(devId)) {
         return true;
     }
     
-    // 创建内存快照记录，支持包含调用栈信息
-    TLVBlockType cStack = stack.cStack.empty() ? TLVBlockType::SKIP : TLVBlockType::CALL_STACK_C;
-    TLVBlockType pyStack = stack.pyStack.empty() ? TLVBlockType::SKIP : TLVBlockType::CALL_STACK_PYTHON;
-    RecordBuffer buffer = RecordBuffer::CreateRecordBuffer<MemorySnapshotRecord>(
-        cStack, stack.cStack, pyStack, stack.pyStack);
-    MemorySnapshotRecord* record = buffer.Cast<MemorySnapshotRecord>();
-    record->device = memory_info.device;
-    record->memory_reserved = memory_info.memory_reserved;
-    record->max_memory_reserved = memory_info.max_memory_reserved;
-    record->memory_allocated = memory_info.memory_allocated;
-    record->max_memory_allocated = memory_info.max_memory_allocated;
-    record->total_memory = memory_info.total_memory;
-    record->free_memory = memory_info.free_memory;
+    std::shared_ptr<KernelLaunchEvent> event = std::make_shared<KernelLaunchEvent>();
+    event->eventType = EventBaseType::KERNEL_LAUNCH;
+    event->eventSubType = type == RecordSubType::KERNEL_START ?
+        EventSubType::ATB_KERNEL_START : EventSubType::ATB_KERNEL_END;
+    event->device = devId;
+    event->name = name;
+    event->attr = attr;
 
-    std::string snapshot_name = memory_info.name;
-    strncpy_s(record->name, sizeof(record->name), snapshot_name.c_str(), snapshot_name.length());
-
-    record->type = RecordType::SNAPSHOT_EVENT;
-    record->devId = devId;
-    record->recordIndex = ++recordIndex_;
-
-    ReportRecordEvent(buffer);
+    Process::GetInstance(initConfig_).SendEvent(event);
 
     return true;
 }
 
+bool EventReport::ReportAtbAccessMemory(const char* name, size_t nameSize, const char* attr, size_t attrSize,
+                                        uint64_t addr, uint64_t size, AccessType type)
+{
+    int32_t devId = GD_INVALID_NUM;
+    if (!GetDeviceInfo::Instance().GetDeviceId(devId) || devId == GD_INVALID_NUM) {
+        LOG_ERROR("[mark] RT_ERROR_INVALID_VALUE, %d", devId);
+    }
 
+    if (IsNeedSkip(devId)) {
+        return true;
+    }
+
+    std::shared_ptr<MemoryEvent> event = std::make_shared<MemoryEvent>();
+    event->eventType = EventBaseType::ACCESS;
+    event->eventSubType = type == AccessType::READ ? EventSubType::ATB_READ :
+        type == AccessType::WRITE ? EventSubType::ATB_WRITE : EventSubType::ATB_READ_OR_WRITE;
+    event->poolType = PoolType::ATB;
+    event->addr = addr;
+    event->size = size;
+    event->device = devId;
+    event->name = name;
+    event->attr = attr;
+
+    Process::GetInstance(initConfig_).SendEvent(event);
+
+    return true;
+}
+
+bool EventReport::ReportMemorySnapshot(const MemorySnapshotInfo& memory_info, CallStackString&& stack)
+{
+    int32_t devId = GD_INVALID_NUM;
+    if (!GetDeviceInfo::Instance().GetDeviceId(devId) || devId == GD_INVALID_NUM) {
+        LOG_ERROR("[mark] RT_ERROR_INVALID_VALUE, %d", devId);
+    }
+
+    if (IsNeedSkip(devId)) {
+        return true;
+    }
+
+    std::shared_ptr<SnapshotEvent> event = std::make_shared<SnapshotEvent>();
+    event->eventType = EventBaseType::SNAPSHOT;
+    event->eventSubType = EventSubType::SNAPSHOT;
+    event->device = devId;
+    event->name = memory_info.name;
+    event->memory_reserved = memory_info.memory_reserved;
+    event->max_memory_reserved = memory_info.max_memory_reserved;
+    event->memory_allocated = memory_info.memory_allocated;
+    event->max_memory_allocated = memory_info.max_memory_allocated;
+    event->total_memory = memory_info.total_memory;
+    event->free_memory = memory_info.free_memory;
+    event->cCallStack = std::move(stack.cStack);
+    event->pyCallStack = std::move(stack.pyStack);
+
+    Process::GetInstance(initConfig_).SendEvent(event);
+
+    return true;
+}
 
 void EventReport::ReportMemorySnapshotOnOOM(const CallStackString& stack)
 {
@@ -830,7 +854,7 @@ void EventReport::ReportMemorySnapshotOnOOM(const CallStackString& stack)
                 return;
             }
         } catch (const std::exception& e) {
-            LOG_ERROR(std::string("Exception in Python take_snapshot: ") + e.what());
+            LOG_ERROR("Exception in Python take_snapshot: %s", e.what());
         }
     }
 }

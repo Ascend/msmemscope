@@ -61,27 +61,27 @@ struct MstxStepInfo {
 class EventReport {
 public:
     static EventReport& Instance(MemScopeCommType type);
-    bool ReportHalCreate(uint64_t addr, uint64_t size, const drv_mem_prop& prop, CallStackString& stack);
-    bool ReportHalRelease(uint64_t addr, CallStackString& stack);
-    bool ReportHalMalloc(uint64_t addr, uint64_t size, unsigned long long flag, CallStackString& stack);
-    bool ReportHalFree(uint64_t addr, CallStackString& stack);
-    bool ReportHostMalloc(uint64_t addr, uint64_t size, CallStackString& stack);
-    bool ReportHostFree(uint64_t addr);
+    bool ReportHalCreate(uint64_t addr, uint64_t size, const drv_mem_prop& prop, CallStackString&& stack);
+    bool ReportHalRelease(uint64_t addr, CallStackString&& stack);
+    bool ReportHalMalloc(uint64_t addr, uint64_t size, unsigned long long flag, CallStackString&& stack);
+    bool ReportHalFree(uint64_t addr, CallStackString&& stack);
     bool ReportKernelLaunch(const AclnnKernelMapInfo &kernelLaunchInfo);
     bool ReportKernelExcute(const TaskKey &key, std::string &name, uint64_t time, RecordSubType type);
     bool ReportAclItf(RecordSubType subtype);
     bool ReportTraceStatus(const EventTraceStatus status);
-    bool ReportMark(RecordBuffer &mstxRecordBuffer);
-    void ReportRecordEvent(const RecordBuffer& record);
-    bool ReportMemPoolRecord(RecordBuffer &memPoolRecordBuffer);
-    bool ReportAtbOpExecute(char* name, uint32_t nameLength, char* attr, uint32_t attrLength, RecordSubType type);
-    bool ReportAtbKernel(char* name, uint32_t nameLength, char* attr, uint32_t attrLength, RecordSubType type);
-    bool ReportAtbAccessMemory(char* name, char* attr, uint64_t addr, uint64_t size, AccessType type);
-    bool ReportAtenLaunch(RecordBuffer& atenOpLaunchRecordBuffer);
-    bool ReportAtenAccess(RecordBuffer &memAccessRecordBuffer);
-    bool ReportAddrInfo(RecordBuffer &infoBuffer);
+    bool ReportMark(MarkType type, std::string& msg, uint32_t streamId, uint64_t rangeId);
+    bool ReportMemPoolRecord(EventSubType type, const MemoryUsage& info, const std::string& owner,
+                             CallStackString&& stack);
+    bool ReportAtbOpExecute(const char* name, size_t nameSize, const char* attr, size_t attrSize, RecordSubType type);
+    bool ReportAtbKernel(const char* name, size_t nameSize, const char* attr, size_t attrSize, RecordSubType type);
+    bool ReportAtbAccessMemory(const char* name, size_t nameSize, const char* attr, size_t attrSize,
+                               uint64_t addr, uint64_t size, AccessType type);
+    bool ReportAtenLaunch(const std::string& name, bool isStart, std::string&& pystack);
+    bool ReportAtenAccess(const std::string& name, const std::string& attr, AccessType type,
+                          uint64_t addr, uint64_t size, std::string&& pystack);
+    bool ReportAddrInfo(EventSubType type, uint64_t addr, std::string owner);
     bool ReportPyStepRecord();
-    bool ReportMemorySnapshot(const MemorySnapshotRecord& memory_info, const CallStackString& stack = CallStackString());
+    bool ReportMemorySnapshot(const MemorySnapshotInfo& memory_info, CallStackString&& stack);
     void ReportMemorySnapshotOnOOM(const CallStackString& stack = CallStackString());
     void UpdateAnalysisType();
 
@@ -91,7 +91,7 @@ private:
     ~EventReport();
 
     bool IsNeedSkip(int32_t devid);
-    void SetStepInfo(const MstxRecord &mstxRecord);
+    void SetStepInfo(MarkType type, std::string msg, uint64_t rangeId);
 
     // socket通信在某些场景下，client调用connect返回true并不一定代表真实连接成功
     // 这里以接收到server发过来消息为准
@@ -99,7 +99,6 @@ private:
 private:
     std::atomic<uint64_t> recordIndex_;
     std::atomic<uint64_t> kernelLaunchRecordIndex_;
-    std::atomic<uint64_t> aclItfRecordIndex_;
     // python接口标识step和mstx标识step两种方式不允许同时存在
     std::atomic<uint64_t> pyStepId_;
 
@@ -116,8 +115,8 @@ private:
 class GetDeviceInfo {
 public:
     static GetDeviceInfo& Instance();
-    void InitVisibleDevice();
     bool GetDeviceId(int32_t &devId);
+    bool TransDeviceId(int32_t &devId);
     bool GetDeviceMemInfo(size_t &freeMem, size_t &totalMem);
 
 private:
@@ -155,7 +154,7 @@ private:
                 visibleDeviceMap[deviceId] = id;
                 deviceId++;
             } catch (const std::invalid_argument& e) {
-                LOG_ERROR("Invalid format for ASCEND_RT_VISIBLE_DEVICES:", e.what());
+                LOG_ERROR("Invalid format for ASCEND_RT_VISIBLE_DEVICES:%s", e.what());
                 visibleDeviceMap.clear();
                 return;
             }

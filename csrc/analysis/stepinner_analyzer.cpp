@@ -115,7 +115,7 @@ bool StepInnerAnalyzer::IsStepInnerAnalysisEnable()
 std::size_t LeakMemKeyHash::operator()(const LeakMemKey &leakKey) const
 {
     return std::hash<uint64_t>()(leakKey.ptr) ^ std::hash<uint64_t>()(leakKey.leakStepId)
-        ^ std::hash<RecordType>()(leakKey.type);
+        ^ std::hash<PoolType>()(leakKey.type);
 }
 
 bool LeakMemKey::operator==(const LeakMemKey& other) const
@@ -125,7 +125,7 @@ bool LeakMemKey::operator==(const LeakMemKey& other) const
 
 std::size_t NpuMemKeyHash::operator()(const NpuMemKey &memKey) const
 {
-    return std::hash<uint64_t>()(memKey.ptr) ^ std::hash<RecordType>()(memKey.memType);
+    return std::hash<uint64_t>()(memKey.ptr) ^ std::hash<PoolType>()(memKey.memType);
 }
 
 bool NpuMemKey::operator==(const NpuMemKey& other) const
@@ -147,10 +147,10 @@ bool StepInnerAnalyzer::SkipCheck(const NpuMemInfo &npuMemInfo) const
     return false;
 }
 
-const std::string& StepInnerAnalyzer::GetMemoryPoolName(const RecordType &poolType)
+const std::string& StepInnerAnalyzer::GetMemoryPoolName(const PoolType &poolType)
 {
-    auto it = RecordTypeToString.find(poolType);
-    if (it != RecordTypeToString.end()) {
+    auto it = PoolTypeToString.find(poolType);
+    if (it != PoolTypeToString.end()) {
         return it->second;
     } else {
         static const std::string EMPTY_STRING;
@@ -192,7 +192,7 @@ void StepInnerAnalyzer::CheckNpuLeak(const DeviceId &deviceId, const uint64_t st
     return;
 }
 
-void StepInnerAnalyzer::UpdateAllocated(const DeviceId &deviceId, const RecordType &poolType,
+void StepInnerAnalyzer::UpdateAllocated(const DeviceId &deviceId, const PoolType &poolType,
     const int64_t &totalAllocated)
 {
     if (!IsStepInnerAnalysisEnable()) {
@@ -271,61 +271,59 @@ void StepInnerAnalyzer::CheckGap(const DeviceId &deviceId)
 }
 
 void StepInnerAnalyzer::RecordNpuMalloc(const ClientId &clientId, const DeviceId &deviceId,
-    const MemPoolRecord &memPoolRecord)
+    std::shared_ptr<const MemoryEvent> memEvent)
 {
-    MemoryUsage memoryusage = memPoolRecord.memoryUsage;
-    uint64_t npumemptr = memoryusage.ptr;
-    std::string poolName = GetMemoryPoolName(memPoolRecord.type);
-    if ((npuMemUsages_[deviceId].poolOpTable.find(NpuMemKey(npumemptr, memPoolRecord.type))
+    const uint64_t& npumemptr = memEvent->addr;
+    const PoolType& poolType = memEvent->poolType;
+    if ((npuMemUsages_[deviceId].poolOpTable.find(NpuMemKey(npumemptr, poolType))
         != npuMemUsages_[deviceId].poolOpTable.end())) {
+        std::string poolName = GetMemoryPoolName(poolType);
         LOG_WARN(
             "[npu%d malloc][client %u]:!!! ------double malloc in %s------!!!, ptr: %llu",
                 deviceId, clientId, poolName.c_str(), npumemptr);
     }
 
     // 不同内存池建立各自的占用表
-    if ((npuMemUsages_[deviceId].poolStatusTable.find(memPoolRecord.type) ==
+    if ((npuMemUsages_[deviceId].poolStatusTable.find(memEvent->poolType) ==
         npuMemUsages_[deviceId].poolStatusTable.end())) {
         MemoryPoolStatus memPoolStatus{};
-        npuMemUsages_[deviceId].poolStatusTable.emplace(memPoolRecord.type, memPoolStatus);
+        npuMemUsages_[deviceId].poolStatusTable.emplace(poolType, memPoolStatus);
     }
 
     NpuMemInfo npuMemInfo = {
-    memPoolRecord.type, memoryusage.allocSize, memPoolRecord.timestamp, 0, npuMemUsages_[deviceId].duringStep,
-    memPoolRecord.kernelIndex};
-    npuMemUsages_[deviceId].poolOpTable.emplace(NpuMemKey(npumemptr, memPoolRecord.type), npuMemInfo);
-    UpdateAllocated(deviceId, memPoolRecord.type, memoryusage.totalAllocated);
-    npuMemUsages_[deviceId].poolStatusTable[memPoolRecord.type].totalAllocated = memoryusage.totalAllocated;
-    npuMemUsages_[deviceId].poolStatusTable[memPoolRecord.type].totalReserved = memoryusage.totalReserved;
-    npuMemUsages_[deviceId].poolStatusTable[memPoolRecord.type].totalActive = memoryusage.totalActive;
+    poolType, memEvent->size, memEvent->timestamp, 0, npuMemUsages_[deviceId].duringStep,
+    memEvent->kernelIndex};
+    npuMemUsages_[deviceId].poolOpTable.emplace(NpuMemKey(npumemptr, poolType), npuMemInfo);
+    UpdateAllocated(deviceId, poolType, memEvent->used);
+    npuMemUsages_[deviceId].poolStatusTable[poolType].totalAllocated = memEvent->used;
+    npuMemUsages_[deviceId].poolStatusTable[poolType].totalReserved = memEvent->total;
     return;
 }
 
 void  StepInnerAnalyzer::RecordNpuFree(const ClientId &clientId, const DeviceId &deviceId,
-    const MemPoolRecord &memPoolRecord)
+    std::shared_ptr<const MemoryEvent> memEvent)
 {
-    MemoryUsage memoryusage = memPoolRecord.memoryUsage;
-    uint64_t npumemptr = memoryusage.ptr;
-    std::string poolName = GetMemoryPoolName(memPoolRecord.type);
-    if ((npuMemUsages_[deviceId].poolOpTable.find(NpuMemKey(npumemptr, memPoolRecord.type))
+    uint64_t npumemptr = memEvent->addr;
+    const PoolType& poolType = memEvent->poolType;
+    if ((npuMemUsages_[deviceId].poolOpTable.find(NpuMemKey(npumemptr, poolType))
         == npuMemUsages_[deviceId].poolOpTable.end())) {
+        std::string poolName = GetMemoryPoolName(poolType);
         LOG_WARN(
             "[npu%d free][client %u]:!!! ------free error in %s------!!!, ptr: %llu",
                 deviceId, clientId, poolName.c_str(), npumemptr);
     }
 
     // 不同内存池建立各自的占用表
-    if ((npuMemUsages_[deviceId].poolStatusTable.find(memPoolRecord.type) ==
+    if ((npuMemUsages_[deviceId].poolStatusTable.find(poolType) ==
         npuMemUsages_[deviceId].poolStatusTable.end())) {
         MemoryPoolStatus memPoolStatus{};
-        npuMemUsages_[deviceId].poolStatusTable.emplace(memPoolRecord.type, memPoolStatus);
+        npuMemUsages_[deviceId].poolStatusTable.emplace(poolType, memPoolStatus);
     }
 
-    npuMemUsages_[deviceId].poolOpTable.erase(NpuMemKey(npumemptr, memPoolRecord.type));
-    UpdateAllocated(deviceId, memPoolRecord.type, memoryusage.totalAllocated);
-    npuMemUsages_[deviceId].poolStatusTable[memPoolRecord.type].totalAllocated = memoryusage.totalAllocated;
-    npuMemUsages_[deviceId].poolStatusTable[memPoolRecord.type].totalReserved = memoryusage.totalReserved;
-    npuMemUsages_[deviceId].poolStatusTable[memPoolRecord.type].totalActive = memoryusage.totalActive;
+    npuMemUsages_[deviceId].poolOpTable.erase(NpuMemKey(npumemptr, poolType));
+    UpdateAllocated(deviceId, poolType, memEvent->used);
+    npuMemUsages_[deviceId].poolStatusTable[poolType].totalAllocated = memEvent->used;
+    npuMemUsages_[deviceId].poolStatusTable[poolType].totalReserved = memEvent->total;
     return;
 }
 
@@ -341,30 +339,34 @@ void StepInnerAnalyzer::AddDuration(const DeviceId &deviceId)
     return;
 }
 
-bool StepInnerAnalyzer::Record(const ClientId &clientId, const RecordBase &record)
+bool StepInnerAnalyzer::Record(const ClientId &clientId, std::shared_ptr<const EventBase> event)
 {
     // 当开启--steps时，关闭所有step内分析功能
     if (!IsStepInnerAnalysisEnable()) {
         return true;
     }
+    std::shared_ptr<const MemoryEvent> memEvent = std::dynamic_pointer_cast<const MemoryEvent>(event);
+    if (memEvent == nullptr) {
+        LOG_WARN("[client %u]: StepInnerAnalyzer receive invalid event.", clientId);
+        return false;
+    }
     std::lock_guard<std::mutex> lock(mutex_);
-    auto memPoolRecord = static_cast<const MemPoolRecord&>(record);
-    DeviceId deviceId = memPoolRecord.devId;
+    DeviceId deviceId = memEvent->device;
     if (!CreateTables(deviceId)) {
         LOG_ERROR("[device %ld]: Create npu Memory table failed.", deviceId);
         return false;
     }
     // 目前不处理BLOCK_FREE操作
-    if (memPoolRecord.memoryUsage.dataType == static_cast<uint8_t>(MemActionType::MALLOC)) {
-        RecordNpuMalloc(clientId, deviceId, memPoolRecord);
-    } else if (memPoolRecord.memoryUsage.dataType == static_cast<uint8_t>(MemActionType::FREE)) {
-        RecordNpuFree(clientId, deviceId, memPoolRecord);
+    if (memEvent->eventType == EventBaseType::MALLOC) {
+        RecordNpuMalloc(clientId, deviceId, memEvent);
+    } else if (memEvent->eventType == EventBaseType::FREE) {
+        RecordNpuFree(clientId, deviceId, memEvent);
     }
     return true;
 }
 
 void StepInnerAnalyzer::UpdateStepInfoTable(const DeviceId &deviceId, const uint64_t &stepId,
-    const RecordType &poolType, const int64_t &startAllocated)
+    const PoolType &poolType, const int64_t &startAllocated)
 {
     if (stepInfoTables_[deviceId].find(stepId) == stepInfoTables_[deviceId].end()) {
         StepInfo stepInfo{};
@@ -401,23 +403,22 @@ void StepInnerAnalyzer::HandleStepMsg(const DeviceId &deviceId, const uint64_t &
     CheckGap(deviceId);
 }
 
-void StepInnerAnalyzer::ReceiveMstxMsg(const MstxRecord &mstxRecord)
+void StepInnerAnalyzer::ReceiveMstxMsg(std::shared_ptr<const MstxEvent> mstxEvent)
 {
-    auto deviceId = mstxRecord.devId;
-    auto stepId = mstxRecord.stepId;
+    auto deviceId = mstxEvent->device;
+    auto stepId = mstxEvent->stepId;
     if (!IsStepInnerAnalysisEnable()) {
         return;
     }
     std::lock_guard<std::mutex> lock(mutex_);
-    MarkType markType = mstxRecord.markType;
+    EventSubType markType = mstxEvent->eventSubType;
     if (!CreateStepInfoTables(deviceId) || !CreateTables(deviceId)) {
         LOG_WARN("[device %ld]: Create StepInfo table failed.", deviceId);
         return;
     }
-    const TLVBlock* tlv = GetTlvBlock(mstxRecord, TLVBlockType::MARK_MESSAGE);
-    std::string markMessage = tlv == nullptr ? "" : tlv->data;
-    if (markType == MarkType::RANGE_START_A) {
-        if (strcmp(markMessage.c_str(), "step start") != 0) {
+
+    if (markType == EventSubType::MSTX_RANGE_START) {
+        if (strcmp(mstxEvent->name.c_str(), "step start") != 0) {
             return;
         }
         // 判断是否使用mstx信息源
@@ -433,14 +434,14 @@ void StepInnerAnalyzer::ReceiveMstxMsg(const MstxRecord &mstxRecord)
             LOG_INFO("[npu %ld][step %llu][start]: ------Start totalAllocated (%s): %lld------",
                 deviceId, stepId, GetMemoryPoolName(poolStatus.first).c_str(), startAllocated);
             UpdateStepInfoTable(deviceId, stepId, poolStatus.first, startAllocated);
-            stepInfoTables_[deviceId][stepId].rangeId = mstxRecord.rangeId;
+            stepInfoTables_[deviceId][stepId].rangeId = mstxEvent->rangeId;
         }
         SetStepId(deviceId, stepId);
         AddDuration(deviceId);
-    } else if (markType == MarkType::RANGE_END) {
+    } else if (markType == EventSubType::MSTX_RANGE_END) {
         // 如果是end看stepid和rangeid是否在table中
         if (stepInfoTables_[deviceId].find(stepId) == stepInfoTables_[deviceId].end() ||
-            stepInfoTables_[deviceId][stepId].rangeId != mstxRecord.rangeId) {
+            stepInfoTables_[deviceId][stepId].rangeId != mstxEvent->rangeId) {
             return;
         }
         HandleStepMsg(deviceId, stepId);
@@ -448,10 +449,10 @@ void StepInnerAnalyzer::ReceiveMstxMsg(const MstxRecord &mstxRecord)
     return;
 }
 
-void StepInnerAnalyzer::ReceiveStepMsg(const PyStepRecord &pyStepRecord)
+void StepInnerAnalyzer::ReceiveStepMsg(std::shared_ptr<const EventBase> event)
 {
-    auto deviceId = pyStepRecord.devId;
-    auto stepId = pyStepRecord.stepId;
+    auto deviceId = event->device;
+    auto stepId = std::stoull(event->name);
     if (!IsStepInnerAnalysisEnable()) {
         return;
     }

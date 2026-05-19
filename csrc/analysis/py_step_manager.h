@@ -32,7 +32,7 @@ namespace MemScope {
 */
 
 using DeviceId = int32_t;
-using PyStepEventCallBackFunc = std::function<void(const PyStepRecord&)>;
+using PyStepEventCallBackFunc = std::function<void(std::shared_ptr<const EventBase>)>;
 
 enum class PyStepEventSubscriber : uint8_t {
     STEP_INNER_ANALYZER = 0,
@@ -41,7 +41,7 @@ enum class PyStepEventSubscriber : uint8_t {
 class PyStepManager {
 public:
     static PyStepManager& Instance();
-    void RecordPyStep(const ClientId &clientId, const PyStepRecord &PyStepRecord);
+    void RecordPyStep(const ClientId &clientId, std::shared_ptr<const EventBase> event);
     void Subscribe(const PyStepEventSubscriber &subscriber, const PyStepEventCallBackFunc &func);
     void UnSubscribe(const PyStepEventSubscriber &subscriber);
 private:
@@ -53,7 +53,7 @@ private:
     PyStepManager(PyStepManager&&) = delete;
     PyStepManager& operator=(PyStepManager&&) = delete;
 
-    void Notify(const PyStepRecord &PyStepRecord);
+    void Notify(std::shared_ptr<const EventBase> event);
     std::mutex pyStepMutex_;
     std::unordered_map<PyStepEventSubscriber, PyStepEventCallBackFunc> subscriberList_;
 };

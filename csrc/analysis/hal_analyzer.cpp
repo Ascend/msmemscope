@@ -15,9 +15,10 @@
  * -------------------------------------------------------------------------
  */
 
-#include "hal_analyzer.h"
+#include <memory>
 #include "utility/log.h"
 #include "bit_field.h"
+#include "hal_analyzer.h"
 
 namespace MemScope {
 
@@ -73,69 +74,74 @@ bool HalAnalyzer::CreateMemTables(const ClientId &clientId)
     return false;
 }
 
-void HalAnalyzer::RecordMalloc(const ClientId &clientId, const MemOpRecord memrecord)
+void HalAnalyzer::RecordMalloc(const ClientId &clientId, std::shared_ptr<const EventBase> event)
 {
-    uint64_t memkey = memrecord.addr;
+    std::shared_ptr<const MemoryEvent> memEvent = std::dynamic_pointer_cast<const MemoryEvent>(event);
+    if (memEvent == nullptr) {
+        LOG_WARN("[client %u]: HalAnalyzer receive invalid event.", clientId);
+        return;
+    }
+    uint64_t memkey = memEvent->addr;
     // malloc操作需解析当前moduleId
     bool foundModule = false;
     std::string modulename = "INVLID_MOUDLE_ID";
-    if (MODULE_HASH_TABLE.find(memrecord.modid) != MODULE_HASH_TABLE.end()) {
-        modulename = MODULE_HASH_TABLE.find(memrecord.modid)->second;
+    if (MODULE_HASH_TABLE.find(memEvent->moduleId) != MODULE_HASH_TABLE.end()) {
+        modulename = MODULE_HASH_TABLE.find(memEvent->moduleId)->second;
         foundModule = true;
     }
     if (!foundModule) {
-        LOG_WARN("[client %u][device: %ld]: Malloc operator did not find %d Module in index %u malloc record.",
-            clientId, memrecord.devId, memrecord.modid, memrecord.recordIndex);
+        LOG_WARN("[client %u][device: %d]: Malloc operator did not find %d Module in index %u malloc record.",
+            clientId, memEvent->device, memEvent->moduleId, memEvent->id);
     }
 
     if (memtables_[clientId].find(memkey) != memtables_[clientId].end()) {
         if ((memtables_[clientId].find(memkey)->second.addrStatus == AddrStatus::FREE_WAIT)) {
             LOG_WARN(
-                "[client %u]: server already has malloc record in addr: 0x%lx ,", clientId, memrecord.addr);
+                "[client %u]: server already has malloc record in addr: 0x%lx ,", clientId, memEvent->addr);
             LOG_WARN("[client %u]: but now malloc again in index: %u, addr: 0x%lx, size: %u, space: %u",
-                clientId, memrecord.recordIndex, memrecord.addr, memrecord.memSize, memrecord.space);
+                clientId, memEvent->id, memEvent->addr, memEvent->size, memEvent->space);
         }
     } else {
         HalMemInfo halMemInfo{};
         memtables_[clientId].emplace(memkey, halMemInfo);
     }
-    memtables_[clientId][memkey].deviceId = memrecord.devId;
+    memtables_[clientId][memkey].deviceId = memEvent->device;
     memtables_[clientId][memkey].addrStatus = AddrStatus::FREE_WAIT;
 }
 
-void HalAnalyzer::RecordFree(const ClientId &clientId, const MemOpRecord memrecord)
+void HalAnalyzer::RecordFree(const ClientId &clientId, std::shared_ptr<const EventBase> event)
 {
-    uint64_t memkey = memrecord.addr;
+    uint64_t memkey = event->addr;
     auto it = memtables_[clientId].find(memkey);
     if (it != memtables_[clientId].end()) {
         if (it->second.addrStatus == AddrStatus::FREE_WAIT) {
             memtables_[clientId][memkey].addrStatus = AddrStatus::FREE_ALREADY;
         } else {
             LOG_WARN("[client %u]: Double free operator found for malloc operation : addr: 0x%lx",
-                clientId, memrecord.addr);
+                clientId, event->addr);
         }
     } else {
             LOG_WARN("[client %u]: No matching malloc operation found for free operator: addr: 0x%lx",
-                clientId, memrecord.addr);
+                clientId, event->addr);
     }
 }
 
-bool HalAnalyzer::Record(const ClientId &clientId, const RecordBase &record)
+bool HalAnalyzer::Record(const ClientId &clientId, std::shared_ptr<const EventBase> event)
 {
     // 判断是否满足功能开启条件
     if (!IsHalAnalysisEnable()) {
         return true;
     }
-    auto memRecord = static_cast<const MemOpRecord&>(record);
+
     if (!CreateMemTables(clientId)) {
         LOG_ERROR("[client %u]: Create hal Memory table failed.", clientId);
         return false;
     }
-    if (memRecord.subtype == RecordSubType::MALLOC) {
-        RecordMalloc(clientId, memRecord);
+    if (event->eventType == EventBaseType::MALLOC) {
+        RecordMalloc(clientId, event);
         return true;
-    } else if (memRecord.subtype == RecordSubType::FREE) {
-        RecordFree(clientId, memRecord);
+    } else if (event->eventType == EventBaseType::FREE) {
+        RecordFree(clientId, event);
         return true;
     }
     return false;

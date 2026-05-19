@@ -58,7 +58,7 @@ private:
 class CsvHandler : public DataHandler {
 public:
     ~CsvHandler() override;
-    explicit CsvHandler(const Config config, DataType dataType, std::string devId);
+    explicit CsvHandler(const Config config, DataType dataType, int32_t devId);
     bool Init() override;
     bool Write(std::shared_ptr<DataBase> data) override;
     void FflushFile() override;
@@ -71,14 +71,14 @@ private:
     std::string csvHeader_;
     std::string prefix_;
     DataType dataType_;
-    std::string devId_;
+    int32_t devId_;
     std::mutex dumpFileMutex_;
     std::mutex traceFileMutex_;
 };
 
 class DbHandler : public DataHandler {
 public:
-    explicit DbHandler(const Config config, DataType dataType, std::string devId);
+    explicit DbHandler(const Config config, DataType dataType, int32_t devId);
     ~DbHandler() override;
     bool Init() override;
     bool Write(std::shared_ptr<DataBase> data) override;
@@ -96,7 +96,7 @@ private:
     std::string dbHeader_;
     std::string tableName_;
     DataType dataType_;
-    std::string devId_;
+    int32_t devId_;
     std::mutex dumpFileMutex_;
 };
 
@@ -105,7 +105,7 @@ std::string BuildInsertStatement(const std::string& table, const std::vector<std
 std::string BuildCreateStatement(const std::string& table,
     const std::vector<std::pair<std::string, std::string>>& columns);
 
-std::unique_ptr<DataHandler> MakeDataHandler(Config config, DataType data, std::string devId);
+std::unique_ptr<DataHandler> MakeDataHandler(Config config, DataType data, int32_t devId);
 std::string FixJson(const std::string& input);
 std::vector<std::string> ParserHeader(const std::vector<std::pair<std::string, std::string>>& header);
 }

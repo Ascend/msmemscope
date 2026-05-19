@@ -66,8 +66,8 @@
 
 | 软件单元 | 描述                  | 外部接口               | 内部接口      | 关系描述                                          |
 | ---------- | ----------------------- | ------------------------ | --------------- | --------------------------------------------------- |
-| 数据采集模块     | 通过hook等方式采集内存相关数据，并发送给框架模块 |ReportRecordEvent |Report_xx_hooks   | 整个模块通过hook，注册回调方式等采集数据，经过一定处理后将数据发送给框架侧        |
-| 数据分析模块     | 向框架模块注册回调，对采集模块发来的数据进行接收和分析 | RecordHandler          | xx_analyze  | 对采集到的数据进行分析，包括显存泄漏、比对 、监测等功能 |
+| 数据采集模块     | 通过hook等方式采集内存相关数据，并发送给框架模块 | Process::SendEvent |Report_xx_hooks   | 整个模块通过hook，注册回调方式等采集数据，经过一定处理后将数据发送给框架侧        |
+| 数据分析模块     | 向框架模块注册回调，对采集模块发来的数据进行接收和分析 | EventDispatcher::Subscribe  | xx_analyze  | 注册回调函数对采集到的数据进行分析，包括显存泄漏、比对 、监测等功能 |
 | 框架模块     | 作为系统的入口，负责解析命令行，串联数据采集和分析模块以及插桩 | CommandParser、MsgHandle     | DoLaunch、SetPreloadEnv   | 解析客户命令行配置，完成对数据采集和分析模块的配置，将采集模块的数据传送给分析模块  |
 
 #### 4.1.4 软件实现单元设计
@@ -269,7 +269,7 @@ NA
    ```
 
    ```tex
-   接口名：bool EventTraceManager::IsNeedTrace(const RecordType type)
+   接口名：bool EventTraceManager::IsNeedTrace(EventBaseType type)
    接口功能：判断某个采集项当前是否需要采集
    接口方向：采集模块内部
    输入参数名：记录的类型
@@ -279,7 +279,7 @@ NA
    ```
 
    ```tex
-   接口名：bool EventReport::ReportXXX(RecordBuffer &infoBuffer)
+   接口名：bool EventReport::SendEvent(std::shared_ptr<EventBase> event)
    接口功能：将某个采集项从数据采集模块发送到框架模块
    接口方向：采集模块内部
    输入参数名：记录具体的信息

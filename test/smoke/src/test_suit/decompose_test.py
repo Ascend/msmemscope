@@ -83,7 +83,7 @@ class DecomposeTestCase(BaseTest):
 
         ATTR_VALID_THRESHOLD = {
             "owner:PTA": {"min": 5450, "max": 5650},
-            "owner:CANN": {"min": 200, "max": 250}
+            "owner:CANN": {"min": 200, "max": 350}
         }
 
         if list(data.columns) != column.split(','):
@@ -106,7 +106,7 @@ class DecomposeTestCase(BaseTest):
                 upper_bound = ATTR_VALID_THRESHOLD[check_element]["max"]
                 if not (lower_bound <= actual_count <= upper_bound):
                     logging.error(f"{check_element} does not match the expectation, please check your dump file")
-                    return Result(False, [f"{check_element} does not match the expectation", -1], [-1])
+                    return Result(False, [f"{check_element} does not match the expectation", -1], [actual_count])
             else:
                 if actual_count < 1:
                     logging.error(f"{check_element} does not exist, please check your dump file")

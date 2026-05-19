@@ -37,6 +37,7 @@ add_subdirectory(analysis)
 add_subdirectory(python_itf)
 
 add_executable(msmemscope ${CMAKE_CURRENT_SOURCE_DIR}/main.cpp)
+target_link_options(msmemscope PRIVATE "-pie")
 
 target_link_libraries(msmemscope ascend_leaks)
 

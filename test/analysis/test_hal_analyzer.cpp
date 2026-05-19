@@ -17,6 +17,7 @@
 #include <gtest/gtest.h>
 #include <gtest/internal/gtest-port.h>
 #include <string>
+#include "event.h"
 #include "hal_analyzer.h"
 #include "record_info.h"
 #include "config_info.h"
@@ -31,39 +32,39 @@ TEST(HalAnalyzerTest, do_hal_record_except_memscope) {
     eventBit.setBit(static_cast<size_t>(EventType::FREE_EVENT));
     analysisConfig.eventType = eventBit.getValue();
     ClientId clientId = 0;
-    MemOpRecord record1;
-    record1.type = RecordType::MEMORY_RECORD;
-    record1.flag = 2377900603261207558;
-    record1.recordIndex = 1;
-    record1.space = MemOpSpace::DEVICE;
-    record1.subtype = RecordSubType::MALLOC;
-    record1.addr = 0x7958;
-    record1.memSize = 1024;
-    record1.timestamp = 1234567;
+    std::shared_ptr<EventBase> event1 = std::make_shared<MemoryEvent>();
+    event1->eventType = EventBaseType::MALLOC;
+    event1->flag = 2377900603261207558;
+    event1->id = 1;
+    event1->space = MemOpSpace::DEVICE;
+    event1->eventSubType = EventSubType::HAL;
+    event1->addr = 0x7958;
+    event1->size = 1024;
+    event1->timestamp = 1234567;
+
+    std::shared_ptr<EventBase> event2 = std::make_shared<MemoryEvent>();
+    event2->eventType = EventBaseType::MALLOC;
+    event2->flag = 18374686480754951175;
+    event2->id = 2;
+    event2->space = MemOpSpace::INVALID;
+    event2->eventSubType = EventSubType::HAL;
+    event2->addr = 0x7957;
+    event2->size = 512;
+    event2->timestamp = 1234568;
  
-    MemOpRecord record2;
-    record2.type = RecordType::MEMORY_RECORD;
-    record2.flag = 18374686480754951175;
-    record2.recordIndex = 2;
-    record2.space = MemOpSpace::INVALID;
-    record2.subtype = RecordSubType::MALLOC;
-    record2.addr = 0x7957;
-    record2.memSize = 512;
-    record2.timestamp = 1234568;
+    std::shared_ptr<EventBase> event3 = std::make_shared<MemoryEvent>();
+    event3->eventType = EventBaseType::MALLOC;
+    event3->flag = 504403158275081222;
+    event3->id = 3;
+    event3->space = MemOpSpace::DEVICE;
+    event3->eventSubType = EventSubType::HAL;
+    event3->addr = 0x7960;
+    event3->size = 1024;
+    event3->timestamp = 1234557;
  
-    MemOpRecord record4;
-    record4.type = RecordType::MEMORY_RECORD;
-    record4.flag = 504403158275081222;
-    record4.recordIndex = 4;
-    record4.space = MemOpSpace::DEVICE;
-    record4.subtype = RecordSubType::MALLOC;
-    record4.addr = 0x7960;
-    record4.memSize = 1024;
-    record4.timestamp = 1234557;
- 
-    EXPECT_TRUE(HalAnalyzer::GetInstance(analysisConfig).Record(clientId, record1));
-    EXPECT_TRUE(HalAnalyzer::GetInstance(analysisConfig).Record(clientId, record2));
-    EXPECT_TRUE(HalAnalyzer::GetInstance(analysisConfig).Record(clientId, record4));
+    EXPECT_TRUE(HalAnalyzer::GetInstance(analysisConfig).Record(clientId, event1));
+    EXPECT_TRUE(HalAnalyzer::GetInstance(analysisConfig).Record(clientId, event2));
+    EXPECT_TRUE(HalAnalyzer::GetInstance(analysisConfig).Record(clientId, event3));
 }
 
 TEST(HalAnalyzerTest, do_record_except_no_memscope) {
@@ -73,26 +74,28 @@ TEST(HalAnalyzerTest, do_record_except_no_memscope) {
     eventBit.setBit(static_cast<size_t>(EventType::FREE_EVENT));
     analysisConfig.eventType = eventBit.getValue();
     ClientId clientId = 0;
-    MemOpRecord record1;
-    record1.type = RecordType::MEMORY_RECORD;
-    record1.flag = 2377900603261207558;
-    record1.recordIndex = 1;
-    record1.space = MemOpSpace::DEVICE;
-    record1.subtype = RecordSubType::MALLOC;
-    record1.addr = 0x7958;
-    record1.memSize = 1024;
-    record1.timestamp = 1234567;
 
-    MemOpRecord record3;
-    record3.type = RecordType::MEMORY_RECORD;
-    record3.recordIndex = 3;
-    record3.space = MemOpSpace::INVALID;
-    record3.subtype = RecordSubType::FREE;
-    record3.addr = 0x7958;
-    record3.memSize = 0;
+    std::shared_ptr<EventBase> event1 = std::make_shared<MemoryEvent>();
+    event1->eventType = EventBaseType::MALLOC;
+    event1->flag = 2377900603261207558;
+    event1->id = 1;
+    event1->space = MemOpSpace::DEVICE;
+    event1->eventSubType = EventSubType::HAL;
+    event1->addr = 0x7958;
+    event1->size = 1024;
+    event1->timestamp = 1234567;
 
-    EXPECT_TRUE(HalAnalyzer::GetInstance(analysisConfig).Record(clientId, record1));
-    EXPECT_TRUE(HalAnalyzer::GetInstance(analysisConfig).Record(clientId, record3));
+    std::shared_ptr<EventBase> event2 = std::make_shared<MemoryEvent>();
+    event2->eventType = EventBaseType::FREE;
+    event2->flag = 18374686480754951175;
+    event2->id = 2;
+    event2->space = MemOpSpace::INVALID;
+    event2->eventSubType = EventSubType::HAL;
+    event2->addr = 0x7958;
+    event2->size = 0;
+
+    EXPECT_TRUE(HalAnalyzer::GetInstance(analysisConfig).Record(clientId, event1));
+    EXPECT_TRUE(HalAnalyzer::GetInstance(analysisConfig).Record(clientId, event2));
 }
 
 TEST(HalAnalyzerTest, do_record_excpet_double_free) {
@@ -102,35 +105,38 @@ TEST(HalAnalyzerTest, do_record_excpet_double_free) {
     eventBit.setBit(static_cast<size_t>(EventType::FREE_EVENT));
     analysisConfig.eventType = eventBit.getValue();
     ClientId clientId = 0;
-    MemOpRecord record1;
-    record1.type = RecordType::MEMORY_RECORD;
-    record1.flag = 2377900603261207558;
-    record1.recordIndex = 1;
-    record1.space = MemOpSpace::DEVICE;
-    record1.subtype = RecordSubType::MALLOC;
-    record1.addr = 0x7958;
-    record1.memSize = 1024;
-    record1.timestamp = 1234567;
 
-    MemOpRecord record2;
-    record2.type = RecordType::MEMORY_RECORD;
-    record2.recordIndex = 2;
-    record2.space = MemOpSpace::INVALID;
-    record2.subtype = RecordSubType::FREE;
-    record2.addr = 0x7958;
-    record2.memSize = 0;
+    std::shared_ptr<EventBase> event1 = std::make_shared<MemoryEvent>();
+    event1->eventType = EventBaseType::MALLOC;
+    event1->flag = 2377900603261207558;
+    event1->id = 1;
+    event1->space = MemOpSpace::DEVICE;
+    event1->eventSubType = EventSubType::HAL;
+    event1->addr = 0x7958;
+    event1->size = 1024;
+    event1->timestamp = 1234567;
 
-    MemOpRecord record3;
-    record3.type = RecordType::MEMORY_RECORD;
-    record3.recordIndex = 3;
-    record3.space = MemOpSpace::INVALID;
-    record3.subtype = RecordSubType::FREE;
-    record3.addr = 0x7958;
-    record3.memSize = 0;
+    std::shared_ptr<EventBase> event2 = std::make_shared<MemoryEvent>();
+    event2->eventType = EventBaseType::FREE;
+    event2->flag = 18374686480754951175;
+    event2->id = 2;
+    event2->space = MemOpSpace::INVALID;
+    event2->eventSubType = EventSubType::HAL;
+    event2->addr = 0x7958;
+    event2->size = 0;
 
-    EXPECT_TRUE(HalAnalyzer::GetInstance(analysisConfig).Record(clientId, record1));
-    EXPECT_TRUE(HalAnalyzer::GetInstance(analysisConfig).Record(clientId, record2));
-    EXPECT_TRUE(HalAnalyzer::GetInstance(analysisConfig).Record(clientId, record3));
+    std::shared_ptr<EventBase> event3 = std::make_shared<MemoryEvent>();
+    event3->eventType = EventBaseType::FREE;
+    event3->flag = 18374686480754951175;
+    event3->id = 3;
+    event3->space = MemOpSpace::INVALID;
+    event3->eventSubType = EventSubType::HAL;
+    event3->addr = 0x7958;
+    event3->size = 0;
+
+    EXPECT_TRUE(HalAnalyzer::GetInstance(analysisConfig).Record(clientId, event1));
+    EXPECT_TRUE(HalAnalyzer::GetInstance(analysisConfig).Record(clientId, event2));
+    EXPECT_TRUE(HalAnalyzer::GetInstance(analysisConfig).Record(clientId, event3));
 }
 
 TEST(HalAnalyzerTest, do_record_except_double_malloc) {
@@ -140,28 +146,29 @@ TEST(HalAnalyzerTest, do_record_except_double_malloc) {
     eventBit.setBit(static_cast<size_t>(EventType::FREE_EVENT));
     analysisConfig.eventType = eventBit.getValue();
     ClientId clientId = 0;
-    MemOpRecord record1;
-    record1.type = RecordType::MEMORY_RECORD;
-    record1.flag = 2377900603261207558;
-    record1.recordIndex = 1;
-    record1.space = MemOpSpace::DEVICE;
-    record1.subtype = RecordSubType::MALLOC;
-    record1.addr = 0x7958;
-    record1.memSize = 1024;
-    record1.timestamp = 1234567;
+
+    std::shared_ptr<EventBase> event1 = std::make_shared<MemoryEvent>();
+    event1->eventType = EventBaseType::MALLOC;
+    event1->flag = 2377900603261207558;
+    event1->id = 1;
+    event1->space = MemOpSpace::DEVICE;
+    event1->eventSubType = EventSubType::HAL;
+    event1->addr = 0x7958;
+    event1->size = 1024;
+    event1->timestamp = 1234567;
 
     MemOpRecord record2;
-    record2.type = RecordType::MEMORY_RECORD;
-    record2.flag = 2377900603261207558;
-    record2.recordIndex = 2;
-    record2.space = MemOpSpace::DEVICE;
-    record2.subtype = RecordSubType::MALLOC;
-    record2.addr = 0x7958;
-    record2.memSize = 1024;
-    record2.timestamp = 1234567;
+    std::shared_ptr<EventBase> event2 = std::make_shared<MemoryEvent>();
+    event2->eventType = EventBaseType::FREE;
+    event2->flag = 2377900603261207558;
+    event2->id = 2;
+    event2->space = MemOpSpace::INVALID;
+    event2->eventSubType = EventSubType::HAL;
+    event2->addr = 0x7958;
+    event2->size = 0;
 
-    EXPECT_TRUE(HalAnalyzer::GetInstance(analysisConfig).Record(clientId, record1));
-    EXPECT_TRUE(HalAnalyzer::GetInstance(analysisConfig).Record(clientId, record2));
+    EXPECT_TRUE(HalAnalyzer::GetInstance(analysisConfig).Record(clientId, event1));
+    EXPECT_TRUE(HalAnalyzer::GetInstance(analysisConfig).Record(clientId, event2));
 }
 
 TEST(HalAnalyzerTest, do_record_except_free_null) {
@@ -171,15 +178,16 @@ TEST(HalAnalyzerTest, do_record_except_free_null) {
     eventBit.setBit(static_cast<size_t>(EventType::FREE_EVENT));
     analysisConfig.eventType = eventBit.getValue();
     ClientId clientId = 0;
-    MemOpRecord record1;
-    record1.type = RecordType::MEMORY_RECORD;
-    record1.recordIndex = 1;
-    record1.space = MemOpSpace::INVALID;
-    record1.subtype = RecordSubType::FREE;
-    record1.addr = 0x7958;
-    record1.memSize = 0;
 
-    EXPECT_TRUE(HalAnalyzer::GetInstance(analysisConfig).Record(clientId, record1));
+    std::shared_ptr<EventBase> event1 = std::make_shared<MemoryEvent>();
+    event1->eventType = EventBaseType::FREE;
+    event1->id = 2;
+    event1->space = MemOpSpace::INVALID;
+    event1->eventSubType = EventSubType::HAL;
+    event1->addr = 0x7958;
+    event1->size = 0;
+
+    EXPECT_TRUE(HalAnalyzer::GetInstance(analysisConfig).Record(clientId, event1));
 }
 
 TEST(HalAnalyzerTest, do_record_fail) {
@@ -189,15 +197,16 @@ TEST(HalAnalyzerTest, do_record_fail) {
     eventBit.setBit(static_cast<size_t>(EventType::FREE_EVENT));
     analysisConfig.eventType = eventBit.getValue();
     ClientId clientId = 0;
-    MemOpRecord record1;
-    record1.type = RecordType::MEMORY_RECORD;
-    record1.recordIndex = 1;
-    record1.space = MemOpSpace::INVALID;
-    record1.subtype = RecordSubType::FREE;
-    record1.addr = 0x7958;
-    record1.memSize = 0;
 
-    EXPECT_TRUE(HalAnalyzer::GetInstance(analysisConfig).Record(clientId, record1));
+    std::shared_ptr<EventBase> event1 = std::make_shared<MemoryEvent>();
+    event1->eventType = EventBaseType::FREE;
+    event1->id = 1;
+    event1->space = MemOpSpace::INVALID;
+    event1->eventSubType = EventSubType::HAL;
+    event1->addr = 0x7958;
+    event1->size = 0;
+
+    EXPECT_TRUE(HalAnalyzer::GetInstance(analysisConfig).Record(clientId, event1));
 }
 
 TEST(HalAnalyzerTest, do_memory_record_nulltable) {
@@ -206,11 +215,15 @@ TEST(HalAnalyzerTest, do_memory_record_nulltable) {
     eventBit.setBit(static_cast<size_t>(EventType::ALLOC_EVENT));
     eventBit.setBit(static_cast<size_t>(EventType::FREE_EVENT));
     analysisConfig.eventType = eventBit.getValue();
-    MemOpRecord record;
-    record.type = RecordType::MEMORY_RECORD;
-    record.recordIndex = 123;
-    record.addr = 0x7958;
+
+    std::shared_ptr<EventBase> event1 = std::make_shared<MemoryEvent>();
+    event1->eventType = EventBaseType::FREE;
+    event1->id = 123;
+    event1->space = MemOpSpace::INVALID;
+    event1->eventSubType = EventSubType::HAL;
+    event1->addr = 0x7958;
+    event1->size = 0;
     ClientId clientId = 0;
-    record.subtype = RecordSubType::FREE;
-    EXPECT_TRUE(HalAnalyzer::GetInstance(analysisConfig).Record(clientId, record));
+
+    EXPECT_TRUE(HalAnalyzer::GetInstance(analysisConfig).Record(clientId, event1));
 }

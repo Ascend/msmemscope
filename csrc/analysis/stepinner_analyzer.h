@@ -24,6 +24,7 @@
 
 #include "config_info.h"
 #include "comm_def.h"
+#include "event.h"
 #include "framework/record_info.h"
 
 namespace MemScope {
@@ -38,10 +39,10 @@ using StepId = uint64_t;
 constexpr uint64_t BYTE_TO_MB = 1024 * 1024;
 constexpr double  PERCENT_SCALE_FACTOR = 100.0;
 
-const std::unordered_map<RecordType, std::string> RecordTypeToString = {
-    {RecordType::ATB_MEMORY_POOL_RECORD, "ATB memory pool"},
-    {RecordType::PTA_CACHING_POOL_RECORD, "Pytorch Caching memory pool"},
-    {RecordType::MINDSPORE_NPU_RECORD, "Mindspore memory pool"}
+const std::unordered_map<PoolType, std::string> PoolTypeToString = {
+    {PoolType::ATB, "ATB memory pool"},
+    {PoolType::PTA_CACHING, "Pytorch Caching memory pool"},
+    {PoolType::MINDSPORE, "Mindspore memory pool"}
 };
 
 // step信息的俩个来源mstx和msmemscope.step()不能同时存在，第一个接收的会被用作信息来源，后续其他来源将被无视
@@ -52,7 +53,7 @@ enum class StepSource {
 };
 
 struct StepInfo {
-    std::unordered_map<RecordType, int64_t> stepAllocTable;
+    std::unordered_map<PoolType, int64_t> stepAllocTable;
     uint64_t rangeId = 0;  // rangeId唯一标识，用于判断mstx方式中是否为固化信息的打点信息，在接口方式中该项无效
 };
 
@@ -66,9 +67,9 @@ enum class MemActionType : uint8_t {
 
 struct  LeakMemKey  {
     uint64_t ptr;
-    RecordType type;
+    PoolType type;
     uint64_t leakStepId;
-    LeakMemKey(uint64_t p, RecordType t, uint64_t id) : ptr(p), type(t), leakStepId(id) {}
+    LeakMemKey(uint64_t p, PoolType t, uint64_t id) : ptr(p), type(t), leakStepId(id) {}
     bool operator==(const LeakMemKey& other) const;
 };
 
@@ -85,7 +86,7 @@ using LeakSumsTable = std::unordered_map<LeakMemKey, LeakInfo, LeakMemKeyHash>;
 
 // 单条内存操作信息
 struct NpuMemInfo {
-    RecordType type;
+    PoolType type;
     int64_t memSize;
     uint64_t timestamp;
     uint64_t duration;      // 目前经历的duration
@@ -103,7 +104,6 @@ struct GapInfo  {
 struct MemoryPoolStatus {
     int64_t totalAllocated = 0;
     int64_t totalReserved = 0;
-    int64_t totalActive = 0;
     int64_t stepMaxAllocated = 0;
     int64_t stepMinAllocated = 0;
     GapInfo maxGapInfo;    // 记录动态内存和静态内存比值最大的信息
@@ -112,8 +112,8 @@ struct MemoryPoolStatus {
 
 struct NpuMemKey {
     uint64_t ptr;
-    RecordType memType;
-    NpuMemKey(uint64_t p, RecordType t) : ptr(p), memType(t) {}
+    PoolType memType;
+    NpuMemKey(uint64_t p, PoolType t) : ptr(p), memType(t) {}
     bool operator==(const NpuMemKey& other) const;
 };
 
@@ -123,14 +123,14 @@ struct NpuMemKeyHash {
 
 struct NpuMemUsage {
     std::unordered_map<NpuMemKey, NpuMemInfo, NpuMemKeyHash> poolOpTable; // 维护内存池具体操作的表
-    std::unordered_map<RecordType, MemoryPoolStatus> poolStatusTable;      // 维护内存池占用状态的表
+    std::unordered_map<PoolType, MemoryPoolStatus> poolStatusTable;      // 维护内存池占用状态的表
     uint64_t duringStep = 0; // 用于更新当前到哪一个step，并将其应用于表中的stepId属性。
 };
 
 class StepInnerAnalyzer {
 public:
     static StepInnerAnalyzer &GetInstance(Config config);
-    bool Record(const ClientId &clientId, const RecordBase &record);
+    bool Record(const ClientId &clientId, std::shared_ptr<const EventBase> event);
 private:
     explicit StepInnerAnalyzer(Config config);
     ~StepInnerAnalyzer();
@@ -139,13 +139,13 @@ private:
     StepInnerAnalyzer(StepInnerAnalyzer&& other) = delete;
     StepInnerAnalyzer& operator=(StepInnerAnalyzer&& other) = delete;
     
-    const std::string& GetMemoryPoolName(const RecordType &poolType);
-    void UpdateStepInfoTable(const DeviceId &deviceId, const uint64_t &stepId, const RecordType &poolType,
+    const std::string& GetMemoryPoolName(const PoolType &poolType);
+    void UpdateStepInfoTable(const DeviceId &deviceId, const uint64_t &stepId, const PoolType &poolType,
         const int64_t &startAllocated);
-    void ReceiveMstxMsg(const MstxRecord &mstxRecord);
-    void ReceiveStepMsg(const PyStepRecord &pyStepRecord);
+    void ReceiveMstxMsg(std::shared_ptr<const MstxEvent> mstxEvent);
+    void ReceiveStepMsg(std::shared_ptr<const EventBase>);
     void HandleStepMsg(const DeviceId &deviceId, const uint64_t &stepId);
-    void UpdateAllocated(const DeviceId &deviceId, const RecordType &poolType, const int64_t &totalAllocated);
+    void UpdateAllocated(const DeviceId &deviceId, const PoolType &poolType, const int64_t &totalAllocated);
     void AddDuration(const DeviceId &deviceId);
     void SetStepId(const DeviceId &deviceId, const uint64_t &stepId);
     void CheckGap(const DeviceId &deviceId);
@@ -153,8 +153,8 @@ private:
     bool CreateStepInfoTables(const DeviceId &deviceId);
     bool CreateTables(const DeviceId &deviceId);
     bool CreateLeakSumTables(const DeviceId &deviceId);
-    void RecordNpuMalloc(const ClientId &clientId, const DeviceId &deviceId, const MemPoolRecord &memPoolRecord);
-    void RecordNpuFree(const ClientId &clientId, const DeviceId &deviceId, const MemPoolRecord &memPoolRecord);
+    void RecordNpuMalloc(const ClientId &clientId, const DeviceId &deviceId, std::shared_ptr<const MemoryEvent> memEvent);
+    void RecordNpuFree(const ClientId &clientId, const DeviceId &deviceId, std::shared_ptr<const MemoryEvent> memEvent);
     bool SkipCheck(const NpuMemInfo &npuMemInfo) const;
     void ReportLeak(const DeviceId &deviceId);
     void ReportGap(const DeviceId &deviceId);

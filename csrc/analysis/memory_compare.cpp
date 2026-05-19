@@ -263,7 +263,7 @@ bool MemoryCompare::WriteCompareDataToCsv()
     }
 
     if (!Utility::FileCreateManager::GetInstance(config_.outputDir).CreateCsvFile(&compareFile_,
-        EMPTY_DEVID, MEMORY_COMPARE_FILE_PREFIX, COMPARE_DIR, std::string(STEP_INTER_HEADERS))) {
+        GD_INVALID_NUM, MEMORY_COMPARE_FILE_PREFIX, COMPARE_DIR, std::string(STEP_INTER_HEADERS))) {
         LOG_ERROR("Create comparison csv file failed!");
         return false;
     }

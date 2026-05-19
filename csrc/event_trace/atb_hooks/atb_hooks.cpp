@@ -79,7 +79,8 @@ namespace atb {
                 attrStr[0] = '\0';
             }
             EventReport::Instance(MemScopeCommType::SHARED_MEMORY).ReportAtbAccessMemory(
-                nameStr, attrStr,
+                nameStr, sizeof(nameStr),
+                attrStr, sizeof(attrStr),
                 static_cast<uint64_t>((std::uintptr_t)tensor.deviceData),
                 tensor.dataSize, AccessType::UNKNOWN);
         }
@@ -93,7 +94,8 @@ namespace atb {
                 attrStr[0] = '\0';
             }
             EventReport::Instance(MemScopeCommType::SHARED_MEMORY).ReportAtbAccessMemory(
-                nameStr, attrStr,
+                nameStr, sizeof(nameStr),
+                attrStr, sizeof(attrStr),
                 static_cast<uint64_t>((std::uintptr_t)tensor.deviceData),
                 tensor.dataSize, AccessType::WRITE);
         }
@@ -113,7 +115,8 @@ namespace atb {
                 attrStr[0] = '\0';
             }
             EventReport::Instance(MemScopeCommType::SHARED_MEMORY).ReportAtbAccessMemory(
-                nameStr, attrStr,
+                nameStr, sizeof(nameStr),
+                attrStr, sizeof(attrStr),
                 static_cast<uint64_t>((std::uintptr_t)tensor.data),
                 tensor.dataSize, AccessType::UNKNOWN);
         }
@@ -127,7 +130,8 @@ namespace atb {
                 attrStr[0] = '\0';
             }
             EventReport::Instance(MemScopeCommType::SHARED_MEMORY).ReportAtbAccessMemory(
-                nameStr, attrStr,
+                nameStr, sizeof(nameStr),
+                attrStr, sizeof(attrStr),
                 static_cast<uint64_t>((std::uintptr_t)tensor.data),
                 tensor.dataSize, AccessType::WRITE);
         }
@@ -248,8 +252,8 @@ extern "C" atb::Status _ZN3atb6Runner7ExecuteERNS_17RunnerVariantPackE(atb::Runn
         LOG_ERROR("Cannot find origin function of atb.\n");
         return 0;
     }
-    if (!EventTraceManager::Instance().IsTracingEnabled() ||
-        !EventTraceManager::Instance().ShouldTraceType(RecordType::ATB_OP_EXECUTE_RECORD)) {
+    if (!EventTraceManager::Instance().IsNeedTrace(EventBaseType::OP_LAUNCH) &&
+        !EventTraceManager::Instance().IsNeedTrace(EventBaseType::ACCESS)) {
         return funcExecute(thisPtr, runnerVariantPack);
     }
     std::string params;
@@ -260,14 +264,12 @@ extern "C" atb::Status _ZN3atb6Runner7ExecuteERNS_17RunnerVariantPackE(atb::Runn
         || !atb::MemScopeGetAclrtStream(thisPtr, runnerVariantPack, stream)) {
         return 0;
     }
-    if (EventTraceManager::Instance().IsTracingEnabled() &&
-        EventTraceManager::Instance().ShouldTraceType(RecordType::OP_LAUNCH_RECORD)) {
+    if (EventTraceManager::Instance().IsNeedTrace(EventBaseType::OP_LAUNCH)) {
         params = atb::MemScopeGetOpParams(runnerVariantPack, dir);
         atb::MemScopeReportOp(name, params, true);
     }
 
-    if (EventTraceManager::Instance().IsTracingEnabled() &&
-        EventTraceManager::Instance().ShouldTraceType(RecordType::MEM_ACCESS_RECORD)) {
+    if (EventTraceManager::Instance().IsNeedTrace(EventBaseType::ACCESS)) {
         atb::MemScopeReportTensors(runnerVariantPack, name);
     }
     char cDirPath[WATCH_OP_DIR_MAX_LENGTH];
@@ -292,12 +294,10 @@ extern "C" atb::Status _ZN3atb6Runner7ExecuteERNS_17RunnerVariantPackE(atb::Runn
         }
         OpExcuteEnd(stream, cDirPath, tensors, runnerVariantPack.outTensors.size());
     }
-    if (EventTraceManager::Instance().IsTracingEnabled() &&
-        EventTraceManager::Instance().ShouldTraceType(RecordType::OP_LAUNCH_RECORD)) {
+    if (EventTraceManager::Instance().IsNeedTrace(EventBaseType::OP_LAUNCH)) {
         atb::MemScopeReportOp(name, params, false);
     }
-    if (EventTraceManager::Instance().IsTracingEnabled() &&
-        EventTraceManager::Instance().ShouldTraceType(RecordType::MEM_ACCESS_RECORD)) {
+    if (EventTraceManager::Instance().IsNeedTrace(EventBaseType::ACCESS)) {
         atb::MemScopeReportTensors(runnerVariantPack, name);
     }
     return st;
@@ -311,8 +311,8 @@ extern "C" void _ZN3atb9StoreUtil15SaveLaunchParamEPvRKN3Mki11LaunchParamERKNSt7
 #endif
 (aclrtStream stream, const Mki::LaunchParam& launchParam, const std::string& dirPath)
 {
-    if (!EventTraceManager::Instance().IsTracingEnabled() ||
-        !EventTraceManager::Instance().ShouldTraceType(RecordType::ATB_KERNEL_RECORD)) {
+    if (!EventTraceManager::Instance().IsNeedTrace(EventBaseType::KERNEL_LAUNCH) &&
+        !EventTraceManager::Instance().IsNeedTrace(EventBaseType::ACCESS)) {
         return;
     }
     static auto getInTensors = VallinaSymbol<ATBLibLoader>::Instance().Get<Mki::MemScopeOriginalGetInTensors>(
@@ -336,15 +336,13 @@ extern "C" void _ZN3atb9StoreUtil15SaveLaunchParamEPvRKN3Mki11LaunchParamERKNSt7
     bool isBeforeLaunch;
     atb::MemScopeParseKernelPath(isBeforeLaunch, name, dirPath);
 
-    if (EventTraceManager::Instance().IsTracingEnabled() ||
-        EventTraceManager::Instance().ShouldTraceType(RecordType::KERNEL_LAUNCH_RECORD)) {
+    if (EventTraceManager::Instance().IsNeedTrace(EventBaseType::KERNEL_LAUNCH)) {
         if (!atb::MemScopeReportAtbKernel(name, dirPath, isBeforeLaunch)) {
             return;
         }
     }
 
-    if (EventTraceManager::Instance().IsTracingEnabled() ||
-        EventTraceManager::Instance().ShouldTraceType(RecordType::MEM_ACCESS_RECORD)) {
+    if (EventTraceManager::Instance().IsNeedTrace(EventBaseType::ACCESS)) {
         atb::MemScopeReportTensors(getInTensors, getOutTensors, launchParam, name);
     }
 }

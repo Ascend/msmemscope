@@ -78,88 +78,30 @@ Process& Process::GetInstance(Config config)
     return process;
 }
 
-Process::Process(const Config &config)
+bool Process::SendEvent(std::shared_ptr<EventBase> event)
 {
-    config_ = config;
-}
-
-std::shared_ptr<EventBase> Process::RecordToEvent(RecordBase* record)
-{
-    // 定义工厂函数类型
-    using EventFactory = std::function<std::shared_ptr<EventBase>(RecordBase*)>;
-
-    // 静态映射表：RecordType -> 对应的工厂函数
-    static const std::unordered_map<RecordType, EventFactory> kRecordToEventMap = {
-        {RecordType::MEMORY_RECORD, [](RecordBase* r) {
-            return std::make_shared<MemoryEvent>(*(static_cast<MemOpRecord*>(r))); }},
-        {RecordType::PTA_CACHING_POOL_RECORD, [](RecordBase* r) {
-            return std::make_shared<MemoryEvent>(*(static_cast<MemPoolRecord*>(r))); }},
-        {RecordType::PTA_WORKSPACE_POOL_RECORD, [](RecordBase* r) {
-            return std::make_shared<MemoryEvent>(*(static_cast<MemPoolRecord*>(r))); }},
-        {RecordType::ATB_MEMORY_POOL_RECORD, [](RecordBase* r) {
-            return std::make_shared<MemoryEvent>(*(static_cast<MemPoolRecord*>(r))); }},
-        {RecordType::MINDSPORE_NPU_RECORD, [](RecordBase* r) {
-            return std::make_shared<MemoryEvent>(*(static_cast<MemPoolRecord*>(r))); }},
-        {RecordType::MEM_ACCESS_RECORD, [](RecordBase* r) {
-            return std::make_shared<MemoryEvent>(*(static_cast<MemAccessRecord*>(r))); }},
-        {RecordType::ADDR_INFO_RECORD, [](RecordBase* r) {
-            return std::make_shared<MemoryOwnerEvent>(*(static_cast<AddrInfo*>(r))); }},
-        {RecordType::ATB_OP_EXECUTE_RECORD, [](RecordBase* r) {
-            return std::make_shared<OpLaunchEvent>(*(static_cast<AtbOpExecuteRecord*>(r))); }},
-        {RecordType::ATEN_OP_LAUNCH_RECORD, [](RecordBase* r) {
-            return std::make_shared<OpLaunchEvent>(*(static_cast<AtenOpLaunchRecord*>(r))); }},
-        {RecordType::KERNEL_LAUNCH_RECORD, [](RecordBase* r) {
-            return std::make_shared<KernelLaunchEvent>(*(static_cast<KernelLaunchRecord*>(r))); }},
-        {RecordType::KERNEL_EXCUTE_RECORD, [](RecordBase* r) {
-            return std::make_shared<KernelLaunchEvent>(*(static_cast<KernelExcuteRecord*>(r))); }},
-        {RecordType::ATB_KERNEL_RECORD, [](RecordBase* r) {
-            return std::make_shared<KernelLaunchEvent>(*(static_cast<AtbKernelRecord*>(r))); }},
-        {RecordType::MSTX_MARK_RECORD, [](RecordBase* r) {
-            return std::make_shared<MstxEvent>(*(static_cast<MstxRecord*>(r))); }},
-        {RecordType::ACL_ITF_RECORD, [](RecordBase* r) {
-            return std::make_shared<SystemEvent>(*(static_cast<AclItfRecord*>(r))); }},
-        {RecordType::TRACE_STATUS_RECORD, [](RecordBase* r) {
-            return std::make_shared<SystemEvent>(*(static_cast<TraceStatusRecord*>(r))); }},
-        {RecordType::PY_STEP_RECORD, [](RecordBase* r) {
-            return std::make_shared<SystemEvent>(*(static_cast<PyStepRecord*>(r))); }},
-        {RecordType::SNAPSHOT_EVENT, [](RecordBase* r) {
-            return std::make_shared<SnapshotEvent>(*(static_cast<MemorySnapshotRecord*>(r))); }},
-    };
-
-    if (record == nullptr) {
-        return nullptr;
-    }
-
-    auto it = kRecordToEventMap.find(record->type);
-    if (it == kRecordToEventMap.end()) {
-        return nullptr;
-    }
-    return it->second(record);
-}
-
-void Process::RecordHandler(const RecordBuffer& buffer)
-{
-    RecordBase* record = buffer.Cast<RecordBase>();
-    EventHandler(RecordToEvent(record));
-
-    switch (record->type) {
-        case RecordType::MEMORY_RECORD:
-            HalAnalyzer::GetInstance(config_).Record(record->pid, *record);
+    EventHandler(event);
+    switch (event->eventSubType) {
+        case EventSubType::HAL:
+            HalAnalyzer::GetInstance(config_).Record(event->pid, event);
             break;
-        case RecordType::MSTX_MARK_RECORD:
-            MstxAnalyzer::Instance().RecordMstx(record->pid, static_cast<const MstxRecord&>(*record));
+        case EventSubType::PTA_CACHING:
+        case EventSubType::ATB:
+        case EventSubType::MINDSPORE:
+            StepInnerAnalyzer::GetInstance(config_).Record(event->pid, event);
             break;
-        case RecordType::PY_STEP_RECORD:
-            PyStepManager::Instance().RecordPyStep(record->pid, static_cast<const PyStepRecord&>(*record));
+        case EventSubType::MSTX_MARK:
+        case EventSubType::MSTX_RANGE_START:
+        case EventSubType::MSTX_RANGE_END:
+            MstxAnalyzer::Instance().RecordMstx(event->pid, event);
             break;
-        case RecordType::PTA_CACHING_POOL_RECORD:
-        case RecordType::ATB_MEMORY_POOL_RECORD:
-        case RecordType::MINDSPORE_NPU_RECORD:
-            StepInnerAnalyzer::GetInstance(config_).Record(record->pid, *record);
+        case EventSubType::STEP:
+            PyStepManager::Instance().RecordPyStep(event->pid, event);
             break;
         default:
             break;
     }
+    return true;
 }
 
 void Process::Launch(const std::vector<std::string> &execParams)

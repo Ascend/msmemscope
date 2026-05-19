@@ -70,7 +70,7 @@ private:
         "record_start of _msmemscope._record_function", 
         "record_end of _msmemscope._record_function",
     };
-    std::unordered_map<std::string, std::unique_ptr<DataHandler>> handlerMap_;
+    std::unordered_map<int32_t, std::unique_ptr<DataHandler>> handlerMap_;
     std::vector<std::shared_ptr<TraceEvent>> sharedEventLists_;
 };
 void callback(const std::string& hash, const std::string& info, PyTraceType what, uint64_t timestamp);

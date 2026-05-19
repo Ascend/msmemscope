@@ -40,7 +40,7 @@ ACL_FUNC_VISIBILITY aclError aclInit(const char *configPath)
     using AclInit = decltype(&aclInit);
     auto vallina = VallinaSymbol<AclLibLoader>::Instance().Get<AclInit>("aclInit");
     if (vallina == nullptr) {
-        LOG_ERROR("vallina func get FAILED: " + std::string(__func__));
+        LOG_ERROR("vallina func get FAILED: %s", __func__);
         return ACL_ERROR_INTERNAL_ERROR;
     }
 
@@ -64,7 +64,7 @@ ACL_FUNC_VISIBILITY aclError aclFinalize()
     using AclFinalize = decltype(&aclFinalize);
     auto vallina = VallinaSymbol<AclLibLoader>::Instance().Get<AclFinalize>("aclFinalize");
     if (vallina == nullptr) {
-        LOG_ERROR("vallina func get FAILED: " + std::string(__func__));
+        LOG_ERROR("vallina func get FAILED: %s", __func__);
         return ACL_ERROR_INTERNAL_ERROR;
     }
 

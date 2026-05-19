@@ -15,9 +15,10 @@
  * -------------------------------------------------------------------------
  */
 
-#include "py_step_manager.h"
+#include "event.h"
 #include "utility/log.h"
 #include "utility/ustring.h"
+#include "py_step_manager.h"
 
 namespace MemScope {
 
@@ -49,28 +50,33 @@ void PyStepManager::UnSubscribe(const PyStepEventSubscriber &subscriber)
     return;
 }
 
-void PyStepManager::Notify(const PyStepRecord &pyStepRecord)
+void PyStepManager::Notify(std::shared_ptr<const EventBase> event)
 {
     std::lock_guard<std::mutex> lock(pyStepMutex_);
     for (auto &subscriber : subscriberList_) {
         if (subscriber.second != nullptr) {
-            subscriber.second(pyStepRecord);
+            subscriber.second(event);
         }
     }
     
     return;
 }
 
-void PyStepManager::RecordPyStep(const ClientId &clientId, const PyStepRecord &pyStepRecord)
+void PyStepManager::RecordPyStep(const ClientId &clientId, std::shared_ptr<const EventBase> event)
 {
-    DeviceId deviceId = pyStepRecord.devId;
-    uint64_t stepId = pyStepRecord.stepId;
+    DeviceId deviceId = event->device;
+    uint64_t stepId;
+    try {
+        stepId = std::stoull(event->name);
+    } catch (const std::exception& e) {
+        return;
+    }
 
     LOG_INFO("[npu %ld][client %u]: msmemscope.step(): Now in step: %llu",
         deviceId,
         clientId,
         stepId);
-    Notify(pyStepRecord);
+    Notify(event);
 
     return;
 }

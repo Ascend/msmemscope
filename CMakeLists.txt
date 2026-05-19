@@ -20,7 +20,6 @@ add_compile_definitions(_GLIBCXX_USE_CXX11_ABI=0)
 add_link_options("-Wl,-z,now")
 add_link_options("-Wl,-z,relro")
 add_link_options("-Wl,-z,noexecstack")
-add_link_options("-pie")
 add_link_options("-s") #strip
 set(CMAKE_SKIP_RPATH TRUE)
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++11")

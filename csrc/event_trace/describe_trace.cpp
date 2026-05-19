@@ -49,13 +49,7 @@ bool DescribeTrace::IsRepeat(uint64_t threadId, std::string owner)
 
 void DescribeTrace::DescribeAddr(uint64_t addr, std::string owner)
 {
-    Utility::ToSafeString(owner);
-    RecordBuffer buffer = RecordBuffer::CreateRecordBuffer<AddrInfo>(
-        TLVBlockType::ADDR_OWNER, "@" + owner);
-    AddrInfo* info = buffer.Cast<AddrInfo>();
-    info->subtype = RecordSubType::USER_DEFINED;
-    info->addr = addr;
-    EventReport::Instance(MemScopeCommType::SHARED_MEMORY).ReportAddrInfo(buffer);
+    EventReport::Instance(MemScopeCommType::SHARED_MEMORY).ReportAddrInfo(EventSubType::DESCRIBE_OWNER, addr, owner);
     return;
 }
 
@@ -64,11 +58,11 @@ void DescribeTrace::AddDescribe(std::string owner)
     auto tid = Utility::GetTid();
     Utility::ToSafeString(owner);
     if (IsRepeat(tid, owner)) {
-        LOG_ERROR("Cannot add duplicate tags " + owner);
+        LOG_ERROR("Cannot add duplicate tags %s", owner.c_str());
         return;
     }
     if (describe_[tid].size() >= maxSize) {
-        LOG_ERROR("The current thread label exceeds " + std::to_string(maxSize));
+        LOG_ERROR("The current thread label exceeds %u", static_cast<uint32_t>(maxSize));
         return;
     }
     describe_[tid].emplace_back(owner);
@@ -87,7 +81,7 @@ void DescribeTrace::EraseDescribe(std::string owner)
         }
     }
     if (i == siz) {
-        LOG_ERROR("Tag " + owner + " not found");
+        LOG_ERROR("Tag %s not found", owner.c_str());
     }
 }
 

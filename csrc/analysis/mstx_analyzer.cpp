@@ -15,9 +15,10 @@
  * -------------------------------------------------------------------------
  */
 
-#include "mstx_analyzer.h"
+#include "event.h"
 #include "utility/log.h"
 #include "utility/ustring.h"
+#include "mstx_analyzer.h"
 
 namespace MemScope {
 
@@ -49,49 +50,53 @@ void MstxAnalyzer::UnSubscribe(const MstxEventSubscriber &subscriber)
     return;
 }
 
-void MstxAnalyzer::Notify(const MstxRecord &mstxRecord)
+void MstxAnalyzer::Notify(std::shared_ptr<const MstxEvent> mstxEvent)
 {
     std::lock_guard<std::mutex> lock(mstxMutex_);
     for (auto &subscriber : subscriberList_) {
         if (subscriber.second != nullptr) {
-            subscriber.second(mstxRecord);
+            subscriber.second(mstxEvent);
         }
     }
     
     return;
 }
 
-bool MstxAnalyzer::RecordMstx(const ClientId &clientId, const MstxRecord &mstxRecord)
-{
-    DeviceId deviceId = mstxRecord.devId;
-    uint64_t stepId = mstxRecord.stepId;
-    const TLVBlock* tlv = GetTlvBlock(mstxRecord, TLVBlockType::MARK_MESSAGE);
-    std::string markMessage = tlv == nullptr ? "" : tlv->data;
+bool MstxAnalyzer::RecordMstx(const ClientId &clientId, std::shared_ptr<const EventBase> event)
+{ 
+    std::shared_ptr<const MstxEvent> mstxEvent = std::dynamic_pointer_cast<const MstxEvent>(event);
+    if (mstxEvent == nullptr) {
+        LOG_WARN("[client %u]: MstxAnalyzer receive invalid event.", clientId);
+        return false;
+    }
+    int32_t deviceId = mstxEvent->device;
+    uint64_t stepId = mstxEvent->stepId;
+    std::string markMessage = mstxEvent->name;
     Utility::ToSafeString(markMessage);
-    if (mstxRecord.markType == MarkType::RANGE_START_A) {
-        LOG_INFO("[npu %ld][client %u][stepid %llu][streamid %d][start]: %s",
+    if (event->eventSubType == EventSubType::MSTX_RANGE_START) {
+        LOG_INFO("[npu %d][client %u][stepid %llu][streamid %d][start]: %s",
             deviceId,
             clientId,
             stepId,
-            mstxRecord.streamId,
+            mstxEvent->streamId,
             markMessage.c_str());
-        Notify(mstxRecord);
+        Notify(mstxEvent);
         return true;
-    } else if (mstxRecord.markType == MarkType::RANGE_END) {
-        LOG_INFO("[npu %ld][client %u][stepid %llu][streamid %d][end]: %s",
+    } else if (event->eventSubType == EventSubType::MSTX_RANGE_END) {
+        LOG_INFO("[npu %d][client %u][stepid %llu][streamid %d][end]: %s",
             deviceId,
             clientId,
             stepId,
-            mstxRecord.streamId,
+            mstxEvent->streamId,
             markMessage.c_str());
-        Notify(mstxRecord);
+        Notify(mstxEvent);
         return true;
-    } else if (mstxRecord.markType == MarkType::MARK_A) {
-        LOG_INFO("[npu %ld][client %u][stepid %llu][streamid %d][mark]: %s",
+    } else if (event->eventSubType == EventSubType::MSTX_MARK) {
+        LOG_INFO("[npu %d][client %u][stepid %llu][streamid %d][mark]: %s",
             deviceId,
             clientId,
             stepId,
-            mstxRecord.streamId,
+            mstxEvent->streamId,
             markMessage.c_str());
         return true;
     }

@@ -886,13 +886,13 @@ void MemScopePythonCall(const std::string& module, const std::string& function)
     if (!torch.IsBad()) {
         Utility::PythonObject pythonModule = Utility::PythonObject::Import(module, false);
         if (pythonModule.IsBad()) {
-            LOG_ERROR("import " + module + " FAILED");
+            LOG_ERROR("import %s FAILED", module.c_str());
             return;
         }
  
         Utility::PythonObject pythonFunction = pythonModule.Get(function);
         if (pythonFunction.IsBad()) {
-            LOG_ERROR("cannot get function " + function);
+            LOG_ERROR("cannot get function %s", function.c_str());
             return;
         }
         pythonFunction.Call();

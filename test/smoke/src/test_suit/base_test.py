@@ -89,7 +89,6 @@ class TestSuite(BaseTest):
                 start_time = time.time()
                 print(f"{ColorText.run_test} {self._cmd}")
                 process = subprocess.Popen(self._cmd, stdout=f, stderr=subprocess.STDOUT)
-
                 while process.poll() is None:
                     if time.time() - start_time > self._max_time:
                         process.terminate()
@@ -97,7 +96,7 @@ class TestSuite(BaseTest):
                         return False
 
         if process.returncode != 0:
-            print(f"{ColorText.run_failed} {self._cmd} run failed")
+            print(f"{ColorText.run_failed} {self._cmd} run failed\n")
             return False
 
         print(f"{ColorText.run_ok} {self._cmd}")

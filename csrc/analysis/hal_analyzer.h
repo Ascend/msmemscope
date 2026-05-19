@@ -46,7 +46,7 @@ using MemoryRecordTable = std::unordered_map<uint64_t, HalMemInfo>;
 class HalAnalyzer {
 public:
     static HalAnalyzer& GetInstance(Config config);
-    bool Record(const ClientId &clientId, const RecordBase &record);
+    bool Record(const ClientId &clientId, std::shared_ptr<const EventBase> event);
 private:
     explicit HalAnalyzer(Config config);
     ~HalAnalyzer();
@@ -58,8 +58,8 @@ private:
     std::unordered_map<ClientId, MemoryRecordTable> memtables_{};
     bool IsHalAnalysisEnable();
     bool CreateMemTables(const ClientId &clientId);
-    void RecordMalloc(const ClientId &clientId, const MemOpRecord memrecord);
-    void RecordFree(const ClientId &clientId, const MemOpRecord memrecord);
+    void RecordMalloc(const ClientId &clientId, std::shared_ptr<const EventBase> event);
+    void RecordFree(const ClientId &clientId, std::shared_ptr<const EventBase> event);
     void LeakAnalyze();
     void CheckLeak(const size_t clientId);
     Config config_;

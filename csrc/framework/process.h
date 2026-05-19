@@ -45,17 +45,18 @@ private:
 class Process {
 public:
     static Process& GetInstance(Config config);
-    explicit Process(const Config &config);
     void Launch(const std::vector<std::string> &execParams);
-    void RecordHandler(const RecordBuffer& record);
+    bool SendEvent(std::shared_ptr<EventBase> event);
+
 private:
     void SetPreloadEnv();
     void DoLaunch(const ExecCmd &cmd) const;
 
-    std::shared_ptr<EventBase> RecordToEvent(RecordBase* record);
-    void MemoryRecordPreprocess(const ClientId &clientId, const RecordBase &record);
 private:
+    explicit Process(const Config &config) : config_(config) {}
     Config config_;
+
+    static constexpr const size_t MAX_EVENT_QUEUE_LEN = 4096;
 };
 
 void EventHandler(std::shared_ptr<EventBase> event);

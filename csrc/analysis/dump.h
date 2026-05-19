@@ -54,7 +54,7 @@ private:
     void WriteToFile(const std::shared_ptr<EventBase>& event);
 
     Config config_;
-    std::unordered_map<std::string, std::unique_ptr<DataHandler>> handlerMap_;
+    std::unordered_map<int32_t, std::unique_ptr<DataHandler>> handlerMap_;
     std::vector<std::shared_ptr<EventBase>> sharedEventLists_;
 };
 

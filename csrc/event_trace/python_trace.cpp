@@ -52,7 +52,7 @@ void PythonTrace::RecordPyCall(const std::string& funcHash, const std::string& f
     }
     int32_t devId = GD_INVALID_NUM;
     if (!GetDeviceInfo::Instance().GetDeviceId(devId) || devId == GD_INVALID_NUM) {
-        LOG_ERROR("[trace] RT_ERROR_INVALID_VALUE, " + std::to_string(devId));
+        LOG_ERROR("[trace] RT_ERROR_INVALID_VALUE, %d", devId);
         return;
     }
     std::shared_ptr<TraceEvent> event = std::make_shared<TraceEvent>();
@@ -61,7 +61,7 @@ void PythonTrace::RecordPyCall(const std::string& funcHash, const std::string& f
     event->info = funcInfo;
     event->pid = Utility::GetPid();
     event->tid = tid;
-    event->device = std::to_string(devId);
+    event->device = devId;
     std::string funcName = funcHash.substr(funcHash.find(":") + 1);
     if (IsIgnore(funcName) && !throw_[tid]) {
         throw_[tid] = true;
@@ -71,7 +71,7 @@ void PythonTrace::RecordPyCall(const std::string& funcHash, const std::string& f
 
 void PythonTrace::DumpTraceEvent(std::shared_ptr<TraceEvent>& event)
 {
-    if (event->device == "N/A") {
+    if (event->device == GD_INVALID_NUM) {
         return ;
     }
     auto it = handlerMap_.find(event->device);
@@ -96,7 +96,7 @@ void PythonTrace::RecordCCall(std::string funcHash, std::string funcInfo)
     }
     int32_t devId = GD_INVALID_NUM;
     if (!GetDeviceInfo::Instance().GetDeviceId(devId) || devId == GD_INVALID_NUM) {
-        LOG_ERROR("[trace] RT_ERROR_INVALID_VALUE, " + std::to_string(devId));
+        LOG_ERROR("[trace] RT_ERROR_INVALID_VALUE, %d", devId);
         return;
     }
     std::shared_ptr<TraceEvent> event = std::make_shared<TraceEvent>();
@@ -105,7 +105,7 @@ void PythonTrace::RecordCCall(std::string funcHash, std::string funcInfo)
     event->info = funcInfo;
     event->pid = Utility::GetPid();
     event->tid = tid;
-    event->device = std::to_string(devId);
+    event->device = devId;
     frameStack_[tid].push(event);
 }
 
@@ -122,11 +122,11 @@ void PythonTrace::RecordReturn(std::string funcHash, std::string funcInfo)
         } else if (throw_[tid] == false) {
             int32_t devId = GD_INVALID_NUM;
             if (!GetDeviceInfo::Instance().GetDeviceId(devId) || devId == GD_INVALID_NUM) {
-                LOG_ERROR("[trace] RT_ERROR_INVALID_VALUE, " + std::to_string(devId));
+                LOG_ERROR("[trace] RT_ERROR_INVALID_VALUE, %d", devId);
                 return;
             }
             std::shared_ptr<TraceEvent> event = std::make_shared<TraceEvent>(
-                0, Utility::GetTimeNanoseconds(), tid, Utility::GetPid(), std::to_string(devId), funcInfo, funcHash);
+                0, Utility::GetTimeNanoseconds(), tid, Utility::GetPid(), devId, funcInfo, funcHash);
             DumpTraceEvent(event);
         }
     }
@@ -139,7 +139,7 @@ void PythonTrace::RecordFuncPyCall(const std::string& funcHash, const std::strin
     uint64_t tid = Utility::GetTid();
     int32_t devId = GD_INVALID_NUM;
     if (!GetDeviceInfo::Instance().GetDeviceId(devId) || devId == GD_INVALID_NUM) {
-        LOG_ERROR("[trace] RT_ERROR_INVALID_VALUE, " + std::to_string(devId));
+        LOG_ERROR("[trace] RT_ERROR_INVALID_VALUE, %d", devId);
     }
     std::shared_ptr<TraceEvent> event = std::make_shared<TraceEvent>();
     event->startTs = timestamp ? timestamp : Utility::GetTimeNanoseconds();
@@ -147,7 +147,7 @@ void PythonTrace::RecordFuncPyCall(const std::string& funcHash, const std::strin
     event->info = funcInfo;
     event->pid = Utility::GetPid();
     event->tid = tid;
-    event->device = std::to_string(devId);
+    event->device = devId;
     std::string funcName = funcHash.substr(funcHash.find(":") + 1);
     frameStackRecordFunc_[tid].push(event);
 }
@@ -162,7 +162,7 @@ void PythonTrace::RecordFuncReturn(std::string funcHash, std::string funcInfo)
             DumpTraceEvent(event);
             frameStackRecordFunc_[tid].pop();
         } else {
-            LOG_ERROR("[trace] ERROR RECORD EVENT" + funcHash);
+            LOG_ERROR("[trace] ERROR RECORD EVENT %s", funcHash.c_str());
         }
     } 
 }

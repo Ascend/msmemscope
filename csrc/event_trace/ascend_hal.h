@@ -142,14 +142,5 @@ struct drv_mem_prop {
 };
  
 using drv_mem_handle_t = struct drv_mem_handle;
- 
-/// HAL interfaces
-extern "C" {
-drvError_t halMemAllocInner(void **pp, unsigned long long size, unsigned long long flag);
-drvError_t halMemFreeInner(void *pp);
-drvError_t __attribute__((weak)) halMemCreateInner(drv_mem_handle_t **handle, size_t size,
-    const struct drv_mem_prop *prop, uint64_t flag);
-drvError_t __attribute__((weak)) halMemReleaseInner(drv_mem_handle_t *handle);
-}  // extern "C"
 
 #endif

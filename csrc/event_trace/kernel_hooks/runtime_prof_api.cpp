@@ -86,7 +86,7 @@ void RegisterRtProfileCallback()
     for (auto iter : CALLBACK_FUNC_LIST) {
         ret = vallina(iter.first, iter.second, sizeof(void *));
         if (ret != 0) {
-            LOG_ERROR("Register rtProfile callback failed, type = ." + std::to_string(iter.first));
+            LOG_ERROR("Register rtProfile callback failed, type = %d", iter.first);
         }
     }
 

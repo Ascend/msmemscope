@@ -1,8 +1,4 @@
-file(GLOB_RECURSE SOURCE "*.cpp"
-${EVENT_TRACE_INC_DIR}/event_report.cpp
-${EVENT_TRACE_INC_DIR}/python_trace.cpp
-${ANALYSIS_DIR}/dump.cpp
-)
+file(GLOB_RECURSE SOURCE "*.cpp")
 list(SORT SOURCE)
 
 target_sources(ascend_leaks PRIVATE ${SOURCE})

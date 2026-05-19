@@ -182,7 +182,7 @@ void Dump::DumpSystemEvent(std::shared_ptr<SystemEvent>& event)
 
 void Dump::WriteToFile(const std::shared_ptr<EventBase>& event)
 {
-    if (event->device == "N/A") {
+    if (event->device == GD_INVALID_NUM) {
         sharedEventLists_.push_back(event);
         return ;
     }

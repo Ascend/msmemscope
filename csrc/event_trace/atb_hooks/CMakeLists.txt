@@ -3,9 +3,6 @@ add_library(atb_abi_0_hook SHARED atb_hooks.cpp)
 target_sources(atb_abi_0_hook PRIVATE
   atb_hooks.cpp
   enum2string.cpp
-  ${UTILITY_INC_DIR}/log.cpp
-  ${UTILITY_INC_DIR}/file.cpp
-  ${UTILITY_INC_DIR}/path.cpp
 )
 
 target_compile_definitions(atb_abi_0_hook PRIVATE -D_GLIBCXX_USE_CXX11_ABI=0)
@@ -32,9 +29,6 @@ target_compile_options(atb_abi_1_hook PRIVATE
 target_sources(atb_abi_1_hook PRIVATE
   atb_hooks.cpp
   enum2string.cpp
-  ${UTILITY_INC_DIR}/log.cpp
-  ${UTILITY_INC_DIR}/file.cpp
-  ${UTILITY_INC_DIR}/path.cpp
 )
 
 target_include_directories(atb_abi_1_hook PUBLIC

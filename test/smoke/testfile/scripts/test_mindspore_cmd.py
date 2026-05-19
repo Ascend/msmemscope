@@ -19,7 +19,6 @@ def generator():
         yield (np.ones([2, 2]).astype(np.float32), np.ones([2]).astype(np.int32))
 
 def train(net):
-    stream = ms.runtime.current_stream()
     optimizer = nn.Momentum(net.trainable_params(), 1, 0.9)
     loss = nn.SoftmaxCrossEntropyWithLogits(sparse=True)
     data = ds.GeneratorDataset(generator, ["data", "label"])

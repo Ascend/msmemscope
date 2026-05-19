@@ -64,7 +64,7 @@ RTS_API rtError_t rtKernelLaunch(
     using RtKernelLaunch = decltype(&rtKernelLaunch);
     auto vallina = VallinaSymbol<RuntimeLibLoader>::Instance().Get<RtKernelLaunch>(__func__);
     if (vallina == nullptr) {
-        LOG_ERROR("vallina func get FAILED: " + std::string(__func__));
+        LOG_ERROR("vallina func get FAILED: %s", __func__);
         return RT_ERROR_RESERVED;
     }
 
@@ -85,7 +85,7 @@ RTS_API rtError_t rtKernelLaunchWithHandleV2(void *hdl, const uint64_t tilingKey
     using RtKernelLaunchWithHandleV2 = decltype(&rtKernelLaunchWithHandleV2);
     auto vallina = VallinaSymbol<RuntimeLibLoader>::Instance().Get<RtKernelLaunchWithHandleV2>(__func__);
     if (vallina == nullptr) {
-        LOG_ERROR("vallina func get FAILED: " + std::string(__func__));
+        LOG_ERROR("vallina func get FAILED: %s", __func__);
         return RT_ERROR_RESERVED;
     }
 
@@ -106,7 +106,7 @@ RTS_API rtError_t rtKernelLaunchWithFlagV2(const void *stubFunc, uint32_t blockD
     using RtKernelLaunchWithFlagV2 = decltype(&rtKernelLaunchWithFlagV2);
     auto vallina = VallinaSymbol<RuntimeLibLoader>::Instance().Get<RtKernelLaunchWithFlagV2>(__func__);
     if (vallina == nullptr) {
-        LOG_ERROR("vallina func get FAILED: " + std::string(__func__));
+        LOG_ERROR("vallina func get FAILED: %s", __func__);
         return RT_ERROR_RESERVED;
     }
 
@@ -128,7 +128,7 @@ RTS_API rtError_t rtAicpuKernelLaunchExWithArgs(const uint32_t kernelType, const
     using RtAicpuKernelLaunchExWithArgs = decltype(&rtAicpuKernelLaunchExWithArgs);
     auto vallina = VallinaSymbol<RuntimeLibLoader>::Instance().Get<RtAicpuKernelLaunchExWithArgs>(__func__);
     if (vallina == nullptr) {
-        LOG_ERROR("vallina func get FAILED: " + std::string(__func__));
+        LOG_ERROR("vallina func get FAILED: %s", __func__);
         return RT_ERROR_RESERVED;
     }
 
@@ -149,7 +149,7 @@ RTS_API rtError_t rtLaunchKernelByFuncHandle(rtFuncHandle funcHandle, uint32_t b
     using RtLaunchKernelByFuncHandle = decltype(&rtLaunchKernelByFuncHandle);
     auto vallina = VallinaSymbol<RuntimeLibLoader>::Instance().Get<RtLaunchKernelByFuncHandle>(__func__);
     if (vallina == nullptr) {
-        LOG_ERROR("vallina func get FAILED: " + std::string(__func__));
+        LOG_ERROR("vallina func get FAILED: %s", __func__);
         return RT_ERROR_RESERVED;
     }
 
@@ -170,7 +170,7 @@ RTS_API rtError_t rtLaunchKernelByFuncHandleV2(rtFuncHandle funcHandle, uint32_t
     using RtLaunchKernelByFuncHandleV2 = decltype(&rtLaunchKernelByFuncHandleV2);
     auto vallina = VallinaSymbol<RuntimeLibLoader>::Instance().Get<RtLaunchKernelByFuncHandleV2>(__func__);
     if (vallina == nullptr) {
-        LOG_ERROR("vallina func get FAILED: " + std::string(__func__));
+        LOG_ERROR("vallina func get FAILED: %s", __func__);
         return RT_ERROR_RESERVED;
     }
 
@@ -192,7 +192,7 @@ aclError aclrtLaunchKernelImpl(aclrtFuncHandle funcHandle, uint32_t blockDim, co
     using AclrtLaunchKernel = decltype(&aclrtLaunchKernelImpl);
     static auto vallina = VallinaSymbol<ACLImplLibLoader>::Instance().Get<AclrtLaunchKernel>(__func__);
     if (vallina == nullptr) {
-        LOG_ERROR("vallina func get FAILED: " + std::string(__func__));
+        LOG_ERROR("vallina func get FAILED: %s", __func__);
         return ACL_ERROR_RT_FAILURE;
     }
 
@@ -211,7 +211,7 @@ aclError aclrtLaunchKernelWithConfigImpl(aclrtFuncHandle funcHandle, uint32_t bl
     using AclrtLaunchKernelWithCfg = decltype(&aclrtLaunchKernelWithConfigImpl);
     static auto vallina = VallinaSymbol<ACLImplLibLoader>::Instance().Get<AclrtLaunchKernelWithCfg>(__func__);
     if (vallina == nullptr) {
-        LOG_ERROR("vallina func get FAILED: " + std::string(__func__));
+        LOG_ERROR("vallina func get FAILED: %s", __func__);
         return ACL_ERROR_RT_FAILURE;
     }
 
@@ -230,7 +230,7 @@ aclError aclrtLaunchKernelV2Impl(aclrtFuncHandle funcHandle, uint32_t blockDim, 
     using AclrtLaunchKernelV2 = decltype(&aclrtLaunchKernelV2Impl);
     static auto vallina = VallinaSymbol<ACLImplLibLoader>::Instance().Get<AclrtLaunchKernelV2>(__func__);
     if (vallina == nullptr) {
-        LOG_ERROR("vallina func get FAILED: " + std::string(__func__));
+        LOG_ERROR("vallina func get FAILED: %s", __func__);
         return ACL_ERROR_RT_FAILURE;
     }
 
@@ -249,7 +249,7 @@ aclError aclrtLaunchKernelWithHostArgsImpl(aclrtFuncHandle funcHandle, uint32_t 
     using AclrtLaunchKernelWithCfg = decltype(&aclrtLaunchKernelWithHostArgsImpl);
     static auto vallina = VallinaSymbol<ACLImplLibLoader>::Instance().Get<AclrtLaunchKernelWithCfg>(__func__);
     if (vallina == nullptr) {
-        LOG_ERROR("vallina func get FAILED: " + std::string(__func__));
+        LOG_ERROR("vallina func get FAILED: %s", __func__);
         return ACL_ERROR_RT_FAILURE;
     }
 

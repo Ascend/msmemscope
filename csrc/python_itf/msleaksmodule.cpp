@@ -146,35 +146,27 @@ static PyObject* MsmemscopeTakeSnapshot(PyObject* self, PyObject* args)
     }
     
     // 构建MemorySnapshotRecord结构体
-    MemorySnapshotRecord snapshot_info;
+    MemorySnapshotInfo info;
     
     // 从memory_info字典中提取信息
-    snapshot_info.device = PyLong_AsLong(PyDict_GetItemString(memory_info, "device"));
-    snapshot_info.memory_reserved = PyLong_AsUnsignedLongLong(PyDict_GetItemString(memory_info, "memory_reserved"));
-    snapshot_info.max_memory_reserved = PyLong_AsUnsignedLongLong(PyDict_GetItemString(memory_info, "max_memory_reserved"));
-    snapshot_info.memory_allocated = PyLong_AsUnsignedLongLong(PyDict_GetItemString(memory_info, "memory_allocated"));
-    snapshot_info.max_memory_allocated = PyLong_AsUnsignedLongLong(PyDict_GetItemString(memory_info, "max_memory_allocated"));
-    snapshot_info.total_memory = PyLong_AsUnsignedLongLong(PyDict_GetItemString(memory_info, "total_memory"));
-    snapshot_info.free_memory = PyLong_AsUnsignedLongLong(PyDict_GetItemString(memory_info, "free_memory"));
-    // 处理name参数
-    std::string name;
-    PyObject* name_obj = PyDict_GetItemString(memory_info, "name");
-    if (name_obj && PyUnicode_Check(name_obj)) {
-        name = PyUnicode_AsUTF8(name_obj);
-    }
-    
-    // 复制name到snapshot_info.name
-    strncpy_s(snapshot_info.name, sizeof(snapshot_info.name), name.c_str(), name.length());
+    info.device = PyLong_AsLong(PyDict_GetItemString(memory_info, "device"));
+    info.memory_reserved = PyLong_AsUnsignedLongLong(PyDict_GetItemString(memory_info, "memory_reserved"));
+    info.max_memory_reserved = PyLong_AsUnsignedLongLong(PyDict_GetItemString(memory_info, "max_memory_reserved"));
+    info.memory_allocated = PyLong_AsUnsignedLongLong(PyDict_GetItemString(memory_info, "memory_allocated"));
+    info.max_memory_allocated = PyLong_AsUnsignedLongLong(PyDict_GetItemString(memory_info, "max_memory_allocated"));
+    info.total_memory = PyLong_AsUnsignedLongLong(PyDict_GetItemString(memory_info, "total_memory"));
+    info.free_memory = PyLong_AsUnsignedLongLong(PyDict_GetItemString(memory_info, "free_memory"));
+    info.name = std::string(PyUnicode_AsUTF8(PyDict_GetItemString(memory_info, "name")));
     
     // 检查是否是OOM快照，如果是则获取调用栈信息
     CallStackString stack;
-    if (name.find("OOM") != std::string::npos || name.find("oom") != std::string::npos) {
+    if (info.name.find("OOM") != std::string::npos || info.name.find("oom") != std::string::npos) {
         // OOM快照，从OOMHandler实例获取调用栈
         stack = OOMHandler::Instance().GetOOMStack();
     }
 
     // 传递参数给ReportMemorySnapshot，包含调用栈信息
-    if (!EventReport::Instance(MemScopeCommType::SHARED_MEMORY).ReportMemorySnapshot(snapshot_info, stack)) {
+    if (!EventReport::Instance(MemScopeCommType::SHARED_MEMORY).ReportMemorySnapshot(info, std::move(stack))) {
         PyErr_SetString(PyExc_TypeError, "Report Memory Snapshot Failed");
     }
     

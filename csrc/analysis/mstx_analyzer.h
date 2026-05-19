@@ -32,7 +32,7 @@ namespace MemScope {
 */
 
 using DeviceId = int32_t;
-using MstxEventCallBackFunc = std::function<void(const MstxRecord&)>;
+using MstxEventCallBackFunc = std::function<void(std::shared_ptr<const MstxEvent> mstxEvent)>;
 
 enum class MstxEventSubscriber : uint8_t {
     STEP_INNER_ANALYZER = 0,
@@ -41,7 +41,7 @@ enum class MstxEventSubscriber : uint8_t {
 class MstxAnalyzer {
 public:
     static MstxAnalyzer& Instance();
-    bool RecordMstx(const ClientId &clientId, const MstxRecord &mstxRecord);
+    bool RecordMstx(const ClientId &clientId, std::shared_ptr<const EventBase> event);
     void Subscribe(const MstxEventSubscriber &subscriber, const MstxEventCallBackFunc &func);
     void UnSubscribe(const MstxEventSubscriber &subscriber);
 private:
@@ -53,7 +53,7 @@ private:
     MstxAnalyzer(MstxAnalyzer&&) = delete;
     MstxAnalyzer& operator=(MstxAnalyzer&&) = delete;
 
-    void Notify(const MstxRecord &mstxRecord);
+    void Notify(std::shared_ptr<const MstxEvent> mstxEvent);
     std::mutex mstxMutex_;
     std::unordered_map<MstxEventSubscriber, MstxEventCallBackFunc> subscriberList_;
 };

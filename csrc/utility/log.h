@@ -42,21 +42,17 @@ public:
     static Log &GetLog(void);
 
     template <typename... Args>
-    inline void Printf(const std::string &format, MemScope::LogLv lv, const std::string fileName, const uint32_t line,
-        const Args& ...args);
-    template <typename... Args>
-    inline void Printtest(const std::string &format, MemScope::LogLv lv, const std::string fileName, const uint32_t line,
-        const Args& ...args);
-    template <typename... Args>
-    inline void PrintClientLog(std::string const &format, const Args &...args);
+    inline void Printf(const char* format, MemScope::LogLv lv, const char* fileName, const uint32_t line,
+                       const Args& ...args);
     void SetLogLevel(const MemScope::LogLv &logLevel);
 private:
-    Log(void);
+    Log(void) = default;
     ~Log(void);
     Log(Log const &) = delete;
     Log &operator=(Log const &) = delete;
-    std::string AddPrefixInfo(std::string const &format, MemScope::LogLv lv, const std::string fileName,
-        const uint32_t line) const;
+    void GetTimeStr(char* buf, size_t size) const;
+    void CreateLogFile();
+    const char* LvToString(MemScope::LogLv lv) const;
     inline int64_t LogSize() const
     {
         if (fp_ == nullptr) {
@@ -73,64 +69,53 @@ private:
 private:
     MemScope::LogLv lv_{MemScope::LogLv::WARN};
     FILE *fp_{nullptr};
+    char logFilePath_[PATH_MAX];
     mutable std::mutex mtx_;
     int64_t maxLogSize_ = 100L * 1024L * 1024L; // 100M
-    std::string logFilePath_;
-    std::string outputDir_;
 };
 
 template <typename... Args>
-void Log::Printf(const std::string &format, MemScope::LogLv lv, const std::string fileName, const uint32_t line,
+void Log::Printf(const char* format, MemScope::LogLv lv, const char* fileName, const uint32_t line,
     const Args& ...args)
 {
     std::lock_guard<std::mutex> lock(mtx_);
-    if (!Utility::FileCreateManager::GetInstance(outputDir_).CreateLogFile(&fp_, MemScope::LOG_DIR, logFilePath_)) {
+    if (fp_ == nullptr) {
+        CreateLogFile();
+    }
+    if (fp_ == nullptr) {
         return;
     }
+
     if (lv < lv_) {
         return;
     }
-    std::string f = AddPrefixInfo(format, lv, fileName, line).append("\n");
-    if (LogSize() + static_cast<int64_t>(f.size()) > maxLogSize_) {
+
+    char buf[LOG_BUF_SIZE];
+    buf[LOG_BUF_SIZE - 1] = '\0';
+    GetTimeStr(buf, LOG_BUF_SIZE);
+
+    if (LogSize() > maxLogSize_) {
         std::cout << "[msmemscope] Warn: Log file size is too large, please check: " << logFilePath_ << std::endl;
         maxLogSize_ *= DOUBLE;
     }
-    if (fp_ != nullptr) {
-        fprintf(fp_, f.c_str(), args...);
-        fflush(fp_);
-    } else {
-        std::cout << "[msmemscope] Error: open file " << logFilePath_ << " failed." << std::endl;
-    }
+
+    fprintf(fp_, "%s %s [%s:%u] ", buf, LvToString(lv), fileName, line);
+    fprintf(fp_, format, args...);
+    fprintf(fp_, "\n");
+    fflush(fp_);
 }
 
-inline std::string GetLogSourceFileName(const std::string &path)
-{
-    return (strrchr(path.c_str(), '/')) ? (strrchr(path.c_str(), '/') + 1) : path;
-}
+#define LOG_DEBUG(format, ...) \
+        Utility::Log::GetLog().Printf(format, MemScope::LogLv::DEBUG, __BASE_FILE__,  __LINE__, ##__VA_ARGS__)
 
-#define LOG_DEBUG(format, ...)                                                                                         \
-    do {                                                                                                               \
-        Utility::Log::GetLog().Printf(format, MemScope::LogLv::DEBUG, Utility::GetLogSourceFileName(__FILE__),            \
-        __LINE__, ##__VA_ARGS__);                                                                                      \
-    } while (0)
+#define LOG_INFO(format, ...) \
+        Utility::Log::GetLog().Printf(format, MemScope::LogLv::INFO, __BASE_FILE__, __LINE__, ##__VA_ARGS__)
 
-#define LOG_INFO(format, ...)                                                                                          \
-    do {                                                                                                               \
-        Utility::Log::GetLog().Printf(format, MemScope::LogLv::INFO, Utility::GetLogSourceFileName(__FILE__),             \
-        __LINE__, ##__VA_ARGS__);                                                                                      \
-    } while (0)
+#define LOG_WARN(format, ...) \
+        Utility::Log::GetLog().Printf(format, MemScope::LogLv::WARN, __BASE_FILE__, __LINE__, ##__VA_ARGS__)
 
-#define LOG_WARN(format, ...)                                                                                          \
-    do {                                                                                                               \
-        Utility::Log::GetLog().Printf(format, MemScope::LogLv::WARN, Utility::GetLogSourceFileName(__FILE__),             \
-        __LINE__, ##__VA_ARGS__);                                                                                      \
-    } while (0)
-
-#define LOG_ERROR(format, ...)                                                                                         \
-    do {                                                                                                               \
-        Utility::Log::GetLog().Printf(format, MemScope::LogLv::ERROR, Utility::GetLogSourceFileName(__FILE__),            \
-        __LINE__, ##__VA_ARGS__);                                                                                      \
-    } while (0)
+#define LOG_ERROR(format, ...) \
+        Utility::Log::GetLog().Printf(format, MemScope::LogLv::ERROR, __BASE_FILE__, __LINE__, ##__VA_ARGS__)
 
 inline void SetLogLevel(const MemScope::LogLv &logLevel)
 {

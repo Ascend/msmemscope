@@ -61,7 +61,7 @@ bool TensorDumper::DumpTensorBinary(const std::vector<uint8_t> &hostData, std::s
 
     int32_t devId = GD_INVALID_NUM;
     if (!GetDeviceInfo::Instance().GetDeviceId(devId) || devId == GD_INVALID_NUM) {
-        LOG_ERROR("DumpTensorBinary get device id failed, " + std::to_string(devId));
+        LOG_ERROR("DumpTensorBinary get device id failed, %d", devId);
     }
     std::string binOutDir = dumpDir_ + "/" + "device_" + std::to_string(devId) + "/" + WATCH_DUMP_DIR;
     // 判断watch_dump的目录是否存在，如不存在则提示用户将要创建。
@@ -97,10 +97,10 @@ bool TensorDumper::DumpTensorHashValue(const std::vector<uint8_t> &hostData, std
     if (csvFile_ == nullptr) {
         int32_t devId = GD_INVALID_NUM;
         if (!GetDeviceInfo::Instance().GetDeviceId(devId) || devId == GD_INVALID_NUM) {
-            LOG_ERROR("DumpTensorHashValue get device id failed, " + std::to_string(devId));
+            LOG_ERROR("DumpTensorHashValue get device id failed, %d", devId);
         }
         if (!Utility::FileCreateManager::GetInstance(GetConfig().outputDir).CreateCsvFile(&csvFile_,
-            std::to_string(devId), WATCH_CSV_FILE_PREFIX, WATCH_DUMP_DIR, WATCH_HASH_HEADERS)) {
+            devId, WATCH_CSV_FILE_PREFIX, WATCH_DUMP_DIR, WATCH_HASH_HEADERS)) {
             LOG_ERROR("DumpTensorHashValue create csv file failed.");
             return false;
         }
@@ -159,7 +159,7 @@ void TensorDumper::SynchronizeStream(aclrtStream stream)
  
     int ret = vallina(stream);
     if (ret != ACL_SUCCESS) {
-        LOG_ERROR("Dump tensor synchronize stream failed, ret is" + std::to_string(ret));
+        LOG_ERROR("Dump tensor synchronize stream failed, ret is %d", ret);
         return;
     }
     return;
@@ -176,7 +176,7 @@ void TensorDumper::Dump(aclrtStream stream, const std::string &op, bool isWatchS
         auto fileName = GetFileName(op, watchedOpName, outputId != UINT32_MAX ? outputId : index, isWatchStart);
         auto result = DumpOneTensor(tensorPair.second, fileName);
         if (!result) {
-            LOG_ERROR("Dump tensor failed, current op: " + op + ", watched op: " + watchedOpName);
+            LOG_ERROR("Dump tensor failed, current op: %s, watched op: %s", op.c_str(), watchedOpName.c_str());
         }
         ++index;
     }
@@ -192,7 +192,7 @@ void TensorDumper::Dump(aclrtStream stream, const std::string &op, bool isWatchS
         }
         auto result = DumpOneTensor(tensorPair.second, fileName);
         if (!result) {
-            LOG_ERROR("Dump tensor failed, current op: " + op + ", watched op: " + watchedOpName);
+            LOG_ERROR("Dump tensor failed, current op: %s, watched op: %s", op.c_str(), watchedOpName.c_str());
         }
         if (dumpNums > 0) {
             SetDumpNums(ptr, dumpNums-1);

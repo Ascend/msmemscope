@@ -24,6 +24,7 @@
 #include <atomic>
 #include "config_info.h"
 #include "record_info.h"
+#include "event.h"
 
 namespace MemScope {
 
@@ -78,8 +79,7 @@ public:
         return instance;
     }
     
-    bool IsNeedTrace(const RecordType type = RecordType::INVALID_RECORD);
-    bool ShouldTraceType(const RecordType type = RecordType::INVALID_RECORD);
+    bool IsNeedTrace(EventBaseType type);
     bool IsTracingEnabled();
     void SetTraceStatus(const EventTraceStatus status); // 通过python接口在运行时动态修改
     void InitJudgeFuncTable();
@@ -104,7 +104,7 @@ private:
     EventTraceStatus status_ = EventTraceStatus::NOT_IN_TRACING;
 
     std::atomic<bool> aclInit_{ false };
-    std::unordered_map<RecordType, std::function<bool()>> judgeFuncTable_;
+    std::unordered_map<EventBaseType, std::function<bool()>> judgeFuncTable_;
     std::atomic<bool> destroyed_{false};
 };
 

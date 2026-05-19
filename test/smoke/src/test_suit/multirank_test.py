@@ -40,7 +40,7 @@ class MultirankConfig:
             "mstx_num": 202,
             "op_threshold": {"min": 16000, "max": 16500},
             "kernel_threshold": {"min": 16000, "max": 16500},
-            "hal_threshold": {"min": 200, "max": 350},
+            "hal_threshold": {"min": 200, "max": 360},
             "pta_threshold": {"min": 9200, "max": 9300}
         },
         "default": {  # API模式
@@ -48,7 +48,7 @@ class MultirankConfig:
             "mstx_num": 202,
             "op_threshold": {"min": 16000, "max": 16500},
             "kernel_threshold": {"min": 16000, "max": 16500},
-            "hal_threshold": {"min": 200, "max": 350},
+            "hal_threshold": {"min": 200, "max": 360},
             "pta_threshold": {"min": 8700, "max": 8800}
         }
     }

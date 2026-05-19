@@ -44,14 +44,12 @@ namespace Utility {
     public:
         static FileCreateManager& GetInstance(const std::string outputDir);
 
-        explicit FileCreateManager(const std::string outputDir);
-
         // 多线程情况下调用,需加锁保护,这里已经在内部进行加锁保护，外部调用无需加锁
-        bool CreateCsvFile(FILE **filefp, std::string devId, std::string filePrefix, std::string taskDir,
+        bool CreateCsvFile(FILE **filefp, int32_t devId, std::string filePrefix, std::string taskDir,
             std::string headers);
-        bool CreateDbFile(sqlite3 **filefp, std::string devId, std::string filePrefix, std::string taskDir,
+        bool CreateDbFile(sqlite3 **filefp, int32_t devId, std::string filePrefix, std::string taskDir,
             std::string tableName, std::string tableCreateSql);
-        bool CreateLogFile(FILE **filefp, std::string taskDir, std::string& logFilePath);
+        bool CreateLogFile(FILE **filefp, const char* taskDir, char* logFilePath, size_t size);
         bool CreateConfigFile(FILE **filefp, std::string fileName, std::string& configFilePath);
 
         /// 创建文件
@@ -63,6 +61,7 @@ namespace Utility {
         std::string GetProjectDir() const;
         void SetProjectDir(std::string dirPath);
     private:
+        explicit FileCreateManager(const std::string outputDir);
         std::string projectDir_;
         std::string dbDateStr_{""};
         std::mutex createCsvFileMutex_;
