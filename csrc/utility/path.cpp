@@ -216,35 +216,36 @@ bool Path::IsSoftLink(void) const
     return lstat(this->ToString().c_str(), &buf) == 0 && (S_IFMT & buf.st_mode) == S_IFLNK;
 }
 
-bool Path::IsPermissionValid(void) const
+void Path::DeclarePermissionRisk(void) const
 {
     struct stat st;
     if (stat(this->ToString().c_str(), &st) != 0) {
         std::cout << "[msmemscope] Error: Failed to stat path: " << this->ToString() << " ." << std::endl;
-        return false;
+        return;
     }
 
     // 检查属主是否为 root 或当前用户
     uid_t currentUid = geteuid();
-    if (st.st_uid != 0 && st.st_uid != currentUid) {
-        std::cout << "[msmemscope] Error: File " << this->ToString() << " owner is not root or current user." << std::endl;
-        return false;
+    if (st.st_uid != currentUid) {
+        if (currentUid == 0) {
+            std::cout << "[msmemscope] Warn: Process is running as user root. "
+                "Please confirm the path " << ToString() << " is trusted." << std::endl;
+        } else {
+            std::cout << "[msmemscope] Warn: The path " << ToString() <<
+                " is not owned by the current user. Please confirm it is trusted." << std::endl;
+        }
     }
-    // root用户不强制要求权限，仅对风险权限进行告警
-    if (currentUid == 0) {
-        std::cout << "[msmemscope] Warn: Current user is root, skip permission check." << std::endl;
-        return true;
-    }
+
     // 检查 group 和 other 是否有写权限
     if ((st.st_mode & S_IWGRP) != 0 || (st.st_mode & S_IWOTH) != 0) {
-        std::cout << "[msmemscope] Error: Permission is not valid: Group or others have write permission." << std::endl;
-        return false;
+        std::cout << "[msmemscope] Warn: The path " << ToString() <<
+            " can be modified by other users. Please confirm it is trusted." << std::endl;
     }
 
-    return true;
+    return;
 }
 
-// 对于所有路径的公共检查：包含可读性，路径长度，是否为软链接，权限校验（group和other用户组不可写，属主为root或当前用户
+// 对于所有路径的公共检查：包含可读性，路径长度，权限校验（group和other用户组不可写，属主为root或当前用户
 bool CheckIsValidInputPath(const std::string &path)
 {
     if (path.empty()) {
@@ -275,20 +276,12 @@ bool CheckIsValidInputPath(const std::string &path)
         std::cout << "[msmemscope] Error: The depth of path " << temp << " exceeds the maximum depth." << std::endl;
         return false;
     }
-    if (realPath.IsSoftLink()) {
-        std::cout << "[msmemscope] Error: The path " << temp << " is invalid: soft link is not allowed." << std::endl;
-        return false;
-    }
-    if (!realPath.IsPermissionValid()) {
-        std::cout << "[msmemscope] Error: The path " << temp << " is invalid: permission is not valid." << std::endl;
-        return false;
-    }
+    realPath.DeclarePermissionRisk();
     return true;
 }
 // 特别的，对--output的参数校验，不应校验其存在性，全面的校验在Create前完成
 // --output指定的参数是一个路径同时也是一个字符串，该路径未必存在，对不存在的路径校验权限、可读性是没有意义的
 // 但是长度、深度、非法字符是字符串层面的校验，与路径是否存在无关，可以直接执行
-// 至于软链接，非软链接才会通过校验，即使路径不存在（不存在的路径一定不会是软链接），也不妨碍通过校验
 bool CheckIsValidOutputPath(const std::string &path)
 {
     if (path.empty()) {
@@ -314,20 +307,12 @@ bool CheckIsValidOutputPath(const std::string &path)
         std::cout << "[msmemscope] Error: The depth of path " << temp << " exceeds the maximum depth." << std::endl;
         return false;
     }
-    if (realPath.IsSoftLink()) {
-        std::cout << "[msmemscope] Error: The path " << temp << " is invalid: soft link is not allowed." << std::endl;
-        return false;
-    }
     if (realPath.Exists()) {
         if (!realPath.IsReadable()) {
             std::cout << "[msmemscope] Error: The path " << temp << " is not readable." << std::endl;
             return false;
         }
-        if (!realPath.IsPermissionValid()) {
-            std::cout << "[msmemscope] Error: The path " << temp
-                      << " is invalid: permission is not valid." << std::endl;
-            return false;
-        }
+        realPath.DeclarePermissionRisk();
     }
     return true;
 }

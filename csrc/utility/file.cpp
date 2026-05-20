@@ -51,23 +51,14 @@ namespace Utility {
                       << " exceeds the maximum depth." << std::endl;
             return false;
         }
-        if (curPath.IsSoftLink()) {
-            std::cout << "[msmemscope] Error: The file path " << curPathStr
-                      << " is invalid: soft link is not allowed." << std::endl;
-            return false;
-        }
-        if (!curPath.IsPermissionValid()) {
-            std::cout << "[msmemscope] Error: The file path " << curPathStr
-                      << " is invalid: permission is not valid." << std::endl;
-            return false;
-        }
+        curPath.DeclarePermissionRisk();
         return true;
     }
 
     bool FileExists(const std::string& filePath)
     {
-        std::ifstream file(filePath);
-        return file.good();
+        struct stat st;
+        return stat(filePath.c_str(), &st) == 0;
     }
 
     bool TableExists(sqlite3 *filefp, std::string tableName)

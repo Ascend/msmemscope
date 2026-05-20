@@ -73,8 +73,8 @@ public:
     /// 校验软链接
     bool IsSoftLink(void) const;
 
-    /// 校验路径权限
-    bool IsPermissionValid(void) const;
+    /// 声明路径权限风险
+    void DeclarePermissionRisk() const;
 
     /// 校验getcwd是否失败
     bool ErrorOccured(void) const { return errorOccurred_; }

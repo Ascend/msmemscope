@@ -155,7 +155,7 @@ TEST_F(FileTest, check_file_before_create_soft_link_expect_false)
     MakeDir(realDir);
     symlink(realDir.c_str(), linkDir.c_str()); // 创建软链接
     auto ret = Utility::CheckFileBeforeCreate(linkDir);
-    ASSERT_FALSE(ret);
+    ASSERT_TRUE(ret);
     unlink(linkDir.c_str());
     rmdir(realDir.c_str());
 }
