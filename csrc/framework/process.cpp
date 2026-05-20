@@ -80,6 +80,7 @@ Process& Process::GetInstance(Config config)
 
 bool Process::SendEvent(std::shared_ptr<EventBase> event)
 {
+    std::lock_guard<std::mutex> lock(processMutex_);
     EventHandler(event);
     switch (event->eventSubType) {
         case EventSubType::HAL:

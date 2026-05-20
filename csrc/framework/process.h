@@ -21,6 +21,7 @@
 #include <memory>
 #include <string>
 #include <vector>
+#include <mutex>
 #include "event.h"
 #include "comm_def.h"
 
@@ -55,6 +56,7 @@ private:
 private:
     explicit Process(const Config &config) : config_(config) {}
     Config config_;
+    std::mutex processMutex_;
 
     static constexpr const size_t MAX_EVENT_QUEUE_LEN = 4096;
 };

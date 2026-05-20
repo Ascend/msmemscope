@@ -305,6 +305,12 @@ bool EventReport::ReportMemPoolRecord(EventSubType type, const MemoryUsage& info
         return true;
     }
 
+    int32_t realDevice = static_cast<int32_t>(info.deviceIndex);
+    GetDeviceInfo::Instance().TransDeviceId(realDevice);
+    if (IsNeedSkip(realDevice)) {
+        return true;
+    }
+
     std::shared_ptr<MemoryEvent> event = std::make_shared<MemoryEvent>();
     event->eventType = info.dataType == 0 ? EventBaseType::MALLOC : EventBaseType::FREE;
     if (type == EventSubType::PTA_CACHING) {
@@ -321,8 +327,6 @@ bool EventReport::ReportMemPoolRecord(EventSubType type, const MemoryUsage& info
         event->eventSubType = EventSubType::MINDSPORE;
     }
 
-    int32_t realDevice = static_cast<int32_t>(info.deviceIndex);
-    GetDeviceInfo::Instance().TransDeviceId(realDevice);
     event->addr = info.ptr;
     event->name = "N/A";
     event->device = realDevice;
@@ -611,8 +615,7 @@ bool EventReport::ReportAtenAccess(const std::string& name, const std::string& a
 
 bool EventReport::ReportKernelLaunch(const AclnnKernelMapInfo &kernelLaunchInfo)
 {
-    if (!EventTraceManager::Instance().IsNeedTrace(EventBaseType::MALLOC) &&
-        !EventTraceManager::Instance().IsNeedTrace(EventBaseType::FREE)) {
+    if (!EventTraceManager::Instance().IsNeedTrace(EventBaseType::KERNEL_LAUNCH)) {
         return true;
     }
 
