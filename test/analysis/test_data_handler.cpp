@@ -30,7 +30,7 @@
 
 using namespace MemScope;
 extern bool g_isDlsymNullptr;
-std::string devId = "0";
+int32_t devId = 0;
 
 class DataHandlerTest : public ::testing::Test {
 protected:
@@ -64,7 +64,7 @@ TEST_F(DataHandlerTest, CsvHandler_Write_LeakRecord)
     data1->timestamp = 123456789;
     data1->pid = 1234;
     data1->tid = 5678;
-    data1->device = "1";
+    data1->device = 1;
     data1->addr = 0x1234;
     data1->attr = "size=1024";
     ASSERT_TRUE(handler.Write(data1));
@@ -117,7 +117,7 @@ TEST_F(DataHandlerTest, DbHandler_Write_LeakRecord)
     data1->timestamp = 123456789;
     data1->pid = 1234;
     data1->tid = 5678;
-    data1->device = "1";
+    data1->device = 1;
     data1->addr = 0x1234;
     data1->attr = "size=1024";
     data1->cCallStack = "call_stack_c";

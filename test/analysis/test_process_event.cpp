@@ -40,7 +40,7 @@
 using namespace MemScope;
  
 std::unordered_map<std::string, std::shared_ptr<EventBase>> eventMap;
-std::string testdDevId = "0";
+int32_t testdDevId = 0;
 Config config;
  
 static void ResetSingleton()
@@ -156,7 +156,7 @@ private:
         event1->pid = 123;
         event1->tid = 1234;
         event1->addr = 0x0000000000003039;
-        event1->device = "0";
+        event1->device = 0;
         event1->name = "N/A";
         event1->eventType = EventBaseType::MALLOC;
         event1->eventSubType = EventSubType::HAL;
@@ -171,7 +171,7 @@ private:
         event2->pid = 123;
         event2->tid = 1234;
         event2->addr = 0x0000000000003039;
-        event2->device = "N/A";
+        event2->device = GD_INVALID_NUM;
         event2->name = "N/A";
         event2->eventType = EventBaseType::FREE;
         event2->eventSubType = EventSubType::HAL;
@@ -185,7 +185,7 @@ private:
         event3->pid = 123;
         event3->tid = 1234;
         event3->addr = 0x0000000000003039;
-        event3->device = "0";
+        event3->device = 0;
         event3->name = "N/A";
         event3->eventType = EventBaseType::MALLOC;
         event3->eventSubType = EventSubType::HAL;
@@ -202,7 +202,7 @@ private:
         event1->pid = 123;
         event1->tid = 1234;
         event1->addr = 0x0000000000003039;
-        event1->device = "0";
+        event1->device = 0;
         event1->name = "aten.add";
         event1->eventType = EventBaseType::ACCESS;
         event1->eventSubType = EventSubType::ATEN_READ_OR_WRITE;
@@ -217,7 +217,7 @@ private:
         event2->pid = 123;
         event2->tid = 1234;
         event2->addr = 0x000000000000303e;
-        event2->device = "0";
+        event2->device = 0;
         event2->name = "addOperation";
         event2->eventType = EventBaseType::ACCESS;
         event2->eventSubType = EventSubType::ATB_READ_OR_WRITE;
@@ -232,7 +232,7 @@ private:
         event3->pid = 1234;
         event3->tid = 1234;
         event3->addr = 0x000000000000303e;
-        event3->device = "0";
+        event3->device = 0;
         event3->name = "addOperation";
         event3->eventType = EventBaseType::ACCESS;
         event3->eventSubType = EventSubType::ATB_READ_OR_WRITE;
@@ -250,7 +250,7 @@ private:
         event1->pid = 123;
         event1->tid = 1234;
         event1->addr = 0x0000000000003039;
-        event1->device = "0";
+        event1->device = 0;
         event1->name = "N/A";
         event1->eventType = EventBaseType::MALLOC;
         event1->eventSubType = EventSubType::PTA_CACHING;
@@ -268,7 +268,7 @@ private:
         event2->pid = 123;
         event2->tid = 1234;
         event2->addr = 0x0000000000003039;
-        event2->device = "0";
+        event2->device = 0;
         event2->name = "N/A";
         event2->eventType = EventBaseType::FREE;
         event2->eventSubType = EventSubType::PTA_CACHING;
@@ -287,7 +287,7 @@ private:
         event1->pid = 123;
         event1->tid = 1234;
         event1->addr = 0x0000000000003039;
-        event1->device = "0";
+        event1->device = 0;
         event1->name = "N/A";
         event1->eventType = EventBaseType::MALLOC;
         event1->eventSubType = EventSubType::PTA_WORKSPACE;
@@ -305,7 +305,7 @@ private:
         event2->pid = 123;
         event2->tid = 1234;
         event2->addr = 0x0000000000003039;
-        event2->device = "0";
+        event2->device = 0;
         event2->name = "N/A";
         event2->eventType = EventBaseType::FREE;
         event2->eventSubType = EventSubType::PTA_WORKSPACE;
@@ -324,7 +324,7 @@ private:
         event1->pid = 123;
         event1->tid = 1234;
         event1->addr = 0x0000000000003039;
-        event1->device = "0";
+        event1->device = 0;
         event1->name = "N/A";
         event1->eventType = EventBaseType::MALLOC;
         event1->eventSubType = EventSubType::ATB;
@@ -342,7 +342,7 @@ private:
         event2->pid = 123;
         event2->tid = 1234;
         event2->addr = 0x0000000000003039;
-        event2->device = "0";
+        event2->device = 0;
         event2->name = "N/A";
         event2->eventType = EventBaseType::FREE;
         event2->eventSubType = EventSubType::ATB;
@@ -361,7 +361,7 @@ private:
         event1->pid = 123;
         event1->tid = 1234;
         event1->addr = 0x0000000000003039;
-        event1->device = "0";
+        event1->device = 0;
         event1->name = "N/A";
         event1->eventType = EventBaseType::MALLOC;
         event1->eventSubType = EventSubType::MINDSPORE;
@@ -379,7 +379,7 @@ private:
         event2->pid = 123;
         event2->tid = 1234;
         event2->addr = 0x0000000000003039;
-        event2->device = "0";
+        event2->device = 0;
         event2->name = "N/A";
         event2->eventType = EventBaseType::FREE;
         event2->eventSubType = EventSubType::MINDSPORE;
@@ -398,7 +398,7 @@ private:
         event1->pid = 123;
         event1->tid = 1234;
         event1->addr = 0x0000000000003039;
-        event1->device = "N/A";
+        event1->device = GD_INVALID_NUM;
         event1->name = "N/A";
         event1->eventType = EventBaseType::MEMORY_OWNER;
         event1->eventSubType = EventSubType::DESCRIBE_OWNER;
@@ -412,7 +412,7 @@ private:
         event2->pid = 123;
         event2->tid = 1234;
         event2->addr = 0x0000000000003039;
-        event2->device = "N/A";
+        event2->device = GD_INVALID_NUM;
         event2->name = "N/A";
         event2->eventType = EventBaseType::MEMORY_OWNER;
         event2->eventSubType = EventSubType::TORCH_OPTIMIZER_STEP_OWNER;
@@ -427,7 +427,7 @@ private:
         event1->timestamp = 12;
         event1->pid = 123;
         event1->tid = 1234;
-        event1->device = "0";
+        event1->device = 0;
         event1->name = "aten.add";
         event1->eventType = EventBaseType::OP_LAUNCH;
         event1->eventSubType = EventSubType::ATEN_START;
@@ -438,7 +438,7 @@ private:
         event2->timestamp = 13;
         event2->pid = 123;
         event2->tid = 1234;
-        event2->device = "0";
+        event2->device = 0;
         event2->name = "aten.add";
         event2->eventType = EventBaseType::OP_LAUNCH;
         event2->eventSubType = EventSubType::ATEN_END;
@@ -452,7 +452,7 @@ private:
         event1->timestamp = 12;
         event1->pid = 123;
         event1->tid = 1234;
-        event1->device = "0";
+        event1->device = 0;
         event1->name = "operation";
         event1->eventType = EventBaseType::OP_LAUNCH;
         event1->eventSubType = EventSubType::ATB_START;
@@ -464,7 +464,7 @@ private:
         event2->timestamp = 13;
         event2->pid = 123;
         event2->tid = 1234;
-        event2->device = "0";
+        event2->device = 0;
         event2->name = "operation";
         event2->eventType = EventBaseType::OP_LAUNCH;
         event2->eventSubType = EventSubType::ATB_END;
@@ -479,7 +479,7 @@ private:
         event1->timestamp = 12;
         event1->pid = 123;
         event1->tid = 1234;
-        event1->device = "0";
+        event1->device = 0;
         event1->name = "add01";
         event1->eventType = EventBaseType::KERNEL_LAUNCH;
         event1->eventSubType = EventSubType::KERNEL_LAUNCH;
@@ -492,7 +492,7 @@ private:
         event2->timestamp = 13;
         event2->pid = INVALID_PROCESSID;
         event2->tid = INVALID_THREADID;
-        event2->device = "0";
+        event2->device = 0;
         event2->name = "add01";
         event2->eventType = EventBaseType::KERNEL_LAUNCH;
         event2->eventSubType = EventSubType::KERNEL_EXECUTE_START;
@@ -505,7 +505,7 @@ private:
         event3->timestamp = 14;
         event3->pid = INVALID_PROCESSID;
         event3->tid = INVALID_THREADID;
-        event3->device = "0";
+        event3->device = 0;
         event3->name = "add01";
         event3->eventType = EventBaseType::KERNEL_LAUNCH;
         event3->eventSubType = EventSubType::KERNEL_EXECUTE_END;
@@ -521,7 +521,7 @@ private:
         event1->timestamp = 12;
         event1->pid = 123;
         event1->tid = 1234;
-        event1->device = "0";
+        event1->device = 0;
         event1->name = "add01";
         event1->eventType = EventBaseType::KERNEL_LAUNCH;
         event1->eventSubType = EventSubType::ATB_KERNEL_START;
@@ -533,7 +533,7 @@ private:
         event2->timestamp = 13;
         event2->pid = 123;
         event2->tid = 1234;
-        event2->device = "0";
+        event2->device = 0;
         event2->name = "add01";
         event2->eventType = EventBaseType::KERNEL_LAUNCH;
         event2->eventSubType = EventSubType::ATB_KERNEL_END;
@@ -548,8 +548,8 @@ private:
         event1->timestamp = 12;
         event1->pid = 123;
         event1->tid = 1234;
-        event1->device = "0";
-        event1->name = "\"++++++ test mstx mark +++++\"";
+        event1->device = 0;
+        event1->name = "++++++ test mstx mark +++++";
         event1->eventType = EventBaseType::MSTX;
         event1->eventSubType = EventSubType::MSTX_MARK;
         eventMap["MstxMarkEvent"] = event1;
@@ -559,8 +559,8 @@ private:
         event2->timestamp = 13;
         event2->pid = 123;
         event2->tid = 1234;
-        event2->device = "0";
-        event2->name = "\"step start\"";
+        event2->device = 0;
+        event2->name = "step start";
         event2->eventType = EventBaseType::MSTX;
         event2->eventSubType = EventSubType::MSTX_RANGE_START;
         eventMap["MstxRangeStartEvent"] = event2;
@@ -570,8 +570,8 @@ private:
         event3->timestamp = 14;
         event3->pid = 123;
         event3->tid = 1234;
-        event3->device = "0";
-        event3->name = "\"\"";
+        event3->device = 0;
+        event3->name = "";
         event3->eventType = EventBaseType::MSTX;
         event3->eventSubType = EventSubType::MSTX_RANGE_END;
         eventMap["MstxRangeEndEvent"] = event3;
@@ -584,7 +584,7 @@ private:
         event1->timestamp = 12;
         event1->pid = 123;
         event1->tid = 1234;
-        event1->device = "N/A";
+        event1->device = GD_INVALID_NUM;
         event1->name = "N/A";
         event1->eventType = EventBaseType::SYSTEM;
         event1->eventSubType = EventSubType::ACL_INIT;
@@ -595,7 +595,7 @@ private:
         event2->timestamp = 13;
         event2->pid = 123;
         event2->tid = 1234;
-        event2->device = "N/A";
+        event2->device = GD_INVALID_NUM;
         event2->name = "N/A";
         event2->eventType = EventBaseType::SYSTEM;
         event2->eventSubType = EventSubType::ACL_FINI;
@@ -606,7 +606,7 @@ private:
         event3->timestamp = 12;
         event3->pid = 123;
         event3->tid = 1234;
-        event3->device = "N/A";
+        event3->device = GD_INVALID_NUM;
         event3->name = "N/A";
         event3->eventType = EventBaseType::SYSTEM;
         event3->eventSubType = EventSubType::TRACE_START;
@@ -617,7 +617,7 @@ private:
         event4->timestamp = 13;
         event4->pid = 123;
         event4->tid = 1234;
-        event4->device = "N/A";
+        event4->device = GD_INVALID_NUM;
         event4->name = "N/A";
         event4->eventType = EventBaseType::SYSTEM;
         event4->eventSubType = EventSubType::TRACE_STOP;
@@ -635,7 +635,8 @@ private:
  
 static bool ReadFile(std::string filePath, std::string &content)
 {
-    filePath = Utility::FileCreateManager::GetInstance(filePath).GetProjectDir() + "/device_" + testdDevId + "/" + MemScope::DUMP_DIR;
+    filePath = Utility::FileCreateManager::GetInstance(filePath).GetProjectDir() + "/device_" +
+               std::to_string(testdDevId) + "/" + MemScope::DUMP_DIR;
     DIR* dir = opendir(filePath.c_str());
     if (!dir) {
         return false;

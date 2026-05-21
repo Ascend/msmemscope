@@ -26,24 +26,28 @@ using namespace MemScope;
 
 TEST(MstxAnalyzerTest, do_mstx_record_expect_success) {
     ClientId clientId = 0;
-    auto mstxRecordStart = MstxRecord {};
-    mstxRecordStart.markType = MarkType::RANGE_START_A;
-    mstxRecordStart.stepId = 1;
-    mstxRecordStart.streamId = 123;
 
-    auto mstxRecordEnd = MstxRecord {};
-    mstxRecordEnd.markType = MarkType::RANGE_END;
-    mstxRecordEnd.stepId = 1;
-    mstxRecordEnd.streamId = 123;
+    std::shared_ptr<MstxEvent> eventStart = std::make_shared<MstxEvent>();
+    eventStart->eventType = EventBaseType::MSTX;
+    eventStart->eventSubType = EventSubType::MSTX_RANGE_START;
+    eventStart->stepId = 1;
+    eventStart->streamId = 123;
 
-    auto mstxRecordMark = MstxRecord {};
-    mstxRecordMark.markType = MarkType::MARK_A;
-    mstxRecordMark.stepId = 0;
-    mstxRecordMark.streamId = 123;
+    std::shared_ptr<MstxEvent> eventEnd = std::make_shared<MstxEvent>();
+    eventEnd->eventType = EventBaseType::MSTX;
+    eventEnd->eventSubType = EventSubType::MSTX_RANGE_END;
+    eventEnd->stepId = 1;
+    eventEnd->streamId = 123;
 
-    EXPECT_TRUE(MstxAnalyzer::Instance().RecordMstx(clientId, mstxRecordStart));
-    EXPECT_TRUE(MstxAnalyzer::Instance().RecordMstx(clientId, mstxRecordEnd));
-    EXPECT_TRUE(MstxAnalyzer::Instance().RecordMstx(clientId, mstxRecordMark));
+    std::shared_ptr<MstxEvent> eventMark = std::make_shared<MstxEvent>();
+    eventMark->eventType = EventBaseType::MSTX;
+    eventMark->eventSubType = EventSubType::MSTX_MARK;
+    eventMark->stepId = 0;
+    eventMark->streamId = 123;
+
+    EXPECT_TRUE(MstxAnalyzer::Instance().RecordMstx(clientId, eventStart));
+    EXPECT_TRUE(MstxAnalyzer::Instance().RecordMstx(clientId, eventEnd));
+    EXPECT_TRUE(MstxAnalyzer::Instance().RecordMstx(clientId, eventMark));
 }
 
 TEST(MstxAnalyzerTest, do_analyzer_register_and_unregister_expect_success) {
@@ -55,11 +59,12 @@ TEST(MstxAnalyzerTest, do_analyzer_notify_expect_success) {
     MstxAnalyzer::Instance().Subscribe(MstxEventSubscriber::STEP_INNER_ANALYZER, nullptr);
 
     ClientId clientId = 0;
-    auto mstxRecordStart = MstxRecord {};
-    mstxRecordStart.markType = MarkType::RANGE_START_A;
-    mstxRecordStart.stepId = 1;
-    mstxRecordStart.streamId = 123;
+    std::shared_ptr<MstxEvent> eventStart = std::make_shared<MstxEvent>();
+    eventStart->eventType = EventBaseType::MSTX;
+    eventStart->eventSubType = EventSubType::MSTX_RANGE_START;
+    eventStart->stepId = 1;
+    eventStart->streamId = 123;
 
-    EXPECT_TRUE(MstxAnalyzer::Instance().RecordMstx(clientId, mstxRecordStart));
+    EXPECT_TRUE(MstxAnalyzer::Instance().RecordMstx(clientId, eventStart));
     MstxAnalyzer::Instance().UnSubscribe(MstxEventSubscriber::STEP_INNER_ANALYZER);
 }

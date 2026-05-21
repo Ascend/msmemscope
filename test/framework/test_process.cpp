@@ -110,55 +110,50 @@ TEST(Process, process_setpreloadenv_with_atb_abi_1_expect_success)
 
 TEST(Process, do_record_handler_except_success)
 {
-    auto buffer1 = RecordBuffer::CreateRecordBuffer<MemPoolRecord>();
-    MemPoolRecord* record1 = buffer1.Cast<MemPoolRecord>();
-    record1->type = RecordType::PTA_CACHING_POOL_RECORD;
-    record1->recordIndex = 1;
-    auto memoryusage1 = MemoryUsage {};
-    memoryusage1.dataType = 0;
-    memoryusage1.ptr = 12345;
-    memoryusage1.allocSize = 512;
-    memoryusage1.totalAllocated = 512;
-    record1->memoryUsage = memoryusage1;
+    std::shared_ptr<MemoryEvent> event1 = std::make_shared<MemoryEvent>();
+    event1->eventType = EventBaseType::MALLOC;
+    event1->eventSubType = EventSubType::PTA_CACHING;
+    event1->id = 1;
+    event1->device = 0;
+    event1->size = 512;
+    event1->addr = 12345;
+    event1->used = 512;
+    
+    std::shared_ptr<MstxEvent> event2 = std::make_shared<MstxEvent>();
+    event2->eventType = EventBaseType::MSTX;
+    event2->eventSubType = EventSubType::MSTX_RANGE_START;
+    event2->rangeId = 0;
+    event2->stepId = 1;
+    event2->streamId = 123;
 
-    auto buffer2 = RecordBuffer::CreateRecordBuffer<MstxRecord>();
-    MstxRecord* record2 = buffer2.Cast<MstxRecord>();
-    record2->type = RecordType::MSTX_MARK_RECORD;
-    record2->markType = MarkType::RANGE_START_A;
-    record2->rangeId = 0;
-    record2->stepId = 1;
-    record2->streamId = 123;
+    std::shared_ptr<KernelLaunchEvent> event3 = std::make_shared<KernelLaunchEvent>();
+    event3->eventType = EventBaseType::KERNEL_LAUNCH;
+    event3->eventSubType = EventSubType::KERNEL_LAUNCH;
 
-    auto buffer3 = RecordBuffer::CreateRecordBuffer<KernelLaunchRecord>();
-    KernelLaunchRecord* record3 = buffer3.Cast<KernelLaunchRecord>();
-    record3->type = RecordType::KERNEL_LAUNCH_RECORD;
+    std::shared_ptr<SystemEvent> event4 = std::make_shared<SystemEvent>();
+    event4->eventType = EventBaseType::SYSTEM;
+    event4->eventSubType = EventSubType::ACL_INIT;
 
-    auto buffer4 = RecordBuffer::CreateRecordBuffer<AclItfRecord>();
-    AclItfRecord* record4 = buffer4.Cast<AclItfRecord>();
-    record4->type = RecordType::ACL_ITF_RECORD;
+    std::shared_ptr<OpLaunchEvent> event5 = std::make_shared<OpLaunchEvent>();
+    event5->eventType = EventBaseType::OP_LAUNCH;
+    event5->eventSubType = EventSubType::ATEN_START;
+    event5->name = "X";
 
-    auto buffer5 = RecordBuffer::CreateRecordBuffer<MemOpRecord>();
-    MemOpRecord* record5 = buffer5.Cast<MemOpRecord>();
-    record5->type = RecordType::MEMORY_RECORD;
-    record5->subtype = RecordSubType::MALLOC;
-
-    auto buffer6 = RecordBuffer::CreateRecordBuffer<MemPoolRecord>();
-    MemPoolRecord* record6 = buffer6.Cast<MemPoolRecord>();
-    record6->type = RecordType::PTA_WORKSPACE_POOL_RECORD;
-    record6->recordIndex = 2;
-    auto memoryusage6 = MemoryUsage {};
-    memoryusage6.dataType = 0;
-    memoryusage6.ptr = 12347;
-    memoryusage6.allocSize = 512;
-    memoryusage6.totalAllocated = 512;
-    record6->memoryUsage = memoryusage6;
+    std::shared_ptr<MemoryEvent> event6 = std::make_shared<MemoryEvent>();
+    event6->eventType = EventBaseType::MALLOC;
+    event6->eventSubType = EventSubType::PTA_WORKSPACE;
+    event6->id = 1;
+    event6->device = 0;
+    event6->size = 512;
+    event6->addr = 12347;
+    event6->used = 512;
 
     Config config;
     setConfig(config);
-    Process::GetInstance(config).RecordHandler(buffer1);
-    Process::GetInstance(config).RecordHandler(buffer2);
-    Process::GetInstance(config).RecordHandler(buffer3);
-    Process::GetInstance(config).RecordHandler(buffer4);
-    Process::GetInstance(config).RecordHandler(buffer5);
-    Process::GetInstance(config).RecordHandler(buffer6);
+    Process::GetInstance(config).SendEvent(event1);
+    Process::GetInstance(config).SendEvent(event2);
+    Process::GetInstance(config).SendEvent(event3);
+    Process::GetInstance(config).SendEvent(event4);
+    Process::GetInstance(config).SendEvent(event5);
+    Process::GetInstance(config).SendEvent(event6);
 }

@@ -32,7 +32,7 @@ TEST(HalAnalyzerTest, do_hal_record_except_memscope) {
     eventBit.setBit(static_cast<size_t>(EventType::FREE_EVENT));
     analysisConfig.eventType = eventBit.getValue();
     ClientId clientId = 0;
-    std::shared_ptr<EventBase> event1 = std::make_shared<MemoryEvent>();
+    std::shared_ptr<MemoryEvent> event1 = std::make_shared<MemoryEvent>();
     event1->eventType = EventBaseType::MALLOC;
     event1->flag = 2377900603261207558;
     event1->id = 1;
@@ -42,7 +42,7 @@ TEST(HalAnalyzerTest, do_hal_record_except_memscope) {
     event1->size = 1024;
     event1->timestamp = 1234567;
 
-    std::shared_ptr<EventBase> event2 = std::make_shared<MemoryEvent>();
+    std::shared_ptr<MemoryEvent> event2 = std::make_shared<MemoryEvent>();
     event2->eventType = EventBaseType::MALLOC;
     event2->flag = 18374686480754951175;
     event2->id = 2;
@@ -52,7 +52,7 @@ TEST(HalAnalyzerTest, do_hal_record_except_memscope) {
     event2->size = 512;
     event2->timestamp = 1234568;
  
-    std::shared_ptr<EventBase> event3 = std::make_shared<MemoryEvent>();
+    std::shared_ptr<MemoryEvent> event3 = std::make_shared<MemoryEvent>();
     event3->eventType = EventBaseType::MALLOC;
     event3->flag = 504403158275081222;
     event3->id = 3;
@@ -75,7 +75,7 @@ TEST(HalAnalyzerTest, do_record_except_no_memscope) {
     analysisConfig.eventType = eventBit.getValue();
     ClientId clientId = 0;
 
-    std::shared_ptr<EventBase> event1 = std::make_shared<MemoryEvent>();
+    std::shared_ptr<MemoryEvent> event1 = std::make_shared<MemoryEvent>();
     event1->eventType = EventBaseType::MALLOC;
     event1->flag = 2377900603261207558;
     event1->id = 1;
@@ -85,7 +85,7 @@ TEST(HalAnalyzerTest, do_record_except_no_memscope) {
     event1->size = 1024;
     event1->timestamp = 1234567;
 
-    std::shared_ptr<EventBase> event2 = std::make_shared<MemoryEvent>();
+    std::shared_ptr<MemoryEvent> event2 = std::make_shared<MemoryEvent>();
     event2->eventType = EventBaseType::FREE;
     event2->flag = 18374686480754951175;
     event2->id = 2;
@@ -106,7 +106,7 @@ TEST(HalAnalyzerTest, do_record_excpet_double_free) {
     analysisConfig.eventType = eventBit.getValue();
     ClientId clientId = 0;
 
-    std::shared_ptr<EventBase> event1 = std::make_shared<MemoryEvent>();
+    std::shared_ptr<MemoryEvent> event1 = std::make_shared<MemoryEvent>();
     event1->eventType = EventBaseType::MALLOC;
     event1->flag = 2377900603261207558;
     event1->id = 1;
@@ -116,7 +116,7 @@ TEST(HalAnalyzerTest, do_record_excpet_double_free) {
     event1->size = 1024;
     event1->timestamp = 1234567;
 
-    std::shared_ptr<EventBase> event2 = std::make_shared<MemoryEvent>();
+    std::shared_ptr<MemoryEvent> event2 = std::make_shared<MemoryEvent>();
     event2->eventType = EventBaseType::FREE;
     event2->flag = 18374686480754951175;
     event2->id = 2;
@@ -125,7 +125,7 @@ TEST(HalAnalyzerTest, do_record_excpet_double_free) {
     event2->addr = 0x7958;
     event2->size = 0;
 
-    std::shared_ptr<EventBase> event3 = std::make_shared<MemoryEvent>();
+    std::shared_ptr<MemoryEvent> event3 = std::make_shared<MemoryEvent>();
     event3->eventType = EventBaseType::FREE;
     event3->flag = 18374686480754951175;
     event3->id = 3;
@@ -147,7 +147,7 @@ TEST(HalAnalyzerTest, do_record_except_double_malloc) {
     analysisConfig.eventType = eventBit.getValue();
     ClientId clientId = 0;
 
-    std::shared_ptr<EventBase> event1 = std::make_shared<MemoryEvent>();
+    std::shared_ptr<MemoryEvent> event1 = std::make_shared<MemoryEvent>();
     event1->eventType = EventBaseType::MALLOC;
     event1->flag = 2377900603261207558;
     event1->id = 1;
@@ -157,8 +157,7 @@ TEST(HalAnalyzerTest, do_record_except_double_malloc) {
     event1->size = 1024;
     event1->timestamp = 1234567;
 
-    MemOpRecord record2;
-    std::shared_ptr<EventBase> event2 = std::make_shared<MemoryEvent>();
+    std::shared_ptr<MemoryEvent> event2 = std::make_shared<MemoryEvent>();
     event2->eventType = EventBaseType::FREE;
     event2->flag = 2377900603261207558;
     event2->id = 2;
@@ -179,7 +178,7 @@ TEST(HalAnalyzerTest, do_record_except_free_null) {
     analysisConfig.eventType = eventBit.getValue();
     ClientId clientId = 0;
 
-    std::shared_ptr<EventBase> event1 = std::make_shared<MemoryEvent>();
+    std::shared_ptr<MemoryEvent> event1 = std::make_shared<MemoryEvent>();
     event1->eventType = EventBaseType::FREE;
     event1->id = 2;
     event1->space = MemOpSpace::INVALID;
@@ -198,7 +197,7 @@ TEST(HalAnalyzerTest, do_record_fail) {
     analysisConfig.eventType = eventBit.getValue();
     ClientId clientId = 0;
 
-    std::shared_ptr<EventBase> event1 = std::make_shared<MemoryEvent>();
+    std::shared_ptr<MemoryEvent> event1 = std::make_shared<MemoryEvent>();
     event1->eventType = EventBaseType::FREE;
     event1->id = 1;
     event1->space = MemOpSpace::INVALID;
@@ -216,7 +215,7 @@ TEST(HalAnalyzerTest, do_memory_record_nulltable) {
     eventBit.setBit(static_cast<size_t>(EventType::FREE_EVENT));
     analysisConfig.eventType = eventBit.getValue();
 
-    std::shared_ptr<EventBase> event1 = std::make_shared<MemoryEvent>();
+    std::shared_ptr<MemoryEvent> event1 = std::make_shared<MemoryEvent>();
     event1->eventType = EventBaseType::FREE;
     event1->id = 123;
     event1->space = MemOpSpace::INVALID;

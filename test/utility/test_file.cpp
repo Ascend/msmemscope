@@ -92,7 +92,7 @@ TEST_F(FileTest, create_new_csv_file_expect_true)
 {
     FILE *fp = nullptr;
     FileCreateManager::GetInstance("./testmsmemscope").SetProjectDir("./testmsmemscope");
-    auto ret = FileCreateManager::GetInstance("./testmsmemscope").CreateCsvFile(&fp, "0", "test",
+    auto ret = FileCreateManager::GetInstance("./testmsmemscope").CreateCsvFile(&fp, 0, "test",
         MemScope::DUMP_DIR, "test_headers\n");
     ASSERT_TRUE(ret);
     fclose(fp);

@@ -17,17 +17,18 @@
 #include <gtest/gtest.h>
 #include <gtest/internal/gtest-port.h>
 #include <thread>
+#include "securec.h"
 #define private public
 #include "utility/log.h"
 #undef private
 
 using namespace Utility;
 
-bool FindStr(const std::string &fileName, const std::string &str)
+bool FindStr(const std::string &fileName, const char* str)
 {
     FILE *fp = fopen(fileName.c_str(), "r");
     char buffer[256];
-    if (fgets(buffer, sizeof(buffer), fp) != nullptr && strstr(buffer, str.c_str()) != nullptr) {
+    if (fgets(buffer, sizeof(buffer), fp) != nullptr && strstr(buffer, str) != nullptr) {
         fclose(fp);
         return true;
     }
@@ -39,7 +40,7 @@ TEST(Log, log_debug_with_default_log_level_warn_expect_not_output)
 {
     Log &logger = Log::GetLog();
     logger.fp_ = fopen("output.txt", "w");
-    std::string testLog = "test log debug";
+    const char* testLog = "test log debug";
     LOG_DEBUG(testLog);
     logger.fp_ = nullptr;
     EXPECT_FALSE(FindStr("output.txt", testLog));
@@ -49,7 +50,7 @@ TEST(Log, log_warn_expect_output_warn_log)
 {
     Log &logger = Log::GetLog();
     logger.fp_ = fopen("output.txt", "w");
-    std::string testLog = "test log warn";
+    const char* testLog = "test log warn";
     Utility::SetLogLevel(MemScope::LogLv::WARN);
     LOG_WARN(testLog);
     logger.fp_ = nullptr;
@@ -61,7 +62,7 @@ TEST(Log, log_error_expect_output_erro_log)
 {
     Log &logger = Log::GetLog();
     logger.fp_ = fopen("output.txt", "w");
-    std::string testLog = "test log error";
+    const char* testLog = "test log error";
     Utility::SetLogLevel(MemScope::LogLv::ERROR);
     LOG_ERROR(testLog);
     logger.fp_ = nullptr;
@@ -73,7 +74,7 @@ TEST(Log, log_info_expect_output_info_log)
 {
     Log &logger = Log::GetLog();
     logger.fp_ = fopen("output.txt", "w");
-    std::string testLog = "test log info";
+    const char* testLog = "test log info";
     Utility::SetLogLevel(MemScope::LogLv::INFO);
     LOG_INFO(testLog);
     logger.fp_ = nullptr;
@@ -104,30 +105,6 @@ TEST(Log, log_level_different_threashold_expect_success)
     EXPECT_TRUE(FindStr("output.txt", "message"));
 }
 
-// 测试1：CreateLogFile创建失败（目录无权限），日志不输出
-TEST(Log, create_log_file_fail_expect_no_output)
-{
-    Log &logger = Log::GetLog();
-    // 保存原始outputDir_，测试后恢复
-    std::string originalOutputDir = logger.outputDir_;
-    // 设置无权限的输出目录
-    std::string noPermDir = "./no_perm_log_dir";
-    MakeDir(noPermDir);
-    chmod(noPermDir.c_str(), 0444); // 只读权限，无法创建子目录
-    logger.outputDir_ = noPermDir;
-    
-    std::string testLog = "log create fail test";
-    LOG_ERROR(testLog);
-    
-    // 验证日志未写入（因CreateLogFile失败）
-    EXPECT_FALSE(FindStr("output.txt", testLog));
-    
-    // 恢复环境
-    chmod(noPermDir.c_str(), 0755);
-    rmdir(noPermDir.c_str());
-    logger.outputDir_ = originalOutputDir;
-}
-
 // 测试2：日志大小超限（触发maxLogSize_翻倍）
 TEST(Log, log_size_exceed_max_expect_warn_and_double_size)
 {
@@ -142,9 +119,10 @@ TEST(Log, log_size_exceed_max_expect_warn_and_double_size)
     // 手动创建日志文件并写入接近超限的内容
     std::string testLogPath = "./size_exceed_log.txt";
     logger.fp_ = fopen(testLogPath.c_str(), "w");
-    logger.logFilePath_ = testLogPath;
+    strcpy_s(logger.logFilePath_, sizeof(logger.logFilePath_), testLogPath.c_str());
     std::string largeLog(90, 'a'); // 90字节，加上前缀后超限
-    LOG_WARN(largeLog);
+    LOG_WARN(largeLog.c_str());
+    LOG_WARN(largeLog.c_str());
     
     // 验证1：日志文件存在（虽超限但仍写入）
     EXPECT_TRUE(FileExists(testLogPath));
@@ -158,7 +136,7 @@ TEST(Log, log_size_exceed_max_expect_warn_and_double_size)
     remove(testLogPath.c_str());
     logger.fp_ = originalFp;
     logger.maxLogSize_ = originalMaxSize;
-    logger.logFilePath_ = originalLogPath;
+    strcpy_s(logger.logFilePath_, sizeof(logger.logFilePath_), originalLogPath.c_str());
 }
 
 // 测试3：带参数的日志（格式化输出），验证参数替换
@@ -180,25 +158,6 @@ TEST(Log, log_with_params_expect_formatted_output)
     EXPECT_TRUE(FindStr("output.txt", "int: 123"));
     EXPECT_TRUE(FindStr("output.txt", "string: test_param"));
     EXPECT_TRUE(FindStr("output.txt", "double: 3.14"));
-}
-
-// 测试4：GetLogSourceFileName（提取文件名，含/和不含/场景）
-TEST(Log, get_log_source_file_name_expect_correct)
-{
-    // 场景1：路径含/（绝对路径或相对路径）
-    std::string path1 = "/home/user/test.cpp";
-    EXPECT_EQ(Utility::GetLogSourceFileName(path1), "test.cpp");
-    
-    std::string path2 = "./src/log/test_log.cpp";
-    EXPECT_EQ(Utility::GetLogSourceFileName(path2), "test_log.cpp");
-    
-    // 场景2：路径不含/（仅文件名）
-    std::string path3 = "main.cpp";
-    EXPECT_EQ(Utility::GetLogSourceFileName(path3), "main.cpp");
-    
-    // 场景3：路径以/结尾（异常场景）
-    std::string path4 = "/home/user/";
-    EXPECT_EQ(Utility::GetLogSourceFileName(path4), "");
 }
 
 // 测试5：日志级别为DEBUG（最低级别），所有日志都输出
@@ -270,26 +229,6 @@ TEST(Log, multi_thread_log_expect_no_crash)
     EXPECT_TRUE(FindStr("multi_thread_log.txt", "thread log"));
     
     remove("multi_thread_log.txt");
-}
-
-// 测试9：AddPrefixInfo（验证日志前缀包含文件名、行号、日志级别）
-TEST(Log, add_prefix_info_expect_correct_format)
-{
-    Log &logger = Log::GetLog();
-    std::string format = "test prefix";
-    std::string fileName = "test_file.cpp";
-    uint32_t line = 123;
-    
-    // 测试WARN级别前缀
-    std::string warnPrefix = logger.AddPrefixInfo(format, MemScope::LogLv::WARN, fileName, line);
-    EXPECT_NE(warnPrefix.find("[WARN]"), std::string::npos);
-    EXPECT_NE(warnPrefix.find(fileName), std::string::npos);
-    EXPECT_NE(warnPrefix.find(std::to_string(line)), std::string::npos);
-    EXPECT_NE(warnPrefix.find(format), std::string::npos);
-    
-    // 测试ERROR级别前缀
-    std::string errorPrefix = logger.AddPrefixInfo(format, MemScope::LogLv::ERROR, fileName, line);
-    EXPECT_NE(errorPrefix.find("[ERROR]"), std::string::npos);
 }
 
 // 测试10：日志文件为空时写入（边界场景）

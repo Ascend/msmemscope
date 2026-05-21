@@ -71,14 +71,13 @@ TEST_F(EventReportTest, ReportHalMallocTestDEVICE)
     MemOpSpace space = MemOpSpace::DEVICE;
 
     CallStackString callStack;
-    EXPECT_TRUE(instance.ReportHalMalloc(testAddr, testSize, 1, callStack));
+    EXPECT_TRUE(instance.ReportHalMalloc(testAddr, testSize, 1, std::move(callStack)));
 }
 
 TEST_F(EventReportTest, ReportAddrInfoTest)
 {
     EventReport& instance = EventReport::Instance(MemScopeCommType::MEMORY_DEBUG);
-    auto buffer = RecordBuffer::CreateRecordBuffer<AddrInfo>();
-    EXPECT_TRUE(instance.ReportAddrInfo(buffer));
+    EXPECT_TRUE(instance.ReportAddrInfo(EventSubType::DESCRIBE_OWNER, 12345, "owner"));
 }
 
 TEST_F(EventReportTest, ReportPyStepTest)
@@ -90,62 +89,53 @@ TEST_F(EventReportTest, ReportPyStepTest)
 TEST_F(EventReportTest, ReportTorchNpuMallocTest)
 {
     EventReport& instance = EventReport::Instance(MemScopeCommType::MEMORY_DEBUG);
-    auto buffer = RecordBuffer::CreateRecordBuffer<MemPoolRecord>();
-    MemPoolRecord* npuRecordMalloc = buffer.Cast<MemPoolRecord>();
-    npuRecordMalloc->recordIndex = 1;
     auto memoryusage1 = MemoryUsage {};
     memoryusage1.deviceIndex = 0;
     memoryusage1.dataType = 0;
     memoryusage1.ptr = 12345;
     memoryusage1.allocSize = 512;
     memoryusage1.totalAllocated = 512;
-    npuRecordMalloc->memoryUsage = memoryusage1;
     Config config = MemScope::GetConfig();
     config.collectAllNpu = true;
     ConfigManager::Instance().SetConfig(config);
-    EXPECT_TRUE(instance.ReportMemPoolRecord(buffer));
+    CallStackString stack;
+    EXPECT_TRUE(instance.ReportMemPoolRecord(EventSubType::PTA_CACHING, memoryusage1, "", std::move(stack)));
 }
 
 TEST_F(EventReportTest, ReportTorchNpuFreeTest)
 {
     EventReport& instance = EventReport::Instance(MemScopeCommType::MEMORY_DEBUG);
-    auto buffer = RecordBuffer::CreateRecordBuffer<MemPoolRecord>();
-    MemPoolRecord* npuRecordFree = buffer.Cast<MemPoolRecord>();
-    npuRecordFree->recordIndex = 3;
     auto memoryusage1 = MemoryUsage {};
     memoryusage1.deviceIndex = 3;
     memoryusage1.dataType = 1;
     memoryusage1.ptr = 12345;
     memoryusage1.allocSize = 512;
     memoryusage1.totalAllocated = 512;
-    npuRecordFree->memoryUsage = memoryusage1;
     Config config = MemScope::GetConfig();
     config.collectAllNpu = true;
     ConfigManager::Instance().SetConfig(config);
-    EXPECT_TRUE(instance.ReportMemPoolRecord(buffer));
+    CallStackString stack;
+    EXPECT_TRUE(instance.ReportMemPoolRecord(EventSubType::PTA_CACHING, memoryusage1, "", std::move(stack)));
 }
 
 TEST_F(EventReportTest, ReportTorchNpuConditionTest)
 {
     EventReport& instance = EventReport::Instance(MemScopeCommType::MEMORY_DEBUG);
-    auto buffer = RecordBuffer::CreateRecordBuffer<MemPoolRecord>();
-    MemPoolRecord* npuRecordFree = buffer.Cast<MemPoolRecord>();
-    npuRecordFree->recordIndex = 3;
     auto memoryusage1 = MemoryUsage {};
     memoryusage1.deviceIndex = 3;
     memoryusage1.dataType = 1;
     memoryusage1.ptr = 12345;
     memoryusage1.allocSize = 512;
     memoryusage1.totalAllocated = 512;
-    npuRecordFree->memoryUsage = memoryusage1;
+    CallStackString stack;
 
     EventTraceManager::Instance().SetTraceStatus(EventTraceStatus::NOT_IN_TRACING);
-    EXPECT_TRUE(instance.ReportMemPoolRecord(buffer));
+    EXPECT_TRUE(instance.ReportMemPoolRecord(EventSubType::PTA_CACHING, memoryusage1, "", std::move(stack)));
     EventTraceManager::Instance().SetTraceStatus(EventTraceStatus::IN_TRACING);
     Config config = MemScope::GetConfig();
     config.collectAllNpu = true;
     ConfigManager::Instance().SetConfig(config);
-    EXPECT_TRUE(instance.ReportMemPoolRecord(buffer));
+    EXPECT_TRUE(instance.ReportMemPoolRecord(EventSubType::PTA_CACHING, memoryusage1, "", std::move(stack)));
 }
 
 TEST_F(EventReportTest, ReportHalMallocTestHost)
@@ -167,7 +157,7 @@ TEST_F(EventReportTest, ReportHalMallocTestHost)
     unsigned long long testFlag = 504403158274934784;
     MemOpSpace space = MemOpSpace::HOST;
     CallStackString callStack;
-    EXPECT_TRUE(instance.ReportHalMalloc(testAddr, testSize, 1, callStack));
+    EXPECT_TRUE(instance.ReportHalMalloc(testAddr, testSize, 1, std::move(callStack)));
 }
 
 TEST_F(EventReportTest, ReportHalFreeTest)
@@ -185,7 +175,7 @@ TEST_F(EventReportTest, ReportHalFreeTest)
     ConfigManager::Instance().SetConfig(config);
     uint64_t testAddr = 0x12345678;
     CallStackString callStack;
-    EXPECT_TRUE(instance.ReportHalFree(testAddr, callStack));
+    EXPECT_TRUE(instance.ReportHalFree(testAddr, std::move(callStack)));
 }
 
 TEST_F(EventReportTest, ReportMarkTest)
@@ -194,10 +184,8 @@ TEST_F(EventReportTest, ReportMarkTest)
     Config config = MemScope::GetConfig();
     config.collectAllNpu = true;
     ConfigManager::Instance().SetConfig(config);
-    auto buffer = RecordBuffer::CreateRecordBuffer<MstxRecord>();
-    MstxRecord* record = buffer.Cast<MstxRecord>();
-    record->rangeId = 123;
-    EXPECT_TRUE(instance.ReportMark(buffer));
+    std::string msg("mark");
+    EXPECT_TRUE(instance.ReportMark(MarkType::MARK_A, msg, 0, 0));
 }
 
 TEST_F(EventReportTest, ReportKernelLaunchTest)
@@ -277,7 +265,8 @@ TEST_F(EventReportTest, ReportAtbMemAccessTest)
     char attr[255] = "path:model_struct";
     uint64_t addr = 123;
     uint64_t size = 1;
-    EXPECT_TRUE(instance.ReportAtbAccessMemory(name, attr, addr, size, AccessType::UNKNOWN));
+    EXPECT_TRUE(instance.ReportAtbAccessMemory(name, sizeof(name), attr, sizeof(attr), addr, size,
+                AccessType::UNKNOWN));
 }
 
 TEST_F(EventReportTest, ReportAtenLaunchTestExpectSuccess)
@@ -286,8 +275,9 @@ TEST_F(EventReportTest, ReportAtenLaunchTestExpectSuccess)
     Config config = MemScope::GetConfig();
     config.collectAllNpu = true;
     ConfigManager::Instance().SetConfig(config);
-    auto atenOpLaunchRecord = RecordBuffer::CreateRecordBuffer<AtenOpLaunchRecord>();
-    EXPECT_TRUE(instance.ReportAtenLaunch(atenOpLaunchRecord));
+    std::string name("op");
+    std::string stack;
+    EXPECT_TRUE(instance.ReportAtenLaunch(name, true, std::move(stack)));
 }
 
 TEST_F(EventReportTest, ReportAtenAccessTestExpectSuccess)
@@ -296,8 +286,8 @@ TEST_F(EventReportTest, ReportAtenAccessTestExpectSuccess)
     Config config = MemScope::GetConfig();
     config.collectAllNpu = true;
     ConfigManager::Instance().SetConfig(config);
-    auto memAccessRecord = RecordBuffer::CreateRecordBuffer<MemAccessRecord>();
-    EXPECT_TRUE(instance.ReportAtenAccess(memAccessRecord));
+    std::string stack;
+    EXPECT_TRUE(instance.ReportAtenAccess("op", "", AccessType::UNKNOWN, 123456, 512, std::move(stack)));
 }
 
 TEST_F(EventReportTest, ReportAtenLaunchTestExpextSuccess)
@@ -306,18 +296,8 @@ TEST_F(EventReportTest, ReportAtenLaunchTestExpextSuccess)
     Config config = MemScope::GetConfig();
     config.collectAllNpu = true;
     ConfigManager::Instance().SetConfig(config);
-    auto atenOpLaunchRecord = RecordBuffer::CreateRecordBuffer<AtenOpLaunchRecord>();
-    EXPECT_TRUE(instance.ReportAtenLaunch(atenOpLaunchRecord));
-}
-
-TEST_F(EventReportTest, ReportAtenAccessTestExpextSuccess)
-{
-    EventReport& instance = EventReport::Instance(MemScopeCommType::MEMORY_DEBUG);
-    Config config = MemScope::GetConfig();
-    config.collectAllNpu = true;
-    ConfigManager::Instance().SetConfig(config);
-    auto memAccessRecord = RecordBuffer::CreateRecordBuffer<MemAccessRecord>();
-    EXPECT_TRUE(instance.ReportAtenAccess(memAccessRecord));
+    std::string stack;
+    EXPECT_TRUE(instance.ReportAtenLaunch("op", true, std::move(stack)));
 }
 
 TEST_F(EventReportTest, ReportKernelExcuteTestExpextSuccess)
@@ -326,7 +306,6 @@ TEST_F(EventReportTest, ReportKernelExcuteTestExpextSuccess)
     Config config = MemScope::GetConfig();
     config.collectAllNpu = true;
     ConfigManager::Instance().SetConfig(config);
-    MemAccessRecord  memAccessRecord  {};
     CallStackString stack;
     std::string name = "test";
     uint64_t time = 1234;
@@ -369,33 +348,23 @@ TEST_F(EventReportTest, TestReportSkipStepsNormal)
     config.stepList.stepIdList[1] = 2;
     config.stepList.stepIdList[2] = 6;
     ConfigManager::Instance().SetConfig(config);
-    auto buffer = RecordBuffer::CreateRecordBuffer<MstxRecord>(TLVBlockType::MARK_MESSAGE, "step start");
-    MstxRecord* mstxRecord = buffer.Cast<MstxRecord>();
-    mstxRecord->markType = MarkType::RANGE_START_A;
-    mstxRecord->rangeId = 8;
-    instance.SetStepInfo(*mstxRecord);
+
+    instance.SetStepInfo(MarkType::RANGE_START_A, "step start", 8);
     EXPECT_EQ(instance.IsNeedSkip(GD_INVALID_NUM), false);
 
-    mstxRecord->markType = MarkType::RANGE_END;
-    instance.SetStepInfo(*mstxRecord);
+    instance.SetStepInfo(MarkType::RANGE_END, "step end", 8);
     EXPECT_EQ(instance.IsNeedSkip(GD_INVALID_NUM), true);
 
-    mstxRecord->markType = MarkType::RANGE_START_A;
-    mstxRecord->rangeId = 9;
-    instance.SetStepInfo(*mstxRecord);
+    instance.SetStepInfo(MarkType::RANGE_START_A, "step start", 9);
     EXPECT_EQ(instance.IsNeedSkip(GD_INVALID_NUM), false);
 
-    mstxRecord->markType = MarkType::RANGE_END;
-    instance.SetStepInfo(*mstxRecord);
+    instance.SetStepInfo(MarkType::RANGE_END, "step end", 9);
     EXPECT_EQ(instance.IsNeedSkip(GD_INVALID_NUM), true);
 
-    mstxRecord->markType = MarkType::RANGE_START_A;
-    mstxRecord->rangeId = 10;
-    instance.SetStepInfo(*mstxRecord);
+    instance.SetStepInfo(MarkType::RANGE_START_A, "step start", 10);
     EXPECT_EQ(instance.IsNeedSkip(GD_INVALID_NUM), true);
 
-    mstxRecord->markType = MarkType::RANGE_END;
-    instance.SetStepInfo(*mstxRecord);
+    instance.SetStepInfo(MarkType::RANGE_END, "step end", 10);
     EXPECT_EQ(instance.IsNeedSkip(GD_INVALID_NUM), true);
 
     ResetEventReportStepInfo();
@@ -427,12 +396,7 @@ TEST_F(EventReportTest, TestReportSkipStepsWithOtherMessageMstx)
     config.stepList.stepIdList[1] = 2;
     config.stepList.stepIdList[2] = 6;
     ConfigManager::Instance().SetConfig(config);
-    auto buffer = RecordBuffer::CreateRecordBuffer<MstxRecord>(
-        TLVBlockType::MARK_MESSAGE, "report host memory info start");
-    MstxRecord* mstxRecord = buffer.Cast<MstxRecord>();
-    mstxRecord->markType = MarkType::RANGE_START_A;
-    mstxRecord->rangeId = 8;
-    instance.SetStepInfo(*mstxRecord);
+    instance.SetStepInfo(MarkType::RANGE_START_A, "report host memory info start", 8);
     EXPECT_EQ(instance.IsNeedSkip(GD_INVALID_NUM), true);
 
     ResetEventReportStepInfo();
@@ -449,16 +413,10 @@ TEST_F(EventReportTest, TestReportSkipStepsWithMstxEndMismatch)
     config.stepList.stepIdList[2] = 6;
     ConfigManager::Instance().SetConfig(config);
 
-    auto buffer = RecordBuffer::CreateRecordBuffer<MstxRecord>(TLVBlockType::MARK_MESSAGE, "step start");
-    MstxRecord* mstxRecord = buffer.Cast<MstxRecord>();
-    mstxRecord->markType = MarkType::RANGE_START_A;
-    mstxRecord->rangeId = 8;
-    instance.SetStepInfo(*mstxRecord);
+    instance.SetStepInfo(MarkType::RANGE_START_A, "step start", 8);
     EXPECT_EQ(instance.IsNeedSkip(GD_INVALID_NUM), false);
 
-    mstxRecord->markType = MarkType::RANGE_END;
-    mstxRecord->rangeId = 9;
-    instance.SetStepInfo(*mstxRecord);
+    instance.SetStepInfo(MarkType::RANGE_END, "step end", 9);
     EXPECT_EQ(instance.IsNeedSkip(GD_INVALID_NUM), false);
 
     ResetEventReportStepInfo();
@@ -476,10 +434,7 @@ TEST_F(EventReportTest, TestReportSkipStepsWithOnlyMstxEnd)
     config.stepList.stepIdList[2] = 6;
     ConfigManager::Instance().SetConfig(config);
 
-    MstxRecord mstxRecord = {};
-    mstxRecord.markType = MarkType::RANGE_END;
-    mstxRecord.rangeId = 9;
-    instance.SetStepInfo(mstxRecord);
+    instance.SetStepInfo(MarkType::RANGE_END, "step end", 9);
     EXPECT_EQ(instance.IsNeedSkip(GD_INVALID_NUM), true);
 
     ResetEventReportStepInfo();
@@ -496,8 +451,8 @@ TEST_F(EventReportTest, ReportTestWithNoReceiveServerInfo)
     config.collectAllNpu = true;
     ConfigManager::Instance().SetConfig(config);
 
-    EXPECT_TRUE(instance.ReportHalMalloc(testAddr, testSize, flag, callStack));
-    EXPECT_TRUE(instance.ReportHalFree(testAddr, callStack));
+    EXPECT_TRUE(instance.ReportHalMalloc(testAddr, testSize, flag, std::move(callStack)));
+    EXPECT_TRUE(instance.ReportHalFree(testAddr, std::move(callStack)));
 
     uint16_t devId = 1;
     uint16_t streamId = 1;
@@ -512,11 +467,11 @@ TEST_F(EventReportTest, ReportTestWithNoReceiveServerInfo)
     RecordSubType subtype = {};
     EXPECT_TRUE(instance.ReportAclItf(subtype));
 
-    auto memPoolRecord = RecordBuffer::CreateRecordBuffer<MemPoolRecord>();
-    EXPECT_TRUE(instance.ReportMemPoolRecord(memPoolRecord));
-
-    auto mstxRecord = RecordBuffer::CreateRecordBuffer<MstxRecord>();
-    EXPECT_TRUE(instance.ReportMark(mstxRecord));
+    MemoryUsage info;
+    CallStackString stack;
+    EXPECT_TRUE(instance.ReportMemPoolRecord(EventSubType::PTA_CACHING, info, "", std::move(stack)));
+    std::string msg("mark");
+    EXPECT_TRUE(instance.ReportMark(MarkType::MARK_A, msg, 0, 0));
 }
 
 constexpr uint64_t MEM_VIRT_BIT = 10;
@@ -573,40 +528,6 @@ TEST_F(EventReportTest, GetMemOpSpaceIfOverType1)
     unsigned long long flag = 0xF << MEM_VIRT_BIT;
     MemScope::MemOpSpace result = MemScope::GetMemOpSpace(flag);
     EXPECT_EQ(result, MemScope::MemOpSpace::INVALID);
-}
-
-AclItfRecord CreateAclItfRecord(RecordSubType type)
-{
-    auto record = AclItfRecord {};
-    record.timestamp = Utility::GetTimeNanoseconds();
-    record.subtype = type;
-    record.pid = Utility::GetPid();
-    record.tid = Utility::GetTid();
-    return record;
-}
-
-KernelLaunchRecord CreateKernelLaunchRecord(KernelLaunchRecord kernelLaunchRecord)
-{
-    auto record = KernelLaunchRecord {};
-    record = kernelLaunchRecord;
-    record.timestamp = Utility::GetTimeNanoseconds();
-    record.pid = Utility::GetPid();
-    record.tid = Utility::GetTid();
-    return record;
-}
-
-TEST_F(EventReportTest, CreateAclItfRecordtestFinalize)
-{
-    MemScope::RecordSubType subtype = MemScope::RecordSubType::FINALIZE;
-    MemScope::AclItfRecord record = CreateAclItfRecord(subtype);
-    EXPECT_EQ(subtype, record.subtype);
-}
-
-TEST_F(EventReportTest, CreateAclItfRecordtestINIT)
-{
-    MemScope::RecordSubType subtype = MemScope::RecordSubType::INIT;
-    MemScope::AclItfRecord record = CreateAclItfRecord(subtype);
-    EXPECT_EQ(subtype, record.subtype);
 }
 
 TEST_F(EventReportTest, GetMemOpSpaceExpectSuccess)

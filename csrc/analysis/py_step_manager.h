@@ -23,6 +23,7 @@
 #include <functional>
 #include "record_info.h"
 #include "comm_def.h"
+#include "event.h"
 
 namespace MemScope {
 /*

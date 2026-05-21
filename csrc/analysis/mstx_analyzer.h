@@ -23,6 +23,7 @@
 #include <functional>
 #include "record_info.h"
 #include "comm_def.h"
+#include "event.h"
 
 namespace MemScope {
 /*
@@ -32,7 +33,7 @@ namespace MemScope {
 */
 
 using DeviceId = int32_t;
-using MstxEventCallBackFunc = std::function<void(std::shared_ptr<const MstxEvent> mstxEvent)>;
+using MstxEventCallBackFunc = std::function<void(std::shared_ptr<const MstxEvent>)>;
 
 enum class MstxEventSubscriber : uint8_t {
     STEP_INNER_ANALYZER = 0,

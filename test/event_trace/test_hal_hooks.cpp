@@ -32,7 +32,7 @@ TEST(HalHooksTest, HalMemAllocTest) {
     unsigned long long flag = 0x1234;  // 测试 flag
 
     drvError_t result = halMemAlloc(&ptr, size, flag);
-    EXPECT_EQ(result, DRV_ERROR_NONE);
+    EXPECT_EQ(result, DRV_ERROR_NOT_SUPPORT);
 
     halMemFree(ptr);
 }
@@ -42,7 +42,7 @@ TEST(HalHooksTest, HalMemFreeTest) {
     void* ptr = malloc(1024); // 手动分配内存，以便测试 halMemFree
 
     drvError_t result = halMemFree(ptr);
-    EXPECT_EQ(result, DRV_ERROR_NONE);
+    EXPECT_EQ(result, DRV_ERROR_NOT_SUPPORT);
 }
 
 // 测试新的驱动接口

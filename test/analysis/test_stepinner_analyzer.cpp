@@ -52,16 +52,19 @@ protected:
     }
 };
 
-RecordBuffer CreateMstxBuffer(MarkType type, const char* message, uint64_t stepId, uint64_t rangeId, uint64_t streamId)
+std::shared_ptr<MstxEvent> CreateMstxEvent(MarkType type, const char* message, uint64_t stepId, uint64_t rangeId,
+                                           uint64_t streamId)
 {
-    auto buffer = RecordBuffer::CreateRecordBuffer<MstxRecord>(TLVBlockType::MARK_MESSAGE, message);
-    MstxRecord* mstxRecord = buffer.Cast<MstxRecord>();
-    mstxRecord->markType = type;
-    mstxRecord->devId = 0;
-    mstxRecord->stepId = stepId;
-    mstxRecord->rangeId = rangeId;
-    mstxRecord->streamId = streamId;
-    return buffer;
+    std::shared_ptr<MstxEvent> event = std::make_shared<MstxEvent>();
+    event->eventType = EventBaseType::MSTX;
+    event->eventSubType = static_cast<EventSubType>(
+        static_cast<int32_t>(EventSubType::MSTX_MARK) + static_cast<int32_t>(type));
+    event->device = 0;
+    event->stepId = stepId;
+    event->rangeId = rangeId;
+    event->streamId = streamId;
+    event->name = message;
+    return event;
 }
 
 TEST(StepInnerAnalyzerTest, do_npu_free_record_expect_sucess) {
@@ -76,69 +79,64 @@ TEST(StepInnerAnalyzerTest, do_npu_free_record_expect_sucess) {
     static StepInnerAnalyzer analyzer(analysisConfig);
     ClientId clientId = 0;
 
-    MemPoolRecord record1;
-    record1.type = RecordType::PTA_CACHING_POOL_RECORD;
-    record1.recordIndex = 1;
-    auto memoryusage1 = MemoryUsage {};
-    memoryusage1.deviceIndex = 0;
-    memoryusage1.dataType = 0;
-    memoryusage1.ptr = 12345;
-    memoryusage1.allocSize = 512;
-    memoryusage1.totalAllocated = 512;
-    record1.memoryUsage = memoryusage1;
+    std::shared_ptr<MemoryEvent> event1 = std::make_shared<MemoryEvent>();
+    event1->eventType = EventBaseType::MALLOC;
+    event1->eventSubType = EventSubType::PTA_CACHING;
+    event1->id = 1;
+    event1->device = 0;
+    event1->size = 512;
+    event1->addr = 12345;
+    event1->used = 512;
 
-    MemPoolRecord record2;
-    record2.type = RecordType::PTA_CACHING_POOL_RECORD;
-    record2.recordIndex = 2;
-    auto memoryusage2 = MemoryUsage {};
-    memoryusage2.deviceIndex = 0;
-    memoryusage2.dataType = 1;
-    memoryusage2.ptr = 12345;
-    memoryusage2.allocSize = 512;
-    memoryusage2.totalAllocated = 0;
-    record2.memoryUsage = memoryusage2;
+    std::shared_ptr<MemoryEvent> event2 = std::make_shared<MemoryEvent>();
+    event2->eventType = EventBaseType::FREE;
+    event2->eventSubType = EventSubType::PTA_CACHING;
+    event2->id = 2;
+    event2->device = 0;
+    event2->size = 512;
+    event2->addr = 12345;
+    event2->used = 0;
 
-    EXPECT_TRUE(StepInnerAnalyzer::GetInstance(analysisConfig).Record(clientId, record1));
-    EXPECT_TRUE(StepInnerAnalyzer::GetInstance(analysisConfig).Record(clientId, record2));
+    EXPECT_TRUE(StepInnerAnalyzer::GetInstance(analysisConfig).Record(clientId, event1));
+    EXPECT_TRUE(StepInnerAnalyzer::GetInstance(analysisConfig).Record(clientId, event2));
 }
 
 TEST(StepInnerAnalyzerTest, do_reveive_mstxmsg_expect_memscope_warning)
 {
     ClientId clientId = 0;
-    auto mstxRecordStartBuf1 = RecordBuffer::CreateRecordBuffer<MstxRecord>(TLVBlockType::MARK_MESSAGE, "step start");
-    MstxRecord* mstxRecordStart1 = mstxRecordStartBuf1.Cast<MstxRecord>();
-    mstxRecordStart1->markType = MarkType::RANGE_START_A;
-    mstxRecordStart1->devId = 0;
-    mstxRecordStart1->stepId = 2;
-    mstxRecordStart1->streamId = 123;
+    std::shared_ptr<MstxEvent> eventStart1 = std::make_shared<MstxEvent>();
+    eventStart1->eventType = EventBaseType::MSTX;
+    eventStart1->eventSubType = EventSubType::MSTX_RANGE_START;
+    eventStart1->name = "step start";
+    eventStart1->device = 0;
+    eventStart1->stepId = 2;
+    eventStart1->streamId = 123;
 
     // 经过第二个step，但仍然未释放
-    auto mstxRecordStartBuf2 = RecordBuffer::CreateRecordBuffer<MstxRecord>(TLVBlockType::MARK_MESSAGE, "step start");
-    MstxRecord* mstxRecordStart2 = mstxRecordStartBuf2.Cast<MstxRecord>();
-    mstxRecordStart2->markType = MarkType::RANGE_START_A;
-    mstxRecordStart2->devId = 0;
-    mstxRecordStart2->stepId = 3;
-    mstxRecordStart2->streamId = 123;
+    std::shared_ptr<MstxEvent> eventStart2 = std::make_shared<MstxEvent>();
+    eventStart2->eventType = EventBaseType::MSTX;
+    eventStart2->eventSubType = EventSubType::MSTX_RANGE_START;
+    eventStart2->name = "step start";
+    eventStart2->device = 0;
+    eventStart2->stepId = 3;
+    eventStart2->streamId = 123;
 
-    auto mstxRecordEndBuf = RecordBuffer::CreateRecordBuffer<MstxRecord>();
-    MstxRecord* mstxRecordEnd = mstxRecordEndBuf.Cast<MstxRecord>();
-    mstxRecordEnd->markType = MarkType::RANGE_END;
-    mstxRecordEnd->devId = 0;
-    mstxRecordEnd->stepId = 3;
-    mstxRecordEnd->streamId = 123;
+    std::shared_ptr<MstxEvent> eventEnd = std::make_shared<MstxEvent>();
+    eventEnd->eventType = EventBaseType::MSTX;
+    eventEnd->eventSubType = EventSubType::MSTX_RANGE_END;
+    eventEnd->device = 0;
+    eventEnd->stepId = 3;
+    eventEnd->streamId = 123;
 
     // 经过两个step的内存
-    auto buffer1 = RecordBuffer::CreateRecordBuffer<MemPoolRecord>();
-    MemPoolRecord* record1 = buffer1.Cast<MemPoolRecord>();
-    record1->type = RecordType::PTA_CACHING_POOL_RECORD;
-    record1->recordIndex = 1;
-    auto memoryusage1 = MemoryUsage {};
-    memoryusage1.deviceIndex = 0;
-    memoryusage1.dataType = 0;
-    memoryusage1.ptr = 12345;
-    memoryusage1.allocSize = 512;
-    memoryusage1.totalAllocated = 512;
-    record1->memoryUsage = memoryusage1;
+    std::shared_ptr<MemoryEvent> eventMem = std::make_shared<MemoryEvent>();
+    eventMem->eventType = EventBaseType::MALLOC;
+    eventMem->eventSubType = EventSubType::PTA_CACHING;
+    eventMem->id = 1;
+    eventMem->device = 0;
+    eventMem->size = 512;
+    eventMem->addr = 12345;
+    eventMem->used = 512;
 
     // 先初始化注册
     Config analysisConfig;
@@ -152,36 +150,33 @@ TEST(StepInnerAnalyzerTest, do_reveive_mstxmsg_expect_memscope_warning)
     // 重置StepInnerAnalyzer的step信息接收方式
     StepInnerAnalyzer::GetInstance(analysisConfig).crtStepSource_.store(
         StepSource::None, std::memory_order_release);
-    StepInnerAnalyzer::GetInstance(analysisConfig).ReceiveMstxMsg(*mstxRecordStart1);
-    EXPECT_TRUE(StepInnerAnalyzer::GetInstance(analysisConfig).Record(clientId, *record1));
-    StepInnerAnalyzer::GetInstance(analysisConfig).ReceiveMstxMsg(*mstxRecordStart2);
-    StepInnerAnalyzer::GetInstance(analysisConfig).ReceiveMstxMsg(*mstxRecordEnd);
+    StepInnerAnalyzer::GetInstance(analysisConfig).ReceiveMstxMsg(eventStart1);
+    EXPECT_TRUE(StepInnerAnalyzer::GetInstance(analysisConfig).Record(clientId, eventMem));
+    StepInnerAnalyzer::GetInstance(analysisConfig).ReceiveMstxMsg(eventStart2);
+    StepInnerAnalyzer::GetInstance(analysisConfig).ReceiveMstxMsg(eventEnd);
 }
 
 TEST(StepInnerAnalyzerTest, do_reveive_stepmsg_expect_memscope_warning)
 {
     ClientId clientId = 0;
-    auto firstPyStepRecord = PyStepRecord {};
-    firstPyStepRecord.stepId = 2;
-    firstPyStepRecord.devId = 0;
+    std::shared_ptr<SystemEvent> eventStep1 = std::make_shared<SystemEvent>();
+    eventStep1->device = 0;
+    eventStep1->name = "2";
 
     // 经过第二个step，但仍然未释放
-    auto SecondPyStepRecord = PyStepRecord {};
-    SecondPyStepRecord.stepId = 3;
-    SecondPyStepRecord.devId = 0;
+    std::shared_ptr<SystemEvent> eventStep2 = std::make_shared<SystemEvent>();
+    eventStep2->device = 0;
+    eventStep2->name = "3";
 
     // 经过两个step的内存
-    auto buffer1 = RecordBuffer::CreateRecordBuffer<MemPoolRecord>();
-    MemPoolRecord* record1 = buffer1.Cast<MemPoolRecord>();
-    record1->type = RecordType::PTA_CACHING_POOL_RECORD;
-    record1->recordIndex = 1;
-    auto memoryusage1 = MemoryUsage {};
-    memoryusage1.deviceIndex = 0;
-    memoryusage1.dataType = 0;
-    memoryusage1.ptr = 12345;
-    memoryusage1.allocSize = 512;
-    memoryusage1.totalAllocated = 512;
-    record1->memoryUsage = memoryusage1;
+    std::shared_ptr<MemoryEvent> eventMem = std::make_shared<MemoryEvent>();
+    eventMem->eventType = EventBaseType::MALLOC;
+    eventMem->eventSubType = EventSubType::PTA_CACHING;
+    eventMem->id = 1;
+    eventMem->device = 0;
+    eventMem->size = 512;
+    eventMem->addr = 12345;
+    eventMem->used = 512;
 
     // 先初始化注册
     Config analysisConfig;
@@ -195,11 +190,10 @@ TEST(StepInnerAnalyzerTest, do_reveive_stepmsg_expect_memscope_warning)
         StepSource::None, std::memory_order_release);
     StepInnerAnalyzer::GetInstance(analysisConfig).config_.stepList.stepCount = 0;
     static StepInnerAnalyzer analyzer(analysisConfig);
-    StepInnerAnalyzer::GetInstance(analysisConfig).ReceiveStepMsg(firstPyStepRecord);
-    EXPECT_TRUE(StepInnerAnalyzer::GetInstance(analysisConfig).Record(clientId, *record1));
-    StepInnerAnalyzer::GetInstance(analysisConfig).ReceiveStepMsg(SecondPyStepRecord);
+    StepInnerAnalyzer::GetInstance(analysisConfig).ReceiveStepMsg(eventStep1);
+    EXPECT_TRUE(StepInnerAnalyzer::GetInstance(analysisConfig).Record(clientId, eventMem));
+    StepInnerAnalyzer::GetInstance(analysisConfig).ReceiveStepMsg(eventStep2);
 }
-
 
 TEST(StepInnerAnalyzerTest, do_npu_malloc_record_expect_sucess) {
     // 先初始化注册
@@ -213,24 +207,17 @@ TEST(StepInnerAnalyzerTest, do_npu_malloc_record_expect_sucess) {
     static StepInnerAnalyzer analyzer(analysisConfig);
     ClientId clientId = 0;
 
-    auto buffer = RecordBuffer::CreateRecordBuffer<MemPoolRecord>();
-    MemPoolRecord* record = buffer.Cast<MemPoolRecord>();
-    record->type = RecordType::PTA_CACHING_POOL_RECORD;
-    record->recordIndex = 1;
-    auto memoryusage = MemoryUsage {};
-    memoryusage.deviceType = 20;
-    memoryusage.deviceIndex = 0;
-    memoryusage.dataType = 0;
-    memoryusage.allocatorType = 0;
-    memoryusage.ptr = 12345;
-    memoryusage.allocSize = 512;
-    memoryusage.totalAllocated = 512;
-    memoryusage.totalActive = 512;
-    memoryusage.totalReserved = 1024;
-    memoryusage.streamPtr = 4321;
-    record->memoryUsage = memoryusage;
+    std::shared_ptr<MemoryEvent> eventMem = std::make_shared<MemoryEvent>();
+    eventMem->eventType = EventBaseType::MALLOC;
+    eventMem->eventSubType = EventSubType::PTA_CACHING;
+    eventMem->id = 1;
+    eventMem->device = 0;
+    eventMem->size = 512;
+    eventMem->addr = 12345;
+    eventMem->used = 512;
+    eventMem->total = 512;
 
-    EXPECT_TRUE(StepInnerAnalyzer::GetInstance(analysisConfig).Record(clientId, *record));
+    EXPECT_TRUE(StepInnerAnalyzer::GetInstance(analysisConfig).Record(clientId, eventMem));
 }
 
 TEST(StepInnerAnalyzerTest, do_npu_malloc_record_expect_double_malloc) {
@@ -245,31 +232,25 @@ TEST(StepInnerAnalyzerTest, do_npu_malloc_record_expect_double_malloc) {
     static StepInnerAnalyzer analyzer(analysisConfig);
     ClientId clientId = 0;
 
-    auto buffer = RecordBuffer::CreateRecordBuffer<MemPoolRecord>();
-    MemPoolRecord* record = buffer.Cast<MemPoolRecord>();
-    record->type = RecordType::PTA_CACHING_POOL_RECORD;
-    record->recordIndex = 1;
-    auto memoryusage = MemoryUsage {};
-    memoryusage.deviceIndex = 0;
-    memoryusage.dataType = 0;
-    memoryusage.ptr = 12345;
-    memoryusage.allocSize = 512;
-    record->memoryUsage = memoryusage;
+    std::shared_ptr<MemoryEvent> eventMem = std::make_shared<MemoryEvent>();
+    eventMem->eventType = EventBaseType::MALLOC;
+    eventMem->eventSubType = EventSubType::PTA_CACHING;
+    eventMem->id = 1;
+    eventMem->device = 0;
+    eventMem->size = 512;
+    eventMem->addr = 12345;
 
     // 地址重复的申请
-    auto double_record_buffer = RecordBuffer::CreateRecordBuffer<MemPoolRecord>();
-    MemPoolRecord* double_record = double_record_buffer.Cast<MemPoolRecord>();
-    double_record->type = RecordType::PTA_CACHING_POOL_RECORD;
-    double_record->recordIndex = 2;
-    auto double_memoryusage = MemoryUsage {};
-    double_memoryusage.deviceIndex = 0;
-    double_memoryusage.dataType = 0;
-    double_memoryusage.ptr = 12345;
-    double_memoryusage.allocSize = 512;
-    double_record->memoryUsage = double_memoryusage;
+    std::shared_ptr<MemoryEvent> eventMem2 = std::make_shared<MemoryEvent>();
+    eventMem2->eventType = EventBaseType::MALLOC;
+    eventMem2->eventSubType = EventSubType::PTA_CACHING;
+    eventMem2->id = 1;
+    eventMem2->device = 0;
+    eventMem2->size = 512;
+    eventMem2->addr = 12345;
 
-    EXPECT_TRUE(StepInnerAnalyzer::GetInstance(analysisConfig).Record(clientId, *record));
-    EXPECT_TRUE(StepInnerAnalyzer::GetInstance(analysisConfig).Record(clientId, *double_record));
+    EXPECT_TRUE(StepInnerAnalyzer::GetInstance(analysisConfig).Record(clientId, eventMem));
+    EXPECT_TRUE(StepInnerAnalyzer::GetInstance(analysisConfig).Record(clientId, eventMem2));
 }
 
 
@@ -285,24 +266,17 @@ TEST(StepInnerAnalyzerTest, do_npu_free_record_expect_free_error) {
     static StepInnerAnalyzer analyzer(analysisConfig);
     ClientId clientId = 0;
 
-    auto buffer = RecordBuffer::CreateRecordBuffer<MemPoolRecord>();
-    MemPoolRecord* record = buffer.Cast<MemPoolRecord>();
-    record->type = RecordType::PTA_CACHING_POOL_RECORD;
-    record->recordIndex = 2;
-    auto memoryusage = MemoryUsage {};
-    memoryusage.deviceType = 20;
-    memoryusage.deviceIndex = 0;
-    memoryusage.dataType = 1;
-    memoryusage.allocatorType = 0;
-    memoryusage.ptr = 12345;
-    memoryusage.allocSize = 512;
-    memoryusage.totalAllocated = 0;
-    memoryusage.totalActive = 0;
-    memoryusage.totalReserved = 1024;
-    memoryusage.streamPtr = 4321;
-    record->memoryUsage = memoryusage;
+    std::shared_ptr<MemoryEvent> eventMem = std::make_shared<MemoryEvent>();
+    eventMem->eventType = EventBaseType::FREE;
+    eventMem->eventSubType = EventSubType::PTA_CACHING;
+    eventMem->id = 1;
+    eventMem->device = 0;
+    eventMem->size = 512;
+    eventMem->addr = 12345;
+    eventMem->used = 0;
+    eventMem->total = 1024;
 
-    EXPECT_TRUE(StepInnerAnalyzer::GetInstance(analysisConfig).Record(clientId, *record));
+    EXPECT_TRUE(StepInnerAnalyzer::GetInstance(analysisConfig).Record(clientId, eventMem));
 }
 
 TEST(StepInnerAnalyzerTest, do_reveive_mstxmsg_expect_torch_memscope) {
@@ -319,47 +293,43 @@ TEST(StepInnerAnalyzerTest, do_reveive_mstxmsg_expect_torch_memscope) {
     static StepInnerAnalyzer analyzer(analysisConfig);
 
     // 第一个step会跳过
-    auto mstxRecordStartFirstBuffer = CreateMstxBuffer(MarkType::RANGE_START_A, "step start", 1, 1, 123);
-    auto mstxRecordEndFirstBuffer = CreateMstxBuffer(MarkType::RANGE_END, "", 1, 1, 123);
+    auto mstxRecordStartFirstBuffer = CreateMstxEvent(MarkType::RANGE_START_A, "step start", 1, 1, 123);
+    auto mstxRecordEndFirstBuffer = CreateMstxEvent(MarkType::RANGE_END, "", 1, 1, 123);
 
     // 第二个step发生泄漏
-    auto mstxRecordStartSecondBuffer = CreateMstxBuffer(MarkType::RANGE_START_A, "step start", 2, 2, 123);
-    auto mstxRecordEndSecondBuffer = CreateMstxBuffer(MarkType::RANGE_END, "", 2, 2, 123);
+    auto mstxRecordStartSecondBuffer = CreateMstxEvent(MarkType::RANGE_START_A, "step start", 2, 2, 123);
+    auto mstxRecordEndSecondBuffer = CreateMstxEvent(MarkType::RANGE_END, "", 2, 2, 123);
 
     // 构造第三个step时仍未释放的情景
-    auto mstxRecordStartThirdBuffer = CreateMstxBuffer(MarkType::RANGE_START_A, "step start", 3, 3, 123);
-    auto mstxRecordEndThirdBuffer = CreateMstxBuffer(MarkType::RANGE_END, "", 3, 3, 123);
+    auto mstxRecordStartThirdBuffer = CreateMstxEvent(MarkType::RANGE_START_A, "step start", 3, 3, 123);
+    auto mstxRecordEndThirdBuffer = CreateMstxEvent(MarkType::RANGE_END, "", 3, 3, 123);
 
     // 构造第四个step时仍未释放的情景，超过duration限制
-    auto mstxRecordStartFourthBuffer = CreateMstxBuffer(MarkType::RANGE_START_A, "step start", 4, 4, 123);
-    auto mstxRecordEndFourthBuffer = CreateMstxBuffer(MarkType::RANGE_END, "", 4, 4, 123);
+    auto mstxRecordStartFourthBuffer = CreateMstxEvent(MarkType::RANGE_START_A, "step start", 4, 4, 123);
+    auto mstxRecordEndFourthBuffer = CreateMstxEvent(MarkType::RANGE_END, "", 4, 4, 123);
 
     // step前后allocated内存不一致
-    auto buffer = RecordBuffer::CreateRecordBuffer<MemPoolRecord>();
-    MemPoolRecord* record = buffer.Cast<MemPoolRecord>();
-    record->type = RecordType::PTA_CACHING_POOL_RECORD;
-    record->recordIndex = 1;
-    record->type = RecordType::PTA_CACHING_POOL_RECORD;
-    auto memoryusage = MemoryUsage {};
-    memoryusage.deviceIndex = 0;
-    memoryusage.dataType = 0;
-    memoryusage.ptr = 92345;
-    memoryusage.allocSize = 512;
-    memoryusage.totalAllocated = 512;
-    record->memoryUsage = memoryusage;
+    std::shared_ptr<MemoryEvent> event = std::make_shared<MemoryEvent>();
+    event->eventType = EventBaseType::MALLOC;
+    event->eventSubType = EventSubType::PTA_CACHING;
+    event->id = 1;
+    event->device = 0;
+    event->size = 512;
+    event->addr = 92345;
+    event->used = 512;
 
     // 重置StepInnerAnalyzer的step信息接收方式
     StepInnerAnalyzer::GetInstance(analysisConfig).crtStepSource_.store(
         StepSource::None, std::memory_order_release);
-    StepInnerAnalyzer::GetInstance(analysisConfig).ReceiveMstxMsg(*mstxRecordStartFirstBuffer.Cast<MstxRecord>());
-    StepInnerAnalyzer::GetInstance(analysisConfig).ReceiveMstxMsg(*mstxRecordEndFirstBuffer.Cast<MstxRecord>());
-    StepInnerAnalyzer::GetInstance(analysisConfig).ReceiveMstxMsg(*mstxRecordStartSecondBuffer.Cast<MstxRecord>());
-    EXPECT_TRUE(StepInnerAnalyzer::GetInstance(analysisConfig).Record(clientId, *record));
-    StepInnerAnalyzer::GetInstance(analysisConfig).ReceiveMstxMsg(*mstxRecordEndSecondBuffer.Cast<MstxRecord>());
-    StepInnerAnalyzer::GetInstance(analysisConfig).ReceiveMstxMsg(*mstxRecordStartThirdBuffer.Cast<MstxRecord>());
-    StepInnerAnalyzer::GetInstance(analysisConfig).ReceiveMstxMsg(*mstxRecordEndThirdBuffer.Cast<MstxRecord>());
-    StepInnerAnalyzer::GetInstance(analysisConfig).ReceiveMstxMsg(*mstxRecordStartFourthBuffer.Cast<MstxRecord>());
-    StepInnerAnalyzer::GetInstance(analysisConfig).ReceiveMstxMsg(*mstxRecordEndFourthBuffer.Cast<MstxRecord>());
+    StepInnerAnalyzer::GetInstance(analysisConfig).ReceiveMstxMsg(mstxRecordStartFirstBuffer);
+    StepInnerAnalyzer::GetInstance(analysisConfig).ReceiveMstxMsg(mstxRecordEndFirstBuffer);
+    StepInnerAnalyzer::GetInstance(analysisConfig).ReceiveMstxMsg(mstxRecordStartSecondBuffer);
+    EXPECT_TRUE(StepInnerAnalyzer::GetInstance(analysisConfig).Record(clientId, event));
+    StepInnerAnalyzer::GetInstance(analysisConfig).ReceiveMstxMsg(mstxRecordEndSecondBuffer);
+    StepInnerAnalyzer::GetInstance(analysisConfig).ReceiveMstxMsg(mstxRecordStartThirdBuffer);
+    StepInnerAnalyzer::GetInstance(analysisConfig).ReceiveMstxMsg(mstxRecordEndThirdBuffer);
+    StepInnerAnalyzer::GetInstance(analysisConfig).ReceiveMstxMsg(mstxRecordStartFourthBuffer);
+    StepInnerAnalyzer::GetInstance(analysisConfig).ReceiveMstxMsg(mstxRecordEndFourthBuffer);
 }
 
 
@@ -376,40 +346,37 @@ TEST(StepInnerAnalyzerTest, do_reveive_mstxmsg_expect_mindspore_memscope) {
     StepInnerAnalyzer::GetInstance(analysisConfig).config_.stepList.stepCount = 0;
     static StepInnerAnalyzer analyzer(analysisConfig);
 
-    auto mstxRecordStartFirstBuffer = CreateMstxBuffer(MarkType::RANGE_START_A, "step start", 1, 1, 123);
-    auto mstxRecordEndFirstBuffer = CreateMstxBuffer(MarkType::RANGE_END, "", 1, 1, 123);
-    auto mstxRecordStartSecondBuffer = CreateMstxBuffer(MarkType::RANGE_START_A, "step start", 2, 2, 123);
-    auto mstxRecordEndSecondBuffer = CreateMstxBuffer(MarkType::RANGE_END, "", 2, 2, 123);
-    auto mstxRecordStartThirdBuffer = CreateMstxBuffer(MarkType::RANGE_START_A, "step start", 3, 3, 123);
-    auto mstxRecordEndThirdBuffer = CreateMstxBuffer(MarkType::RANGE_END, "", 3, 3, 123);
-    auto mstxRecordStartFourthBuffer = CreateMstxBuffer(MarkType::RANGE_START_A, "step start", 4, 4, 123);
-    auto mstxRecordEndFourthBuffer = CreateMstxBuffer(MarkType::RANGE_END, "", 4, 4, 123);
+    auto mstxRecordStartFirstBuffer = CreateMstxEvent(MarkType::RANGE_START_A, "step start", 1, 1, 123);
+    auto mstxRecordEndFirstBuffer = CreateMstxEvent(MarkType::RANGE_END, "", 1, 1, 123);
+    auto mstxRecordStartSecondBuffer = CreateMstxEvent(MarkType::RANGE_START_A, "step start", 2, 2, 123);
+    auto mstxRecordEndSecondBuffer = CreateMstxEvent(MarkType::RANGE_END, "", 2, 2, 123);
+    auto mstxRecordStartThirdBuffer = CreateMstxEvent(MarkType::RANGE_START_A, "step start", 3, 3, 123);
+    auto mstxRecordEndThirdBuffer = CreateMstxEvent(MarkType::RANGE_END, "", 3, 3, 123);
+    auto mstxRecordStartFourthBuffer = CreateMstxEvent(MarkType::RANGE_START_A, "step start", 4, 4, 123);
+    auto mstxRecordEndFourthBuffer = CreateMstxEvent(MarkType::RANGE_END, "", 4, 4, 123);
 
     // step前后allocated内存不一致
-    auto buffer = RecordBuffer::CreateRecordBuffer<MemPoolRecord>();
-    MemPoolRecord* record = buffer.Cast<MemPoolRecord>();
-    record->type = RecordType::MINDSPORE_NPU_RECORD;
-    record->recordIndex = 1;
-    auto memoryusage = MemoryUsage {};
-    memoryusage.deviceIndex = 0;
-    memoryusage.dataType = 0;
-    memoryusage.ptr = 93345;
-    memoryusage.allocSize = 512;
-    memoryusage.totalAllocated = 512;
-    record->memoryUsage = memoryusage;
+    std::shared_ptr<MemoryEvent> event = std::make_shared<MemoryEvent>();
+    event->eventType = EventBaseType::MALLOC;
+    event->eventSubType = EventSubType::MINDSPORE;
+    event->id = 1;
+    event->device = 0;
+    event->size = 512;
+    event->addr = 92345;
+    event->used = 512;
 
     // 重置StepInnerAnalyzer的step信息接收方式
     StepInnerAnalyzer::GetInstance(analysisConfig).crtStepSource_.store(
         StepSource::None, std::memory_order_release);
-    StepInnerAnalyzer::GetInstance(analysisConfig).ReceiveMstxMsg(*mstxRecordStartFirstBuffer.Cast<MstxRecord>());
-    StepInnerAnalyzer::GetInstance(analysisConfig).ReceiveMstxMsg(*mstxRecordEndFirstBuffer.Cast<MstxRecord>());
-    StepInnerAnalyzer::GetInstance(analysisConfig).ReceiveMstxMsg(*mstxRecordStartSecondBuffer.Cast<MstxRecord>());
-    EXPECT_TRUE(StepInnerAnalyzer::GetInstance(analysisConfig).Record(clientId, *record));
-    StepInnerAnalyzer::GetInstance(analysisConfig).ReceiveMstxMsg(*mstxRecordEndSecondBuffer.Cast<MstxRecord>());
-    StepInnerAnalyzer::GetInstance(analysisConfig).ReceiveMstxMsg(*mstxRecordStartThirdBuffer.Cast<MstxRecord>());
-    StepInnerAnalyzer::GetInstance(analysisConfig).ReceiveMstxMsg(*mstxRecordEndThirdBuffer.Cast<MstxRecord>());
-    StepInnerAnalyzer::GetInstance(analysisConfig).ReceiveMstxMsg(*mstxRecordStartFourthBuffer.Cast<MstxRecord>());
-    StepInnerAnalyzer::GetInstance(analysisConfig).ReceiveMstxMsg(*mstxRecordEndFourthBuffer.Cast<MstxRecord>());
+    StepInnerAnalyzer::GetInstance(analysisConfig).ReceiveMstxMsg(mstxRecordStartFirstBuffer);
+    StepInnerAnalyzer::GetInstance(analysisConfig).ReceiveMstxMsg(mstxRecordEndFirstBuffer);
+    StepInnerAnalyzer::GetInstance(analysisConfig).ReceiveMstxMsg(mstxRecordStartSecondBuffer);
+    EXPECT_TRUE(StepInnerAnalyzer::GetInstance(analysisConfig).Record(clientId, event));
+    StepInnerAnalyzer::GetInstance(analysisConfig).ReceiveMstxMsg(mstxRecordEndSecondBuffer);
+    StepInnerAnalyzer::GetInstance(analysisConfig).ReceiveMstxMsg(mstxRecordStartThirdBuffer);
+    StepInnerAnalyzer::GetInstance(analysisConfig).ReceiveMstxMsg(mstxRecordEndThirdBuffer);
+    StepInnerAnalyzer::GetInstance(analysisConfig).ReceiveMstxMsg(mstxRecordStartFourthBuffer);
+    StepInnerAnalyzer::GetInstance(analysisConfig).ReceiveMstxMsg(mstxRecordEndFourthBuffer);
 }
 
 TEST(StepInnerAnalyzerTest, do_reveive_mstxmsg_expect_atb_memscope) {
@@ -424,42 +391,37 @@ TEST(StepInnerAnalyzerTest, do_reveive_mstxmsg_expect_atb_memscope) {
     StepInnerAnalyzer::GetInstance(analysisConfig).config_.stepList.stepCount = 0;
     static StepInnerAnalyzer analyzer(analysisConfig);
 
-    auto mstxRecordStartFirstBuffer = CreateMstxBuffer(MarkType::RANGE_START_A, "step start", 1, 1, 123);
-    auto mstxRecordEndFirstBuffer = CreateMstxBuffer(MarkType::RANGE_END, "", 1, 1, 123);
-    auto mstxRecordStartSecondBuffer = CreateMstxBuffer(MarkType::RANGE_START_A, "step start", 2, 2, 123);
-    auto mstxRecordEndSecondBuffer = CreateMstxBuffer(MarkType::RANGE_END, "", 2, 2, 123);
-    auto mstxRecordStartThirdBuffer = CreateMstxBuffer(MarkType::RANGE_START_A, "step start", 3, 3, 123);
-    auto mstxRecordEndThirdBuffer = CreateMstxBuffer(MarkType::RANGE_END, "", 3, 3, 123);
-    auto mstxRecordStartFourthBuffer = CreateMstxBuffer(MarkType::RANGE_START_A, "step start", 4, 4, 123);
-    auto mstxRecordEndFourthBuffer = CreateMstxBuffer(MarkType::RANGE_END, "", 4, 4, 123);
+    auto mstxRecordStartFirstBuffer = CreateMstxEvent(MarkType::RANGE_START_A, "step start", 1, 1, 123);
+    auto mstxRecordEndFirstBuffer = CreateMstxEvent(MarkType::RANGE_END, "", 1, 1, 123);
+    auto mstxRecordStartSecondBuffer = CreateMstxEvent(MarkType::RANGE_START_A, "step start", 2, 2, 123);
+    auto mstxRecordEndSecondBuffer = CreateMstxEvent(MarkType::RANGE_END, "", 2, 2, 123);
+    auto mstxRecordStartThirdBuffer = CreateMstxEvent(MarkType::RANGE_START_A, "step start", 3, 3, 123);
+    auto mstxRecordEndThirdBuffer = CreateMstxEvent(MarkType::RANGE_END, "", 3, 3, 123);
+    auto mstxRecordStartFourthBuffer = CreateMstxEvent(MarkType::RANGE_START_A, "step start", 4, 4, 123);
+    auto mstxRecordEndFourthBuffer = CreateMstxEvent(MarkType::RANGE_END, "", 4, 4, 123);
 
     // step前后allocated内存不一致
-    auto buffer = RecordBuffer::CreateRecordBuffer<MemPoolRecord>();
-    MemPoolRecord* record = buffer.Cast<MemPoolRecord>();
-    record->type = RecordType::ATB_MEMORY_POOL_RECORD;
-    auto npuRecordMalloc = MemPoolRecord {};
-    record->recordIndex = 1;
-    record->type = RecordType::ATB_MEMORY_POOL_RECORD;
-    auto memoryusage = MemoryUsage {};
-    memoryusage.deviceIndex = 0;
-    memoryusage.dataType = 0;
-    memoryusage.ptr = 94345;
-    memoryusage.allocSize = 512;
-    memoryusage.totalAllocated = 512;
-    record->memoryUsage = memoryusage;
+    std::shared_ptr<MemoryEvent> event = std::make_shared<MemoryEvent>();
+    event->eventType = EventBaseType::MALLOC;
+    event->eventSubType = EventSubType::ATB;
+    event->id = 1;
+    event->device = 0;
+    event->size = 512;
+    event->addr = 92345;
+    event->used = 512;
 
     // 重置StepInnerAnalyzer的step信息接收方式
     StepInnerAnalyzer::GetInstance(analysisConfig).crtStepSource_.store(
         StepSource::None, std::memory_order_release);
-    StepInnerAnalyzer::GetInstance(analysisConfig).ReceiveMstxMsg(*mstxRecordStartFirstBuffer.Cast<MstxRecord>());
-    StepInnerAnalyzer::GetInstance(analysisConfig).ReceiveMstxMsg(*mstxRecordEndFirstBuffer.Cast<MstxRecord>());
-    StepInnerAnalyzer::GetInstance(analysisConfig).ReceiveMstxMsg(*mstxRecordStartSecondBuffer.Cast<MstxRecord>());
-    EXPECT_TRUE(StepInnerAnalyzer::GetInstance(analysisConfig).Record(clientId, *record));
-    StepInnerAnalyzer::GetInstance(analysisConfig).ReceiveMstxMsg(*mstxRecordEndSecondBuffer.Cast<MstxRecord>());
-    StepInnerAnalyzer::GetInstance(analysisConfig).ReceiveMstxMsg(*mstxRecordStartThirdBuffer.Cast<MstxRecord>());
-    StepInnerAnalyzer::GetInstance(analysisConfig).ReceiveMstxMsg(*mstxRecordEndThirdBuffer.Cast<MstxRecord>());
-    StepInnerAnalyzer::GetInstance(analysisConfig).ReceiveMstxMsg(*mstxRecordStartFourthBuffer.Cast<MstxRecord>());
-    StepInnerAnalyzer::GetInstance(analysisConfig).ReceiveMstxMsg(*mstxRecordEndFourthBuffer.Cast<MstxRecord>());
+    StepInnerAnalyzer::GetInstance(analysisConfig).ReceiveMstxMsg(mstxRecordStartFirstBuffer);
+    StepInnerAnalyzer::GetInstance(analysisConfig).ReceiveMstxMsg(mstxRecordEndFirstBuffer);
+    StepInnerAnalyzer::GetInstance(analysisConfig).ReceiveMstxMsg(mstxRecordStartSecondBuffer);
+    EXPECT_TRUE(StepInnerAnalyzer::GetInstance(analysisConfig).Record(clientId, event));
+    StepInnerAnalyzer::GetInstance(analysisConfig).ReceiveMstxMsg(mstxRecordEndSecondBuffer);
+    StepInnerAnalyzer::GetInstance(analysisConfig).ReceiveMstxMsg(mstxRecordStartThirdBuffer);
+    StepInnerAnalyzer::GetInstance(analysisConfig).ReceiveMstxMsg(mstxRecordEndThirdBuffer);
+    StepInnerAnalyzer::GetInstance(analysisConfig).ReceiveMstxMsg(mstxRecordStartFourthBuffer);
+    StepInnerAnalyzer::GetInstance(analysisConfig).ReceiveMstxMsg(mstxRecordEndFourthBuffer);
 }
 
 TEST(StepInnerAnalyzerTest, do_input_exist_deviceid_CreateTables_return_true)
@@ -608,12 +570,12 @@ TEST(StepInnerAnalyzerTest, do_updateallocated_step_0_update_0)
     StepInnerAnalyzer stepInner{config};
     NpuMemUsage npumemusage;
     npumemusage.duringStep = 0;
-    npumemusage.poolStatusTable[RecordType::PTA_CACHING_POOL_RECORD].stepMaxAllocated = 0;
-    npumemusage.poolStatusTable[RecordType::PTA_CACHING_POOL_RECORD].stepMinAllocated = 0;
+    npumemusage.poolStatusTable[PoolType::PTA_CACHING].stepMaxAllocated = 0;
+    npumemusage.poolStatusTable[PoolType::PTA_CACHING].stepMinAllocated = 0;
     stepInner.npuMemUsages_.insert({0, npumemusage});
-    stepInner.UpdateAllocated(0, RecordType::PTA_CACHING_POOL_RECORD, 100);
-    ASSERT_EQ(stepInner.npuMemUsages_[0].poolStatusTable[RecordType::PTA_CACHING_POOL_RECORD].stepMaxAllocated, 0);
-    ASSERT_EQ(stepInner.npuMemUsages_[0].poolStatusTable[RecordType::PTA_CACHING_POOL_RECORD].stepMinAllocated, 0);
+    stepInner.UpdateAllocated(0, PoolType::PTA_CACHING, 100);
+    ASSERT_EQ(stepInner.npuMemUsages_[0].poolStatusTable[PoolType::PTA_CACHING].stepMaxAllocated, 0);
+    ASSERT_EQ(stepInner.npuMemUsages_[0].poolStatusTable[PoolType::PTA_CACHING].stepMinAllocated, 0);
 }
 
 TEST(StepInnerAnalyzerTest, do_updateallocated_step_2_update_allocated)
@@ -628,12 +590,12 @@ TEST(StepInnerAnalyzerTest, do_updateallocated_step_2_update_allocated)
     NpuMemUsage npumemusage;
     npumemusage.duringStep = 2;
 
-    npumemusage.poolStatusTable[RecordType::PTA_CACHING_POOL_RECORD].stepMaxAllocated = 20;
-    npumemusage.poolStatusTable[RecordType::PTA_CACHING_POOL_RECORD].stepMinAllocated = 20;
+    npumemusage.poolStatusTable[PoolType::PTA_CACHING].stepMaxAllocated = 20;
+    npumemusage.poolStatusTable[PoolType::PTA_CACHING].stepMinAllocated = 20;
     stepInner.npuMemUsages_.insert({0, npumemusage});
-    stepInner.UpdateAllocated(0, RecordType::PTA_CACHING_POOL_RECORD, 100);
-    ASSERT_EQ(stepInner.npuMemUsages_[0].poolStatusTable[RecordType::PTA_CACHING_POOL_RECORD].stepMaxAllocated, 20);
-    ASSERT_EQ(stepInner.npuMemUsages_[0].poolStatusTable[RecordType::PTA_CACHING_POOL_RECORD].stepMinAllocated, 20);
+    stepInner.UpdateAllocated(0, PoolType::PTA_CACHING, 100);
+    ASSERT_EQ(stepInner.npuMemUsages_[0].poolStatusTable[PoolType::PTA_CACHING].stepMaxAllocated, 20);
+    ASSERT_EQ(stepInner.npuMemUsages_[0].poolStatusTable[PoolType::PTA_CACHING].stepMinAllocated, 20);
 }
 
 TEST(StepInnerAnalyzerTest, do_checkgap_minmaxallocratio_equal_0_expect_reset_allocated)
@@ -647,12 +609,12 @@ TEST(StepInnerAnalyzerTest, do_checkgap_minmaxallocratio_equal_0_expect_reset_al
     StepInnerAnalyzer stepInner{config};
     NpuMemUsage npumemusage;
     npumemusage.duringStep = 2;
-    npumemusage.poolStatusTable[RecordType::PTA_CACHING_POOL_RECORD].stepMaxAllocated = 100;
-    npumemusage.poolStatusTable[RecordType::PTA_CACHING_POOL_RECORD].stepMinAllocated = 20;
+    npumemusage.poolStatusTable[PoolType::PTA_CACHING].stepMaxAllocated = 100;
+    npumemusage.poolStatusTable[PoolType::PTA_CACHING].stepMinAllocated = 20;
     stepInner.npuMemUsages_.insert({0, npumemusage});
     stepInner.CheckGap(0);
-    ASSERT_EQ(stepInner.npuMemUsages_[0].poolStatusTable[RecordType::PTA_CACHING_POOL_RECORD].stepMaxAllocated, 0);
-    ASSERT_EQ(stepInner.npuMemUsages_[0].poolStatusTable[RecordType::PTA_CACHING_POOL_RECORD].stepMinAllocated, 0);
+    ASSERT_EQ(stepInner.npuMemUsages_[0].poolStatusTable[PoolType::PTA_CACHING].stepMaxAllocated, 0);
+    ASSERT_EQ(stepInner.npuMemUsages_[0].poolStatusTable[PoolType::PTA_CACHING].stepMinAllocated, 0);
 }
 
 TEST(StepInnerAnalyzerTest, do_checkgap_minmaxallocratio_expect_true_allocated)
@@ -668,13 +630,13 @@ TEST(StepInnerAnalyzerTest, do_checkgap_minmaxallocratio_expect_true_allocated)
     GapInfo gapinfo;
     gapinfo.minMaxAllocRatio = 0.1;
     npumemusage.duringStep = 2;
-    npumemusage.poolStatusTable[RecordType::PTA_CACHING_POOL_RECORD].stepMaxAllocated = 100;
-    npumemusage.poolStatusTable[RecordType::PTA_CACHING_POOL_RECORD].stepMinAllocated = 20;
-    npumemusage.poolStatusTable[RecordType::PTA_CACHING_POOL_RECORD].maxGapInfo = gapinfo;
+    npumemusage.poolStatusTable[PoolType::PTA_CACHING].stepMaxAllocated = 100;
+    npumemusage.poolStatusTable[PoolType::PTA_CACHING].stepMinAllocated = 20;
+    npumemusage.poolStatusTable[PoolType::PTA_CACHING].maxGapInfo = gapinfo;
     stepInner.npuMemUsages_.insert({0, npumemusage});
     stepInner.CheckGap(0);
-    ASSERT_EQ(stepInner.npuMemUsages_[0].poolStatusTable[RecordType::PTA_CACHING_POOL_RECORD].stepMaxAllocated, 0);
-    ASSERT_EQ(stepInner.npuMemUsages_[0].poolStatusTable[RecordType::PTA_CACHING_POOL_RECORD].stepMinAllocated, 0);
+    ASSERT_EQ(stepInner.npuMemUsages_[0].poolStatusTable[PoolType::PTA_CACHING].stepMaxAllocated, 0);
+    ASSERT_EQ(stepInner.npuMemUsages_[0].poolStatusTable[PoolType::PTA_CACHING].stepMinAllocated, 0);
 }
 
 TEST(StepInnerAnalyzerRecordFuncTest, Recordtest)
@@ -689,8 +651,9 @@ TEST(StepInnerAnalyzerRecordFuncTest, Recordtest)
     config.outputCorrectPaths = false;
     config.stepList.stepCount = 0;
     ClientId clientId = 1;
-    MemScope::RecordBase record;
-    EXPECT_TRUE(MemScope::StepInnerAnalyzer::GetInstance(config).Record(clientId, record));
+
+    std::shared_ptr<MemoryEvent> event = std::make_shared<MemoryEvent>();
+    EXPECT_TRUE(MemScope::StepInnerAnalyzer::GetInstance(config).Record(clientId, event));
 }
 
 TEST(StepInnerAnalyzerRecordFuncTest, recordMallocSuccess) {
@@ -706,18 +669,16 @@ TEST(StepInnerAnalyzerRecordFuncTest, recordMallocSuccess) {
     config.stepList.stepCount = 0;
     ClientId clientId = 1;
 
-    MemPoolRecord record1;
-    record1.type = RecordType::PTA_CACHING_POOL_RECORD;
-    record1.recordIndex = 1;
-    auto memoryusage1 = MemoryUsage {};
-    memoryusage1.deviceIndex = 0;
-    memoryusage1.dataType = 0;
-    memoryusage1.ptr = 12345;
-    memoryusage1.allocSize = 512;
-    memoryusage1.totalAllocated = 512;
-    record1.memoryUsage = memoryusage1;
+    std::shared_ptr<MemoryEvent> event = std::make_shared<MemoryEvent>();
+    event->eventType = EventBaseType::MALLOC;
+    event->eventSubType = EventSubType::PTA_CACHING;
+    event->id = 1;
+    event->device = 0;
+    event->size = 512;
+    event->addr = 12345;
+    event->used = 512;
 
-    EXPECT_TRUE(StepInnerAnalyzer::GetInstance(config).Record(clientId, record1));
+    EXPECT_TRUE(StepInnerAnalyzer::GetInstance(config).Record(clientId, event));
 }
 
 TEST(StepInnerAnalyzerRecordFuncTest, recordFreeSuccess) {
@@ -733,19 +694,16 @@ TEST(StepInnerAnalyzerRecordFuncTest, recordFreeSuccess) {
     config.stepList.stepCount = 0;
     ClientId clientId = 1;
 
-    auto buffer = RecordBuffer::CreateRecordBuffer<MemPoolRecord>();
-    MemPoolRecord* record1 = buffer.Cast<MemPoolRecord>();
-    record1->type = RecordType::PTA_CACHING_POOL_RECORD;
-    record1->recordIndex = 1;
-    auto memoryusage1 = MemoryUsage {};
-    memoryusage1.deviceIndex = 0;
-    memoryusage1.dataType = 1;
-    memoryusage1.ptr = 12345;
-    memoryusage1.allocSize = 512;
-    memoryusage1.totalAllocated = 512;
-    record1->memoryUsage = memoryusage1;
+    std::shared_ptr<MemoryEvent> event = std::make_shared<MemoryEvent>();
+    event->eventType = EventBaseType::FREE;
+    event->eventSubType = EventSubType::PTA_CACHING;
+    event->id = 1;
+    event->device = 0;
+    event->size = 512;
+    event->addr = 12345;
+    event->used = 512;
 
-    EXPECT_TRUE(StepInnerAnalyzer::GetInstance(config).Record(clientId, *record1));
+    EXPECT_TRUE(StepInnerAnalyzer::GetInstance(config).Record(clientId, event));
 }
 
 TEST(StepInnerAnalyzerReceiveMstxMsgFuncTest, ReceiveMstxMsgIfRangeStartA) {
@@ -761,17 +719,18 @@ TEST(StepInnerAnalyzerReceiveMstxMsgFuncTest, ReceiveMstxMsgIfRangeStartA) {
     config.stepList.stepCount = 0;
     ClientId clientId = 1;
 
-    auto buffer = RecordBuffer::CreateRecordBuffer<MstxRecord>(TLVBlockType::MARK_MESSAGE, "step start");
-    MstxRecord* mstxRecordStart1 = buffer.Cast<MstxRecord>();
-    mstxRecordStart1->markType = MarkType::RANGE_START_A;
-    mstxRecordStart1->devId = 0;
-    mstxRecordStart1->stepId = 1;
-    mstxRecordStart1->streamId = 123;
+    std::shared_ptr<MstxEvent> event = std::make_shared<MstxEvent>();
+    event->eventType = EventBaseType::MSTX;
+    event->eventSubType = EventSubType::MSTX_RANGE_START;
+    event->device = 0;
+    event->stepId = 1;
+    event->streamId = 123;
+    event->name = "step start";
 
     // 重置StepInnerAnalyzer的step信息接收方式
     StepInnerAnalyzer::GetInstance(config).crtStepSource_.store(
         StepSource::None, std::memory_order_release);
-    StepInnerAnalyzer::GetInstance(config).ReceiveMstxMsg(*mstxRecordStart1);
+    StepInnerAnalyzer::GetInstance(config).ReceiveMstxMsg(event);
 }
 
 TEST(StepInnerAnalyzerReceiveMstxMsgFuncTest, ReceiveMstxMsgIfRangeEnd) {
@@ -787,17 +746,18 @@ TEST(StepInnerAnalyzerReceiveMstxMsgFuncTest, ReceiveMstxMsgIfRangeEnd) {
     config.stepList.stepCount = 0;
     ClientId clientId = 1;
 
-    auto buffer = RecordBuffer::CreateRecordBuffer<MstxRecord>(TLVBlockType::MARK_MESSAGE, "step end");
-    MstxRecord* mstxRecordStart1 = buffer.Cast<MstxRecord>();
-    mstxRecordStart1->markType = MemScope::MarkType::RANGE_END;
-    mstxRecordStart1->devId = 0;
-    mstxRecordStart1->stepId = 1;
-    mstxRecordStart1->streamId = 123;
+    std::shared_ptr<MstxEvent> event = std::make_shared<MstxEvent>();
+    event->eventType = EventBaseType::MSTX;
+    event->eventSubType = EventSubType::MSTX_RANGE_START;
+    event->device = 0;
+    event->stepId = 1;
+    event->streamId = 123;
+    event->name = "step end";
 
     // 重置StepInnerAnalyzer的step信息接收方式
     StepInnerAnalyzer::GetInstance(config).crtStepSource_.store(
         StepSource::None, std::memory_order_release);
-    StepInnerAnalyzer::GetInstance(config).ReceiveMstxMsg(*mstxRecordStart1);
+    StepInnerAnalyzer::GetInstance(config).ReceiveMstxMsg(event);
 }
 
 TEST(StepInnerAnalyzerUpdateAllocatedFuncTest, UpdateAllocatedUpdateMaxTest)
@@ -815,12 +775,12 @@ TEST(StepInnerAnalyzerUpdateAllocatedFuncTest, UpdateAllocatedUpdateMaxTest)
     NpuMemUsage npumemusage;
     npumemusage.duringStep = 2;
 
-    npumemusage.poolStatusTable[RecordType::PTA_CACHING_POOL_RECORD].stepMaxAllocated = 20;
-    npumemusage.poolStatusTable[RecordType::PTA_CACHING_POOL_RECORD].stepMinAllocated = 20;
+    npumemusage.poolStatusTable[PoolType::PTA_CACHING].stepMaxAllocated = 20;
+    npumemusage.poolStatusTable[PoolType::PTA_CACHING].stepMinAllocated = 20;
     stepInner.npuMemUsages_.insert({0, npumemusage});
-    stepInner.UpdateAllocated(0, RecordType::PTA_CACHING_POOL_RECORD, 100);
-    ASSERT_EQ(stepInner.npuMemUsages_[0].poolStatusTable[RecordType::PTA_CACHING_POOL_RECORD].stepMaxAllocated, 100);
-    ASSERT_EQ(stepInner.npuMemUsages_[0].poolStatusTable[RecordType::PTA_CACHING_POOL_RECORD].stepMinAllocated, 20);
+    stepInner.UpdateAllocated(0, PoolType::PTA_CACHING, 100);
+    ASSERT_EQ(stepInner.npuMemUsages_[0].poolStatusTable[PoolType::PTA_CACHING].stepMaxAllocated, 100);
+    ASSERT_EQ(stepInner.npuMemUsages_[0].poolStatusTable[PoolType::PTA_CACHING].stepMinAllocated, 20);
 }
 
 TEST(StepInnerAnalyzerUpdateAllocatedFuncTest, UpdateAllocatedInitTest)
@@ -838,13 +798,13 @@ TEST(StepInnerAnalyzerUpdateAllocatedFuncTest, UpdateAllocatedInitTest)
     NpuMemUsage npumemusage;
     npumemusage.duringStep = 2;
 
-    npumemusage.poolStatusTable[RecordType::PTA_CACHING_POOL_RECORD].stepMaxAllocated = 0;
-    npumemusage.poolStatusTable[RecordType::PTA_CACHING_POOL_RECORD].stepMinAllocated = 0;
+    npumemusage.poolStatusTable[PoolType::PTA_CACHING].stepMaxAllocated = 0;
+    npumemusage.poolStatusTable[PoolType::PTA_CACHING].stepMinAllocated = 0;
     stepInner.npuMemUsages_.insert({0, npumemusage});
-    stepInner.UpdateAllocated(0, RecordType::PTA_CACHING_POOL_RECORD, 100);
-    stepInner.UpdateAllocated(0, RecordType::PTA_CACHING_POOL_RECORD, 200);
-    ASSERT_EQ(stepInner.npuMemUsages_[0].poolStatusTable[RecordType::PTA_CACHING_POOL_RECORD].stepMaxAllocated, 200);
-    ASSERT_EQ(stepInner.npuMemUsages_[0].poolStatusTable[RecordType::PTA_CACHING_POOL_RECORD].stepMinAllocated, 100);
+    stepInner.UpdateAllocated(0, PoolType::PTA_CACHING, 100);
+    stepInner.UpdateAllocated(0, PoolType::PTA_CACHING, 200);
+    ASSERT_EQ(stepInner.npuMemUsages_[0].poolStatusTable[PoolType::PTA_CACHING].stepMaxAllocated, 200);
+    ASSERT_EQ(stepInner.npuMemUsages_[0].poolStatusTable[PoolType::PTA_CACHING].stepMinAllocated, 100);
 }
 
 TEST(StepInnerAnalyzerUpdateAllocatedFuncTest, UpdateAllocatedreturnTest)
@@ -859,13 +819,13 @@ TEST(StepInnerAnalyzerUpdateAllocatedFuncTest, UpdateAllocatedreturnTest)
     NpuMemUsage npumemusage;
     npumemusage.duringStep = 0;
 
-    npumemusage.poolStatusTable[RecordType::MINDSPORE_NPU_RECORD].stepMaxAllocated = 0;
-    npumemusage.poolStatusTable[RecordType::MINDSPORE_NPU_RECORD].stepMinAllocated = 0;
+    npumemusage.poolStatusTable[PoolType::MINDSPORE].stepMaxAllocated = 0;
+    npumemusage.poolStatusTable[PoolType::MINDSPORE].stepMinAllocated = 0;
     stepInner.npuMemUsages_.insert({0, npumemusage});
-    stepInner.UpdateAllocated(0, RecordType::MINDSPORE_NPU_RECORD, 100);
-    stepInner.UpdateAllocated(0, RecordType::MINDSPORE_NPU_RECORD, 200);
-    ASSERT_EQ(stepInner.npuMemUsages_[0].poolStatusTable[RecordType::MINDSPORE_NPU_RECORD].stepMaxAllocated, 0);
-    ASSERT_EQ(stepInner.npuMemUsages_[0].poolStatusTable[RecordType::MINDSPORE_NPU_RECORD].stepMinAllocated, 0);
+    stepInner.UpdateAllocated(0, PoolType::MINDSPORE, 100);
+    stepInner.UpdateAllocated(0, PoolType::MINDSPORE, 200);
+    ASSERT_EQ(stepInner.npuMemUsages_[0].poolStatusTable[PoolType::MINDSPORE].stepMaxAllocated, 0);
+    ASSERT_EQ(stepInner.npuMemUsages_[0].poolStatusTable[PoolType::MINDSPORE].stepMinAllocated, 0);
 }
 
 TEST(StepInnerAnalyzerAddDurationTest, AddDurationTest)
@@ -882,10 +842,10 @@ TEST(StepInnerAnalyzerAddDurationTest, AddDurationTest)
 
     MemScope::NpuMemInfo memInfo;
     memInfo.duration = 1;
-    npumemusage.poolOpTable.insert({MemScope::NpuMemKey(0, RecordType::PTA_CACHING_POOL_RECORD), memInfo});
+    npumemusage.poolOpTable.insert({MemScope::NpuMemKey(0, PoolType::PTA_CACHING), memInfo});
     stepInner.npuMemUsages_.insert({0, npumemusage});
     stepInner.AddDuration(0);
-    ASSERT_EQ(stepInner.npuMemUsages_[0].poolOpTable[MemScope::NpuMemKey(0, RecordType::PTA_CACHING_POOL_RECORD)].duration, 2);
+    ASSERT_EQ(stepInner.npuMemUsages_[0].poolOpTable[MemScope::NpuMemKey(0, PoolType::PTA_CACHING)].duration, 2);
 }
 
 TEST(StepInnerAnalyzerAddDurationTest, AddDurationReturnTest)
@@ -902,10 +862,10 @@ TEST(StepInnerAnalyzerAddDurationTest, AddDurationReturnTest)
 
     MemScope::NpuMemInfo memInfo;
     memInfo.duration = 1;
-    npumemusage.poolOpTable.insert({MemScope::NpuMemKey(0, RecordType::PTA_CACHING_POOL_RECORD), memInfo});
+    npumemusage.poolOpTable.insert({MemScope::NpuMemKey(0, PoolType::PTA_CACHING), memInfo});
     stepInner.npuMemUsages_.insert({1, npumemusage});
     stepInner.AddDuration(0); // 不存在的deviceID，提前返回
-    ASSERT_EQ(stepInner.npuMemUsages_[1].poolOpTable[MemScope::NpuMemKey(0, RecordType::PTA_CACHING_POOL_RECORD)].duration, 1);
+    ASSERT_EQ(stepInner.npuMemUsages_[1].poolOpTable[MemScope::NpuMemKey(0, PoolType::PTA_CACHING)].duration, 1);
 }
 
 TEST(StepInnerAnalyzerSetStepIdFuncTest, SetStepIdTest)
