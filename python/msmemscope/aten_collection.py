@@ -105,11 +105,11 @@ class ArgumentHandler:
         
         if isinstance(value, list) or isinstance(value, tuple):
             for t in value:
-                if isinstance(value, torch.Tensor) and value.is_npu:
+                if is_npu_tensor(value):
                     _handle_tensor(func, t, is_write, is_factory, metadata_only, is_output)
             return
 
-        if isinstance(value, torch.Tensor) and value.is_npu:
+        if is_npu_tensor(value):
             _handle_tensor(func, value, is_write, is_factory, metadata_only, is_output)
             return
 
@@ -224,3 +224,11 @@ if version.parse(current_pytorch_version) < version.parse(TARGET_VERSION):
 else:
     print(f"[msmemscope]: Current Pytorch's version is {current_pytorch_version}, enable aten collection.")
     aten_collector = AtenCollector()
+
+    from torch._subclasses.fake_tensor import FakeTensor
+    from torch._subclasses.functional_tensor import FunctionalTensor
+    def is_npu_tensor(value):
+        return (isinstance(value, torch.Tensor) 
+                and value.is_npu
+                and not isinstance(value, FakeTensor)
+                and not isinstance(value, FunctionalTensor))
