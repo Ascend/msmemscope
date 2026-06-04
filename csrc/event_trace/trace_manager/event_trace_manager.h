@@ -48,6 +48,8 @@ class ConfigManager
     bool SetConfig(const std::unordered_map<std::string, std::string>& config);
     void SetConfig(const Config& config);
 
+    static bool HasInited() { return Inited; }
+
    private:
     ConfigManager();
 
@@ -59,6 +61,9 @@ class ConfigManager
     std::mutex mutex_;
     Config config_;
     bool firstConfig = true;
+
+   private:
+    static bool Inited;
 };
 
 inline const Config& GetConfig() { return ConfigManager::Instance().GetConfig(); }

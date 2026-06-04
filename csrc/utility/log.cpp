@@ -15,21 +15,24 @@
  * -------------------------------------------------------------------------
  */
 #include "log.h"
+
 #include <chrono>
 #include <ctime>
-#include <type_traits>
 #include <map>
+#include <type_traits>
+
 #include "file.h"
 #include "json_manager.h"
 #include "trace_manager/event_trace_manager.h"
 
-namespace Utility {
+namespace Utility
+{
 
-const char* Log::LvToString(MemScope::LogLv lv) const
+const char *Log::LvToString(MemScope::LogLv lv) const
 {
     using underlying = typename std::underlying_type<MemScope::LogLv>::type;
-    constexpr const char *lvString[static_cast<underlying>(MemScope::LogLv::COUNT)] = {
-        "[DEBUG]", "[INFO] ", "[WARN] ", "[ERROR]"};
+    constexpr const char *lvString[static_cast<underlying>(MemScope::LogLv::COUNT)] = {"[DEBUG]", "[INFO] ", "[WARN] ",
+                                                                                       "[ERROR]"};
     return lv < MemScope::LogLv::COUNT ? lvString[static_cast<underlying>(lv)] : "N";
 }
 
@@ -41,14 +44,16 @@ Log &Log::GetLog(void)
 
 Log::~Log()
 {
-    if (fp_ != nullptr) {
+    if (fp_ != nullptr)
+    {
         fclose(fp_);
         fp_ = nullptr;
     }
 }
-void Log::GetTimeStr(char* buf, size_t size) const
+void Log::GetTimeStr(char *buf, size_t size) const
 {
-    if (buf == nullptr) {
+    if (buf == nullptr)
+    {
         return;
     }
 
@@ -59,16 +64,17 @@ void Log::GetTimeStr(char* buf, size_t size) const
     return;
 }
 
-void Log::SetLogLevel(const MemScope::LogLv &logLevel)
-{
-    lv_ = logLevel;
-}
+void Log::SetLogLevel(const MemScope::LogLv &logLevel) { lv_ = logLevel; }
 
 void Log::CreateLogFile()
 {
+    if (!MemScope::ConfigManager::HasInited())
+    {
+        return;
+    }
     MemScope::Config config = MemScope::GetConfig();
-    Utility::FileCreateManager::GetInstance(config.outputDir).CreateLogFile(&fp_, MemScope::LOG_DIR, logFilePath_, sizeof(logFilePath_));
+    Utility::FileCreateManager::GetInstance(config.outputDir)
+        .CreateLogFile(&fp_, MemScope::LOG_DIR, logFilePath_, sizeof(logFilePath_));
 }
-
 
 }  // namespace Utility

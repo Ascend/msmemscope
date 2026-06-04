@@ -27,6 +27,8 @@
 namespace MemScope
 {
 
+bool ConfigManager::Inited = false;
+
 const std::unordered_map<std::string, std::function<void(const std::string &, Config &, bool &)>> parserConfigTable = {
     {"call_stack", ParseCallstack}, {"level", ParseDataLevel},        {"events", ParseEventTraceType},
     {"device", ParseDevice},        {"data_format", ParseDataFormat}, {"output", ParseOutputPath},
@@ -58,6 +60,7 @@ void ConfigManager::InitConfig()
         parser.InitialConfig(config);
         SetConfigImpl(config);
     }
+    ConfigManager::Inited = true;
 }
 
 // 在python config接口时，将需要继承和不准修改的参数保留；不准修改的针对命令行传入的；
