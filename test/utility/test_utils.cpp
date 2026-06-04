@@ -90,5 +90,5 @@ TEST(Utils, StrToUInt32_Failed_Test)
 TEST(Utils, GetProcessVmRss_Test)
 {
     uint64_t vmrss = GetProcessVmRss();
-    EXPECT_GT(vmrss);
+    EXPECT_GT(vmrss, 0);
 }
