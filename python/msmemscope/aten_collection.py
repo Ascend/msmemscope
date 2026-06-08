@@ -14,25 +14,42 @@
 # See the Mulan PSL v2 for more details.
 # -------------------------------------------------------------------------
 
-from .utils import check_packages
-
-check_packages([
-    "numpy",
-    "torch",
-    "packaging",
-], "Please install required packages for aten collection!")
-
 import functools
-import re
 import sys
+from contextlib import ExitStack
 from collections.abc import Iterator
-from typing import Any, Optional, TypeVar
+from typing import Any
 import numpy as np
 import mstx
+from packaging import version
 import torch
 from torch.utils import _pytree as pytree
 from torch.utils._python_dispatch import TorchDispatchMode
-from packaging import version
+
+try:
+    from torch._subclasses.fake_tensor import FakeTensor
+    from torch._subclasses.functional_tensor import FunctionalTensor
+except Exception:
+    FakeTensor = torch.Tensor
+    FunctionalTensor = torch.Tensor
+
+
+is_version_support = version.parse(torch.__version__) > version.parse("2.3")
+if is_version_support:
+
+    def is_npu_tensor(value):
+        return (
+            isinstance(value, torch.Tensor)
+            and value.is_npu
+            and not isinstance(value, FakeTensor)
+            and not isinstance(value, FunctionalTensor)
+        )
+else:
+    print(f"[msmemscope]: Current Pytorch's version {torch.__version__} < 2.3, which doesn't support aten collection.")
+
+    def is_npu_tensor(value):
+        return False
+
 
 def calculate_tensor_size(tensor: torch.Tensor):
     numel = np.prod(tensor.shape)
@@ -41,21 +58,13 @@ def calculate_tensor_size(tensor: torch.Tensor):
 
     return int(size)
 
-def zip_by_key(a: dict, b: dict) -> Iterator:
-    for arg, value in a.items():
-        if arg in b:
-            yield arg, value, b[arg]
 
-def zip_arguments(
-    schema: torch.FunctionSchema, args: tuple, kwargs: dict
-) -> Iterator:
+def zip_arguments(schema: torch.FunctionSchema, args: tuple, kwargs: dict) -> Iterator:
     schema_args = schema.arguments[: len(args)]
-    schema_kwargs = {arg.name : arg for arg in schema.arguments[len(args) :]}
+    schema_kwargs = schema.arguments[len(args) :]
 
     yield from zip(schema_args, args)
-
-    for _, argument, value in zip_by_key(schema_kwargs, kwargs):
-        yield (argument, value)
+    yield from ((arg, kwargs[arg.name]) for arg in schema_kwargs if arg.name in kwargs)
 
 
 class ArgumentHandler:
@@ -69,7 +78,6 @@ class ArgumentHandler:
         metadata_only: bool,
         is_output: bool = False,
     ) -> None:
-
         def _handle_tensor(
             func,
             value: Any,
@@ -78,13 +86,12 @@ class ArgumentHandler:
             metadata_only: bool,
             is_output: bool,
         ) -> None:
-
             is_read = False
             data_ptr = value.data_ptr()
 
             if not is_write and not metadata_only:
                 is_read = True
-            
+
             # 对于metadata_only分俩类处理，FACTORY FUNC和其它VIEW FUNC
             if metadata_only:
                 if is_factory and is_output:
@@ -98,12 +105,14 @@ class ArgumentHandler:
 
             # 计算tensor大小
             tensor_size = calculate_tensor_size(value)
+            mstx.mark(
+                f"memscope-aten-ac:ptr={data_ptr};is_write={is_write};is_read={is_read};is_output={is_output};"
+                f"name={func.__module__}.{func.__name__};shape={value.shape};"
+                f"dtype={value.dtype};tensor_size={tensor_size};device={value.device}",
+                None,
+            )
 
-            mstx.mark(f"memscope-aten-ac:ptr={data_ptr};is_write={is_write};is_read={is_read};is_output={is_output};"\
-                    f"name={func.__module__}.{func.__name__};shape={value.shape};"\
-                    f"dtype={value.dtype};tensor_size={tensor_size};device={value.device}", None)
-        
-        if isinstance(value, list) or isinstance(value, tuple):
+        if isinstance(value, (list, tuple)):
             for t in value:
                 if is_npu_tensor(t):
                     _handle_tensor(func, t, is_write, is_factory, metadata_only, is_output)
@@ -123,47 +132,34 @@ class ArgumentHandler:
     ) -> None:
         schema = func._schema
         for argument, value in zip_arguments(schema, args, kwargs):
-            is_write = argument.alias_info is not None and argument.alias_info.is_write
-            # A change is metadata only if it is a view or a factory function that
-            # reads only metadata
-            metadata_only = is_factory or (
-                argument.alias_info is not None and not argument.alias_info.is_write
+            alias_info = argument.alias_info
+            is_write = alias_info is not None and alias_info.is_write
+            is_metadata_only = is_factory or (alias_info is not None and not alias_info.is_write)
+            handle_arg = functools.partial(
+                self._handle_argument,
+                is_write=is_write,
+                is_factory=is_factory,
+                is_output=False,
+                metadata_only=is_metadata_only,
             )
-            pytree.tree_map_(
-                functools.partial(
-                    self._handle_argument,
-                    is_write=is_write,
-                    is_factory=is_factory,
-                    is_output=False,
-                    metadata_only=metadata_only,
-                ),
-                func,
-                value,
-            )
+            pytree.tree_map_(handle_arg, func, value)
 
-    def parse_outputs(
-        self, func, outputs: Any, *, is_factory: bool
-    ) -> None:
+    def parse_outputs(self, func, outputs: Any, *, is_factory: bool) -> None:
         schema = func._schema
         for res, value in zip(schema.returns, (outputs,)):
-            metadata_only = is_factory or (
-                res.alias_info is not None and not res.alias_info.is_write
+            alias_info = res.alias_info
+            is_metadata_only = is_factory or (alias_info is not None and not alias_info.is_write)
+            handle_arg = functools.partial(
+                self._handle_argument,
+                is_write=not is_metadata_only,
+                is_factory=is_factory,
+                is_output=True,
+                metadata_only=is_metadata_only,
             )
-            pytree.tree_map_(
-                functools.partial(
-                    self._handle_argument,
-                    is_write=not metadata_only,
-                    is_factory=is_factory,
-                    is_output=True,
-                    metadata_only=metadata_only,
-                ),
-                func,
-                value,
-            )
+            pytree.tree_map_(handle_arg, func, value)
 
 
 class MemoryDispatchMode(TorchDispatchMode):
-
     def __torch_dispatch__(self, func, types, args=(), kwargs=None):
         if kwargs is None:
             kwargs = {}
@@ -177,7 +173,7 @@ class MemoryDispatchMode(TorchDispatchMode):
         argument_handler.parse_inputs(func, args, kwargs, is_factory=is_factory)
         # 算子执行
         outputs = func(*args, **kwargs)
-        
+
         argument_handler.parse_outputs(func, outputs, is_factory=is_factory)
         # 获取aten算子执行结束事件
         mstx.mark(f"memscope-aten-e: name={func.__module__}.{func.__name__}", None)
@@ -189,6 +185,7 @@ class AtenCollector:
     def __init__(self) -> None:
         self.dispatch = MemoryDispatchMode()
         self.enabled = False
+        self._context = ExitStack()
 
     def __del__(self):
         if (sys is not None) and (not sys.is_finalizing()) and self.enabled:
@@ -197,38 +194,21 @@ class AtenCollector:
     def enable(self):
         if self.enabled:
             return
-        self.dispatch.__enter__()
+        self._context.enter_context(self.dispatch)
         self.enabled = True
 
     def disable(self):
         if not self.enabled:
             return
-        self.dispatch.__exit__(None, None, None)
+        self._context.close()
         self.enabled = False
 
 
-def enable_aten_collector():
-    aten_collector.enable()
-
-
-def disable_aten_collector():
-    aten_collector.disable()
-
-
-current_pytorch_version = torch.__version__
-TARGET_VERSION = "2.3"
-
-if version.parse(current_pytorch_version) < version.parse(TARGET_VERSION):
-    print(f"[msmemscope]: Current Pytorch's version {current_pytorch_version} < 2.3, which doesn't support " \
-     "aten collection.")
-else:
-    print(f"[msmemscope]: Current Pytorch's version is {current_pytorch_version}, enable aten collection.")
+if is_version_support:
     aten_collector = AtenCollector()
 
-    from torch._subclasses.fake_tensor import FakeTensor
-    from torch._subclasses.functional_tensor import FunctionalTensor
-    def is_npu_tensor(value):
-        return (isinstance(value, torch.Tensor) 
-                and value.is_npu
-                and not isinstance(value, FakeTensor)
-                and not isinstance(value, FunctionalTensor))
+    def enable_aten_collector():
+        aten_collector.enable()
+
+    def disable_aten_collector():
+        aten_collector.disable()
