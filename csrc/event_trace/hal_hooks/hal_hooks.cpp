@@ -241,6 +241,8 @@ drvError_t halMemRelease(drv_mem_handle_t *handle)
     return ret;
 }
 
+#define ACL_HOST_REG_PINNED 0X10000000UL
+
 aclError aclrtHostRegisterV2(void *ptr, uint64_t size, uint32_t flag)
 {
     static auto original_func =
@@ -252,6 +254,17 @@ aclError aclrtHostRegisterV2(void *ptr, uint64_t size, uint32_t flag)
 
     aclError ret = original_func(ptr, size, flag);
     if (ret != ACL_SUCCESS)
+    {
+        return ret;
+    }
+
+    if (!EventTraceManager::Instance().IsNeedTrace(EventBaseType::MALLOC) &&
+        !EventTraceManager::Instance().IsNeedTrace(EventBaseType::FREE))
+    {
+        return ret;
+    }
+
+    if (flag & static_cast<uint32_t>(ACL_HOST_REG_PINNED) == 0)
     {
         return ret;
     }
@@ -278,6 +291,12 @@ aclError aclrtHostUnregister(void *ptr)
 
     aclError ret = original_func(ptr);
     if (ret != ACL_SUCCESS)
+    {
+        return ret;
+    }
+
+    if (!EventTraceManager::Instance().IsNeedTrace(EventBaseType::MALLOC) &&
+        !EventTraceManager::Instance().IsNeedTrace(EventBaseType::FREE))
     {
         return ret;
     }
