@@ -105,7 +105,7 @@ class ArgumentHandler:
         
         if isinstance(value, list) or isinstance(value, tuple):
             for t in value:
-                if is_npu_tensor(value):
+                if is_npu_tensor(t):
                     _handle_tensor(func, t, is_write, is_factory, metadata_only, is_output)
             return
 
