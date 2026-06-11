@@ -46,8 +46,8 @@ For details, [msMemScope Installation Guide](../install_guide/install_guide.md).
 
    In the `example` directory, the following code examples are provided:
 
-   - Python: [example_api](../../example/example_api.py)
-   - CLI: [example_cmd](../../example/example_cmd.py)
+   - Python: [example_api](../../../example/example_api.py)
+   - CLI: [example_cmd](../../../example/example_cmd.py)
 
 3. Use msMemScope in either of the following ways. **Python APIs are recommended.**
 

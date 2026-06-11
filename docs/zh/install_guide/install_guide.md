@@ -134,7 +134,7 @@ msmemscope environment setup completed
 
 > [!NOTE]
 >
-> 如果您在使用**内存采集功能**时按照《[**内存采集**](./memory_profile.md#使用示例)》文档中的介绍已设置`LD_PRELOAD`环境变量，为避免卸载失败，在卸载前需要执行命令：`unset LD_PRELOAD` 重置环境变量。
+> 如果您在使用**内存采集功能**时按照《[**内存采集**](../user_guide//memory_profile.md#使用示例)》文档中的介绍已设置`LD_PRELOAD`环境变量，为避免卸载失败，在卸载前需要执行命令：`unset LD_PRELOAD` 重置环境变量。
 
 可通过如下步骤卸载：
 
