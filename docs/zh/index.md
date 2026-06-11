@@ -73,10 +73,10 @@ msMemScope工具提供内存采集、内存分析两大功能。
 
 为了帮助用户快速上手 MemScope 内存分析工具，我们推荐按照以下顺序进行学习：
 
-* 对于想要使用 MemScope 内存分析工具的用户，建议先阅读 [安装指南](install_guide.md)，确保环境配置正确。
-* 本教程提供的 [快速入门](quick_start.md) 将引导你完成基本的内存问题定位配置和运行。
-* 详细功能部分将介绍 [内存采集](memory_profile.md) 、[内存分析](memory_analysis.md) 以及 [输出文件说明](output_file_spec.md) 等内容，帮助你更好地理解内存问题定位的场景。
-* msMemScope工具提供API接口，便于快速分析内存情况，具体使用方法可以参考 [API使用](api.md)。
+* 对于想要使用 MemScope 内存分析工具的用户，建议先阅读 [安装指南](install_guide/install_guide.md)，确保环境配置正确。
+* 本教程提供的 [快速入门](quick_start/quick_start.md) 将引导你完成基本的内存问题定位配置和运行。
+* 详细功能部分将介绍 [内存采集](user_guide/memory_profile.md) 、[内存分析](user_guide/memory_analysis.md) 以及 [输出文件说明](user_guide/output_file_spec.md) 等内容，帮助你更好地理解内存问题定位的场景。
+* msMemScope工具提供API接口，便于快速分析内存情况，具体使用方法可以参考 [API使用](api_reference/api.md)。
 * 你可以参考 [开发者指南](development_guide/development_guide.md) 部分，了解在 MemScope 内存工具的开发步骤。
 
 ## 📬 建议与交流

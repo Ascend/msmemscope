@@ -22,7 +22,7 @@
 
 #### 2.3.1 安装依赖
 
-安装前需确保Git、Python等环境可用，请满足[版本依赖](./development_guide/development_guide.md#1-开发环境配置)限制，若不满足可执行以下命令安装。
+安装前需确保Git、Python等环境可用，请满足[版本依赖](../development_guide/development_guide.md#1-开发环境配置)限制，若不满足可执行以下命令安装。
 
 Debian系列：
 
@@ -134,7 +134,7 @@ msmemscope environment setup completed
 
 > [!NOTE]
 >
-> 如果您在使用**内存采集功能**时按照《[**内存采集**](./memory_profile.md#使用示例)》文档中的介绍已设置`LD_PRELOAD`环境变量，为避免卸载失败，在卸载前需要执行命令：`unset LD_PRELOAD` 重置环境变量。
+> 如果您在使用**内存采集功能**时按照《[**内存采集**](../user_guide//memory_profile.md#使用示例)》文档中的介绍已设置`LD_PRELOAD`环境变量，为避免卸载失败，在卸载前需要执行命令：`unset LD_PRELOAD` 重置环境变量。
 
 可通过如下步骤卸载：
 

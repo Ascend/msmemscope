@@ -6,7 +6,7 @@
 
 ## 前期准备
 
-请参见[安装指南](../../docs/zh/install_guide.md)安装msMemScope工具。
+请参见[安装指南](../../docs/zh/install_guide/install_guide.md)安装msMemScope工具。
 
 此外，使用对比功能前，需要将环境变量关闭task_queue算子下发队列优化后，再使用msMemScope工具采集两个不同step的数据。
 
@@ -18,7 +18,7 @@ export TASK_QUEUE_ENABLE=0
 
 ### 参数说明
 
-以下仅提供本功能样例中使用到的参数解释。其他参数的详细说明请参见[API参考](../../docs/zh/api.md)。
+以下仅提供本功能样例中使用到的参数解释。其他参数的详细说明请参见[API参考](../../docs/zh/api_reference/api.md)。
 
 | 参数 | 可选/必选 | 说明 |
 |------|-----------|------|

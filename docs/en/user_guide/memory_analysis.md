@@ -15,7 +15,7 @@ msMemScope provides analysis capabilities such as leak detection, comparison, mo
 
 ## Preparations
 
-For details about how to install msMemScope, see [msMemScope Installation Guide](./install_guide.md).
+For details about how to install msMemScope, see [msMemScope Installation Guide](../install_guide/install_guide.md).
 
 ## Memory Leak Analysis
 
@@ -48,7 +48,7 @@ During memory analysis, use the mstx instrumentation function to locate issues. 
     - If the information shown in [Figure 1 Memory leak](#leak) is displayed, a memory leak occurs. The command output displays the summary information about memory leaks of each device, including the number of steps where memory leak occurs, associated kernel, address, and leak size.
 
         Figure 1 Memory leak<a id="leak"></a>
-        ![](./figures/memory_leak.png)
+        ![](../figures/memory_leak.png)
 
     - If the information shown in [Figure 2 Memory fluctuation](#fluctuation) is displayed, the memory fluctuates. The command output displays the memory fluctuation in a single step (defined by the ratio of the minimum memory pool allocation to the maximum memory pool allocation) and the minimum memory pool allocation. The minimum ratio and maximum ratio are provided as references. Users can determine whether there is a memory leak risk based on the ratio.
 
@@ -57,7 +57,7 @@ During memory analysis, use the mstx instrumentation function to locate issues. 
 
         Figure 2 Memory fluctuation <a id="fluctuation"></a>
 
-        ![](./figures/memory_fluctuation.png)
+        ![](../figures/memory_fluctuation.png)
 
 **Offline Mode**
 
@@ -92,7 +92,7 @@ msMemScope supports offline leak analysis of memory events in a specified range.
 
     Figure 3 Offline leakage analysis <a id="analysis"></a>
 
-    ![](./figures/offline_leakage_analysis.png)
+    ![](../figures/offline_leakage_analysis.png)
 
 ## Memory Comparison
 
@@ -339,7 +339,7 @@ Run the following command to enable identification of inefficient memory. **Appl
 msmemscope ${Application} --analysis=inefficient
 ```
 
-Inefficient memory can also be identified offline via custom APIs. For details, see [API Reference](./api.md).
+Inefficient memory can also be identified offline via custom APIs. For details, see [API Reference](../api_reference/api.md).
 
 ### Output Description
 

@@ -43,7 +43,7 @@ echo "<expected-sha256> mindstudio-memscope_<version>_linux-<arch>.run" | sha256
 **NOTE**
 
 - In the verification command, `<expected-sha256>` is the SHA256 value obtained when the package is downloaded.
-- For details about the SHA256 value of installation packages for each version, see [Release Notes](./release_note.md).
+- For details about the SHA256 value of installation packages for each version, see [Release Notes](../release_notes/release_note.md).
 
 Handling suggestions for inconsistent SHA256 values:
 
@@ -55,7 +55,7 @@ If the verification still fails, check whether the file name and version on the 
 
 #### Installing Dependencies
 
-Before the installation, ensure that the Git and Python environments are available. For details, see [version requirements](./development_guide/development_guide.md#1-development-environment-settings). If requirements are not met, run the following command to install dependencies.
+Before the installation, ensure that the Git and Python environments are available. For details, see [version requirements](../development_guide/development_guide.md#1-development-environment-settings). If requirements are not met, run the following command to install dependencies.
 
 Debian:
 

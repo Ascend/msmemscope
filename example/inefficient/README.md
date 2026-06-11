@@ -6,7 +6,7 @@
 
 ## 前期准备
 
-请参见[安装指南](../../docs/zh/install_guide.md)安装msMemScope工具。
+请参见[安装指南](../../docs/zh/install_guide/install_guide.md)安装msMemScope工具。
 
 此外在运行本样例中的python场景时，需要配置torch以及torch_npu，具体请参见[Pytorch框架训练环境准备](https://www.hiascend.com/document/detail/zh/Pytorch/720/configandinstg/instg/insg_0001.html)文档。
 
@@ -14,7 +14,7 @@
 
 ### 参数说明
 
-以下仅提供本功能样例中使用到的参数解释。其他参数的详细说明请参见[API参考](../../docs/zh/api.md)。
+以下仅提供本功能样例中使用到的参数解释。其他参数的详细说明请参见[API参考](../../docs/zh/api_reference/api.md)。
 
 | 参数 | 可选/必选 | 说明 |
 |------|-----------|------|
@@ -30,7 +30,7 @@
     export LD_LIBRARY_PATH=${TOOL_PATH}/lib64/:${LD_LIBRARY_PATH}
     ```
 
-    在用户脚本中可以添加memscope.config()以及memscope.start()和memscope.stop()来控制采集项和采集范围，这里仅提供最基础的样例，参考test_inefficient.py。其他可配置的采集参数请参见[API参考](../../docs/zh/api.md)。
+    在用户脚本中可以添加memscope.config()以及memscope.start()和memscope.stop()来控制采集项和采集范围，这里仅提供最基础的样例，参考test_inefficient.py。其他可配置的采集参数请参见[API参考](../../docs/zh/api_reference/api.md)。
 
 2. 运行阶段：
 

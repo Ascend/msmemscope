@@ -8,7 +8,7 @@ msMemScope collects memory events and conducts memory leak detection, memory com
 
 ### Environment Setup
 
-For details, [msMemScope Installation Guide](./install_guide.md).
+For details, [msMemScope Installation Guide](../install_guide/install_guide.md).
 
 ## Procedure
 
@@ -46,8 +46,8 @@ For details, [msMemScope Installation Guide](./install_guide.md).
 
    In the `example` directory, the following code examples are provided:
 
-   - Python: [example_api](../../example/example_api.py)
-   - CLI: [example_cmd](../../example/example_cmd.py)
+   - Python: [example_api](../../../example/example_api.py)
+   - CLI: [example_cmd](../../../example/example_cmd.py)
 
 3. Use msMemScope in either of the following ways. **Python APIs are recommended.**
 
@@ -74,8 +74,8 @@ For details, [msMemScope Installation Guide](./install_guide.md).
      msmemscope --events=alloc,free,access,launch --level=kernel,op --call-stack=c,python --analysis=leaks,inefficient,decompose --output=./output --data-format=csv python ./example_cmd.py
      ```
 
-   For more information about tool parameters, see [Memory Collection](./memory_profile.md).
+   For more information about tool parameters, see [Memory Collection](../user_guide/memory_profile.md).
 
 4. Check the output result file.
 
-   For details about the output file and memory analysis, see [Output File Description](./output_file_spec.md) and [Memory Analysis](./memory_analysis.md).
+   For details about the output file and memory analysis, see [Output File Description](../user_guide/output_file_spec.md) and [Memory Analysis](../user_guide/memory_analysis.md).
