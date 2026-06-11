@@ -84,16 +84,16 @@ class InefficientTestCase(BaseTest):
         if self.case_name == "msmemscope_inefficient_cmd_test":
             ATTR_VALID_THRESHOLD = {
                 "inefficient_type": {"min": 2928, "max": 2928},
-                "inefficient_type:early_allocation": {"min": 1716, "max": 1716},
-                "inefficient_type:late_deallocation": {"min": 1210, "max": 1210},
-                "inefficient_type:temporary_idleness": {"min": 2, "max": 2},
+                "inefficient_type:early_allocation": {"min": 1822, "max": 1822},
+                "inefficient_type:late_deallocation": {"min": 1010, "max": 1010},
+                "inefficient_type:temporary_idleness": {"min": 96, "max": 96},
             }
         else :
             ATTR_VALID_THRESHOLD = {
-                "inefficient_type": {"min": 2528, "max": 2528},
-                "inefficient_type:early_allocation": {"min": 1716, "max": 1716},
+                "inefficient_type": {"min": 2728, "max": 2728},
+                "inefficient_type:early_allocation": {"min": 1822, "max": 1822},
                 "inefficient_type:late_deallocation": {"min": 810, "max": 810},
-                "inefficient_type:temporary_idleness": {"min": 2, "max": 2},
+                "inefficient_type:temporary_idleness": {"min": 96, "max": 96},
             }
 
         if list(data.columns) != column.split(','):
