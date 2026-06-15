@@ -21,16 +21,19 @@
 #include <string>
 #include <vector>
 
-namespace MemScope {
+namespace MemScope
+{
 
-struct MemoryAccessItem {
+struct MemoryAccessItem
+{
     char alias[32];
     uint64_t ptr;
     uint64_t size;
 };
 
-class SanitizerOpHandler {
-public:
+class SanitizerOpHandler
+{
+   public:
     static SanitizerOpHandler& GetInstance();
 
     // 处理一条 sanitizer-op: 消息，直接触发 kernel launch 事件
@@ -40,7 +43,7 @@ public:
     static void SetEnabled(bool enabled);
     static bool IsEnabled();
 
-private:
+   private:
     SanitizerOpHandler() = default;
     ~SanitizerOpHandler() = default;
     SanitizerOpHandler(const SanitizerOpHandler&) = delete;
@@ -53,13 +56,12 @@ private:
     // 解析单项 "alias:addr:size"
     bool ParseAccessItem(const std::string& item, MemoryAccessItem& out);
     // 组装数据并调用 Python 侧 _handle_kernel_launch
-    void TriggerKernelLaunch(const std::string& name, int32_t streamId,
-                             const std::vector<MemoryAccessItem>& reads,
+    void TriggerKernelLaunch(const std::string& name, int32_t streamId, const std::vector<MemoryAccessItem>& reads,
                              const std::vector<MemoryAccessItem>& writes);
 
     static bool sanitizerEnabled_;
 };
 
-} // namespace MemScope
+}  // namespace MemScope
 
-#endif // OP_HANDLER_H
+#endif  // OP_HANDLER_H

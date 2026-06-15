@@ -14,40 +14,24 @@
 # See the Mulan PSL v2 for more details.
 # -------------------------------------------------------------------------
 
-import os
-import ctypes
-
 from ._msmemscope import _watcher
 from ._msmemscope import _tracer
-from ._msmemscope import start, stop, step, config
+from ._msmemscope import start, stop, step, config  # noqa: F401
 from ._msmemscope import _enable_npu_sanitizer
+from .analyzer import analyze, list_analyzers, get_analyzer_config, check_leaks, check_inefficient  # noqa: F401
+from .hijacker.hijack_manager import memscope_hijack_manager
+from .record_function import RecordFunction  # noqa: F401
+from .take_snapshot import TakeSnapshot  # noqa: F401
 from .utils import import_with_optional_deps
 
 tracer = _tracer
 watcher = _watcher
 
-from .analyzer import (
-    analyze,
-    list_analyzers,
-    get_analyzer_config,
-    check_leaks,
-    check_inefficient
-)
-
 # 指定需要的依赖包
-take_snapshot = import_with_optional_deps(
-    "take_snapshot", 
-    "take_snapshot", 
-    ["torch", "torch_npu"]
-)
-from .take_snapshot import TakeSnapshot
-
-# 自定义打点trace事件
-from .record_function import RecordFunction
+take_snapshot = import_with_optional_deps("take_snapshot", "take_snapshot", ["torch", "torch_npu"])
 
 
-from .hijacker.hijack_manager import memscope_hijack_manager
-def init_framework_hooks(framework: str, version: str, component:str, hook_type: str):
+def init_framework_hooks(framework: str, version: str, component: str, hook_type: str):
     """
     init_framework_hooks:注册对应framework的所有默认hook函数钩子
 
@@ -57,6 +41,7 @@ def init_framework_hooks(framework: str, version: str, component:str, hook_type:
     hook_type:对应的hook函数(decompose:显存拆解,sanpshot:显存快照)
     """
     return memscope_hijack_manager.init_framework_hooks(framework, version, component, hook_type)
+
 
 def cleanup_framework_hooks():
     """
@@ -82,5 +67,6 @@ def enable_npu_sanitizer():
     信息将被截获并转换为 kernel launch 事件，送入原生 sanitizer 分析管线。
     """
     from torch_npu.npu import _sanitizer
+
     _sanitizer.enable_npu_sanitizer()
     _enable_npu_sanitizer()
