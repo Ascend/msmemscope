@@ -130,7 +130,17 @@ bash: local: can only be used in a function
 msmemscope environment setup completed
 ```
 
-## 3. 卸载
+## 3. 验证安装
+
+安装完成后，执行以下命令验证工具是否安装成功：
+
+```shell
+  msmemscope --help
+```
+
+若输出不报错，且能显示帮助信息，则表明安装成功。
+
+## 4. 卸载
 
 > [!NOTE]
 >
@@ -163,11 +173,12 @@ msmemscope environment setup completed
    Successfully uninstalled 1 tool ({tools_name})
    ```
 
-## 4. 升级
+## 5. 升级
 
-升级即“先卸后装”。直接执行安装命令，工具将自动卸载旧版本，并引导您完成覆盖安装。
+升级即“先卸后装”。直接执行安装命令，工具将自动卸载旧版本，并引导您完成覆盖安装。<br>
+可通过`msmemscope --version`命令查看当前环境的版本信息，再选择需要升级的版本。升级版本时需要关注版本配套关系，请参见《[版本说明](https://gitcode.com/Ascend/release-management/blob/master/MindStudio/26.0.0/release_notes.md)》。
 
-## 5. 附录
+## 6. 附录
 
 ### 参数说明
 
