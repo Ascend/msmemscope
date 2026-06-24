@@ -43,12 +43,12 @@ log_debug() {
 # 检查源目录是否存在
 check_source_dirs() {
     local missing_dirs=()
-    
+
     # 检查每个必需的目录是否存在
     [ ! -d "$PYTHON_DIR" ] && missing_dirs+=("$PYTHON_DIR")
     [ ! -d "$BIN_DIR" ] && missing_dirs+=("$BIN_DIR")
     [ ! -d "$LIB64_DIR" ] && missing_dirs+=("$LIB64_DIR")
-    
+
     # 如果有目录缺失，报告错误
     if [ ${#missing_dirs[@]} -gt 0 ]; then
         log_error "The following source directories are missing:"
@@ -57,7 +57,7 @@ check_source_dirs() {
         done
         return 1
     fi
-    
+
     return 0
 }
 
@@ -71,25 +71,25 @@ create_temp_dir() {
 generate_file_hashes() {
     local payload_dir="$TEMP_DIR/payload/msmemscope"
     local hash_file="$payload_dir/file_checksums.sha256"
-    
+
     log_info "Generating file checksums..."
-    
+
     # 检查sha256sum命令是否可用
     if ! command -v sha256sum >/dev/null 2>&1; then
         log_warn "sha256sum not available, skipping checksum generation"
         return 0
     fi
-    
+
     cd "$payload_dir"
-    
+
     # 生成详细的文件哈希列表（排除校验文件自身）
     find . -type f ! -name "file_checksums.sha256" ! -name "version.txt" -exec sha256sum {} \; > "$hash_file"
-    
+
     # 计算总体哈希（基于哈希文件本身）
     local overall_hash=$(sha256sum "$hash_file" | cut -d' ' -f1)
     echo "build_hash: $overall_hash" >> "version.txt"
     echo "integrity_check: enabled" >> "version.txt"
-    
+
     cd - > /dev/null
     log_info "File checksums generated with overall hash: ${overall_hash:0:16}..."
 }
@@ -97,10 +97,10 @@ generate_file_hashes() {
 # 复制交付件到临时目录
 copy_artifacts() {
     log_info "Copying artifacts to temporary directory..."
-    
+
     # 在payload下创建msmemscope目录
     mkdir -p "$TEMP_DIR/payload/msmemscope"
-    
+
     # 使用rsync保持文件权限和属性，如果rsync不可用则用cp
     if command -v rsync >/dev/null 2>&1; then
         rsync -av "$PYTHON_DIR/" "$TEMP_DIR/payload/msmemscope/python/" --exclude="*.pyc" --exclude="__pycache__"
@@ -125,7 +125,7 @@ copy_artifacts() {
     # 创建版本信息文件，放在msmemscope目录下
     echo "version: $VERSION" > "$TEMP_DIR/payload/msmemscope/version.txt"
     echo "build_date: $(date '+%Y-%m-%d %H:%M:%S')" >> "$TEMP_DIR/payload/msmemscope/version.txt"
-    
+
     # 生成文件校验和
     generate_file_hashes
 }
@@ -172,23 +172,23 @@ verify_installation_integrity() {
     local install_path="$1"
     local install_dir="$install_path/msmemscope"
     local checksum_file="$install_dir/file_checksums.sha256"
-    
+
     log_info "Verifying installation integrity..."
-    
+
     # 检查校验文件是否存在
     if [ ! -f "$checksum_file" ]; then
         log_warn "Checksum file not found, skipping integrity verification"
         return 0
     fi
-    
+
     # 检查sha256sum命令
     if ! command -v sha256sum >/dev/null 2>&1; then
         log_warn "sha256sum not available, skipping integrity verification"
         return 0
     fi
-    
+
     cd "$install_dir"
-    
+
     # 执行校验
     if sha256sum -c file_checksums.sha256 --quiet > /dev/null 2>&1; then
         log_info "✓ All files passed integrity verification"
@@ -206,15 +206,15 @@ verify_installation_integrity() {
 check_disk_space() {
     local install_path="$1"
     local required_space=100  # 最小需要100MB空间
-    
+
     # 获取安装路径所在分区的可用空间（MB）
     local available_space=$(df -m "$install_path" | awk 'NR==2 {print $4}')
-    
+
     if [ "$available_space" -lt "$required_space" ]; then
         log_error "Insufficient disk space! Required: ${required_space}MB, Available: ${available_space}MB"
         return 1
     fi
-    
+
     log_info "Disk space check passed: ${available_space}MB available"
     return 0
 }
@@ -222,13 +222,13 @@ check_disk_space() {
 # 验证安装路径的合法性
 validate_install_path() {
     local install_path="$1"
-    
+
     # 检查路径是否为空
     if [ -z "$install_path" ]; then
         log_error "Install path cannot be empty"
         return 1
     fi
-    
+
     # 检查是否为绝对路径
     if [[ "$install_path" != /* ]]; then
         log_error "Install path must be an absolute path: $install_path"
@@ -245,55 +245,55 @@ validate_install_path() {
         log_error "Install directory does not exist: $install_path"
         return 1
     fi
-    
+
     # 检查安装目录是否有写入权限
     if [ ! -w "$install_path" ]; then
         log_error "No write permission for directory: $install_path"
         return 1
     fi
-    
+
     # 检查路径是否包含特殊字符
     if [[ "$install_path" =~ [\|\<\>\"\'] ]]; then
         log_error "Install path contains invalid characters"
         return 1
     fi
-    
+
     return 0
 }
 
 # 设置文件权限
 set_file_permissions() {
     local install_dir="$1/msmemscope"
-    
+
     # 设置最外层msmemscope文件夹权限为drwxr-x--- (750) - 所有者需要写权限以便删除
     chmod 750 "$install_dir"
-    
+
     # 设置所有子目录权限为drwxr-x--- (750) - 所有者需要写权限以便删除子目录
     find "$install_dir" -mindepth 1 -type d -exec chmod 750 {} \;
-    
+
     # 设置bin目录下所有文件权限为-rwxr-x--- (750) - 二进制和shell脚本需要执行权限
     if [ -d "$install_dir/bin" ]; then
         find "$install_dir/bin" -type f -exec chmod 750 {} \;
     fi
-    
+
     # 设置lib64目录下so文件权限为-rw-r----- (640) - 只需要读权限，所有者需要写权限以便删除
     if [ -d "$install_dir/lib64" ]; then
         find "$install_dir/lib64" -name "*.so" -type f -exec chmod 640 {} \;
     fi
-    
+
     # 设置python/msmemscope目录下python文件权限为-rw-r----- (640) - python文件只需要读权限
     if [ -d "$install_dir/python/msmemscope" ]; then
         find "$install_dir/python/msmemscope" -name "*.py" -type f -exec chmod 640 {} \;
     fi
-    
+
     local set_env_script="$install_dir/set_env.sh"
     local uninstall_script="$install_dir/uninstall.sh"
     local version_file="$install_dir/version.txt"
-    
+
     # set_env.sh和uninstall.sh权限为-rwxr-x--- (750) - 需要执行权限
     [ -f "$set_env_script" ] && chmod 750 "$set_env_script"
     [ -f "$uninstall_script" ] && chmod 750 "$uninstall_script"
-    
+
     # version.txt权限为640 - 只需要读权限
     [ -f "$version_file" ] && chmod 640 "$version_file"
 }
@@ -302,9 +302,9 @@ set_file_permissions() {
 create_set_env_script() {
     local install_path="$1"
     local set_env_script="$install_path/msmemscope/set_env.sh"
-    
+
     log_info "Creating environment setup script..."
-    
+
     cat > "$set_env_script" << 'SETENV_EOF'
 #!/bin/bash
 
@@ -335,7 +335,7 @@ if [ -d "$SCRIPT_DIR/python" ]; then
             fi
         done
     fi
-    
+
     # Add msmemscope python path at the very beginning
     if [ -z "$new_pythonpath" ]; then
         export PYTHONPATH="$SCRIPT_DIR/python"
@@ -362,7 +362,7 @@ if [ -d "$SCRIPT_DIR/bin" ]; then
             fi
         done
     fi
-    
+
     # Add msmemscope bin path at the very beginning
     if [ -z "$new_path" ]; then
         export PATH="$SCRIPT_DIR/bin"
@@ -388,12 +388,12 @@ SETENV_EOF
 perform_installation() {
     local install_path="$1"
     local is_upgrade="$2"
-    
+
     local action="${is_upgrade:-Installing}"
     log_info "${action} to: $install_path/msmemscope"
-    
+
     mkdir -p "$install_path"
-    
+
     # 从run文件中提取payload部分并解压
     log_info "Extracting files..."
     # 找到payload起始行号
@@ -406,10 +406,10 @@ perform_installation() {
         chmod u+w "$install_path"
         write_flag=true
     fi
-    
+
     # 从payload起始行开始提取并解压到安装目录（使用-C参数指定目录，避免cd操作）
     tail -n +$PAYLOAD_START "$0" | tar -xz -C "$install_path"
-    
+
     # 恢复安装目录权限
     if [ "$write_flag" = true ]; then
         log_info "Restoring installation directory permissions"
@@ -421,20 +421,20 @@ perform_installation() {
         log_error "Installation integrity check failed"
         exit 1
     fi
-    
+
     # 设置文件权限
     set_file_permissions "$install_path"
-    
+
     # 创建环境变量设置脚本
     create_set_env_script "$install_path"
-    
+
     # 处理cann_uninstall.sh（如果存在）
     local cann_uninstall_path="$(dirname "$install_path")/cann_uninstall.sh"
-    
+
     # 检查当前路径或父目录是否存在cann_uninstall.sh
     if [ -f "$cann_uninstall_path" ]; then
         log_info "Found cann_uninstall.sh at $cann_uninstall_path, configuring integration..."
-        
+
         # 1. 注册卸载逻辑到cann_uninstall.sh - 先获取文件权限，添加可写权限，修改后恢复原权限
         local script_right=$(stat -c '%a' "$cann_uninstall_path")
         chmod u+w "$cann_uninstall_path"
@@ -444,13 +444,13 @@ perform_installation() {
         sed -i "/^exit /i uninstall_package \"share\/info\/msmemscope\"" "$cann_uninstall_path"
         chmod $script_right "$cann_uninstall_path"
         log_info "Registered uninstallation logic to cann_uninstall.sh"
-        
+
         # 2. 创建share/info/msmemscope目录 - 根据cann_uninstall.sh的位置确定目录
         local base_dir=$(dirname "$cann_uninstall_path")
         local share_info_dir="$base_dir/share/info/msmemscope"
         mkdir -p "$share_info_dir"
         log_info "Created directory: $share_info_dir"
-        
+
         # 3. 创建version.info文件
         cat > "$share_info_dir/version.info" << VERSION_EOF
 [PACKAGE]
@@ -458,7 +458,7 @@ Name=mindstudio-memscope
 Version=$VERSION
 VERSION_EOF
         log_info "Created version.info in $share_info_dir"
-        
+
         # 4. 创建新的uninstall.sh到share/info/msmemscope目录
         cat > "$share_info_dir/uninstall.sh" << 'CANN_UNINSTALL_EOF'
 #!/bin/bash
@@ -536,19 +536,19 @@ fi
 
 log_info "msmemscope uninstallation completed successfully"
 CANN_UNINSTALL_EOF
-        
+
         # 设置执行权限
         chmod +x "$share_info_dir/uninstall.sh"
         log_info "Created uninstall.sh in $share_info_dir"
     fi
-    
+
     log_info "File ${is_upgrade:-installation} completed"
 }
 
 # 创建卸载脚本
 create_uninstall_script() {
     local install_path="$1"
-    
+
     # 生成卸载脚本文件，放在msmemscope目录下
     cat > "$install_path/msmemscope/uninstall.sh" << 'UNINSTALL_EOF'
 #!/bin/bash
@@ -591,7 +591,7 @@ check_installation_integrity() {
         log_error "Installation directory is incomplete or corrupted"
         return 1
     fi
-    
+
     # 检查必要的目录是否存在
     local required_dirs=("bin" "python" "lib64")
     for dir in "${required_dirs[@]}"; do
@@ -600,7 +600,7 @@ check_installation_integrity() {
             return 1
         fi
     done
-    
+
     return 0
 }
 
@@ -612,7 +612,7 @@ confirm_uninstall() {
     echo "Installation directory: $INSTALL_DIR"
     echo "Version: $(grep 'version:' $INSTALL_DIR/version.txt 2>/dev/null | cut -d' ' -f2 || echo 'Unknown')"
     echo ""
-    
+
     # 显示警告信息
     echo -e "${YELLOW}Warning: This operation will permanently delete ALL files and subdirectories${NC}"
     echo -e "${YELLOW}within the installation directory, including any user-created content!${NC}"
@@ -620,7 +620,7 @@ confirm_uninstall() {
     echo -e "${RED}The following directory and ALL its contents will be deleted:${NC}"
     echo -e "${RED}  $INSTALL_DIR${NC}"
     echo ""
-    
+
     read -p "Are you sure you want to uninstall? (y/N): " confirm
     case "$confirm" in
         [yY]|[yY][eE][sS])
@@ -636,7 +636,7 @@ confirm_uninstall() {
 # 检查是否有进程正在使用安装目录
 check_running_processes() {
     log_info "Checking for processes using the installation directory..."
-    
+
     # 使用lsof检查是否有进程在使用安装目录
     if command -v lsof >/dev/null 2>&1; then
         if lsof +D "$INSTALL_DIR" 2>/dev/null | grep -q "."; then
@@ -645,7 +645,7 @@ check_running_processes() {
             return 1
         fi
     fi
-    
+
     # 使用fuser作为备选检查方法
     if command -v fuser >/dev/null 2>&1; then
         if fuser "$INSTALL_DIR" 2>/dev/null; then
@@ -653,13 +653,13 @@ check_running_processes() {
             return 1
         fi
     fi
-    
+
     return 0
 }
 
 cleanup_environment_variables() {
     local install_dir="$INSTALL_DIR"
-    
+
     # 清理 PYTHONPATH
     if [ -n "$PYTHONPATH" ]; then
         local new_pythonpath=""
@@ -674,7 +674,7 @@ cleanup_environment_variables() {
                 fi
             fi
         done
-        
+
         if [ -z "$new_pythonpath" ]; then
             unset PYTHONPATH
             log_info "PYTHONPATH unset"
@@ -683,7 +683,7 @@ cleanup_environment_variables() {
             log_info "PYTHONPATH cleaned"
         fi
     fi
-    
+
     # 清理 PATH
     if [ -n "$PATH" ]; then
         local new_path=""
@@ -698,18 +698,18 @@ cleanup_environment_variables() {
                 fi
             fi
         done
-        
+
         export PATH="$new_path"
         log_info "PATH cleaned"
     fi
-    
+
     log_info "Environment variables cleanup completed"
 }
 
 # 执行卸载操作
 perform_uninstall() {
     log_info "Starting uninstallation..."
-    
+
     # 检查是否有进程在使用
     if ! check_running_processes; then
         log_warn "Processes are using the installation directory"
@@ -732,7 +732,7 @@ perform_uninstall() {
     # 删除安装目录
     log_info "Removing installation directory: $INSTALL_DIR"
     rm -rf "$INSTALL_DIR"
-    
+
     log_info "Uninstallation completed successfully"
 }
 
@@ -741,16 +741,16 @@ main() {
     echo "=============================================="
     echo "          msmemscope Uninstaller"
     echo "=============================================="
-    
+
     # 检查安装完整性
     if ! check_installation_integrity; then
         log_error "Installation directory is incomplete, manual cleanup may be required"
         exit 1
     fi
-    
+
     # 确认卸载
     confirm_uninstall
-    
+
     # 执行卸载
     perform_uninstall
 }
@@ -766,10 +766,10 @@ UNINSTALL_EOF
 show_installation_info() {
     local install_path="$1"
     local is_upgrade="$2"
-    
+
     # 规范化路径，移除多余的 ./ 和 ../
     local normalized_path=$(cd "$install_path" && pwd)
-    
+
     local action="${is_upgrade:-Installation}"
     echo ""
     echo "=============================================="
@@ -783,7 +783,7 @@ show_installation_info() {
     echo "Environment setup:"
     echo "  To set up environment variables, run: source $normalized_path/msmemscope/set_env.sh"
     echo ""
-    
+
     # 如果是升级操作，显示升级成功信息
     if [ -n "$is_upgrade" ]; then
         log_info "Upgrade completed successfully"
@@ -796,7 +796,7 @@ show_installation_info() {
 install_main() {
     local install_path=""
     local is_upgrade=false
-    
+
     # 解析命令行参数
     while [[ $# -gt 0 ]]; do
         case $1 in
@@ -814,34 +814,66 @@ install_main() {
                 ;;
         esac
     done
-    
+
     log_info "Starting installation to: $install_path"
-    
-    # 设置默认安装路径时，如果是相对路径就转换为绝对路径
+
+    # 设置默认安装路径：检查Ascend环境变量，提示用户选择安装位置
     if [ -z "$install_path" ]; then
-        install_path="$DEFAULT_INSTALL_PATH"
-        # 将相对路径转换为绝对路径，并去除末尾的斜杠
-        if [[ "$install_path" != /* ]]; then
-            install_path="$(pwd)/$install_path"
+        # 检查ASCEND相关环境变量
+        local ascend_home=""
+        if [ -n "$ASCEND_TOOLKIT_HOME" ]; then
+            ascend_home="$ASCEND_TOOLKIT_HOME"
+        elif [ -n "$ASCEND_HOME_PATH" ]; then
+            ascend_home="$ASCEND_HOME_PATH"
         fi
-        # 规范化路径，移除多余的 ./ 和 ../
-        install_path=$(cd "$install_path" && pwd)
-        log_info "Using installation path: $install_path"
+
+        if [ -n "$ascend_home" ]; then
+            local suggested_path="$ascend_home/tools"
+            echo ""
+            echo "Detected Ascend environment: $ascend_home"
+            read -p "Install to $suggested_path? (Y/n): " confirm
+            case "$confirm" in
+                [yY]|[yY][eE][sS]|"")
+                    install_path="$suggested_path"
+                    log_info "Will install to: $install_path"
+                    # 若目标目录下已有msmemscope子目录，自动启用升级模式
+                    if [ -d "$install_path/msmemscope" ] && [ -f "$install_path/msmemscope/version.txt" ]; then
+                        log_info "Existing installation detected at $install_path/msmemscope, auto-enabling upgrade mode"
+                        is_upgrade=true
+                    fi
+                    ;;
+                *)
+                    log_info "User chose not to install to $suggested_path"
+                    ;;
+            esac
+        fi
+
+        # 若用户未选择Ascend路径，或环境变量不存在，则使用当前目录
+        if [ -z "$install_path" ]; then
+            install_path="$DEFAULT_INSTALL_PATH"
+            # 将相对路径转换为绝对路径，并去除末尾的斜杠
+            if [[ "$install_path" != /* ]]; then
+                install_path="$(pwd)/$install_path"
+            fi
+            # 规范化路径，移除多余的 ./ 和 ../
+            install_path=$(cd "$install_path" && pwd)
+            log_info "Using installation path: $install_path"
+        fi
     fi
-    
+
     # 验证安装路径
     validate_install_path "$install_path" || exit 1
-    
+
     # 检查是否存在cann_uninstall.sh文件，如果存在则在安装路径后添加/tools
     if [ -f "$install_path/cann_uninstall.sh" ]; then
         log_info "Found cann_uninstall.sh at $install_path, appending '/tools' to installation path"
         install_path="$install_path/tools"
         log_info "Updated installation path: $install_path"
     fi
-    
+
     # 检查磁盘空间
     check_disk_space "$install_path" || exit 1
-    
+
     # 检查安装状态
     if [ -d "$install_path/msmemscope" ] && [ -f "$install_path/msmemscope/version.txt" ]; then
         if [ "$is_upgrade" = true ]; then
@@ -865,7 +897,7 @@ install_main() {
         # 全新安装
         log_info "Starting fresh installation..."
     fi
-    
+
     # 执行安装操作
     perform_installation "$install_path" "$([ "$is_upgrade" = true ] && echo "Upgrading")"
     create_uninstall_script "$install_path"
@@ -875,7 +907,7 @@ install_main() {
 # 升级模式的主函数
 upgrade_main() {
     local install_path=""
-    
+
     # 解析参数
     while [[ $# -gt 0 ]]; do
         case $1 in
@@ -889,20 +921,20 @@ upgrade_main() {
                 ;;
         esac
     done
-    
+
     # 检查必须参数
     if [ -z "$install_path" ]; then
         log_error "Upgrade requires --install-path parameter"
         echo "Usage: $0 --upgrade --install-path=<path>"
         exit 1
     fi
-    
+
     # 检查目标目录是否存在
     if [ ! -d "$install_path" ]; then
         log_error "Target installation directory does not exist: $install_path"
         exit 1
     fi
-    
+
     # 验证目标目录是否是有效的安装
     if [ ! -f "$install_path/msmemscope/version.txt" ]; then
         log_error "Target directory is not a valid $TOOL_NAME installation."
@@ -910,7 +942,7 @@ upgrade_main() {
         log_error "Please check the installation path and ensure you're pointing to an existing MSMemScope installation."
         exit 1
     fi
-    
+
     log_info "Starting upgrade for: $install_path"
     # 调用安装主函数，并设置升级标志
     install_main --install-path="$install_path" --upgrade
@@ -921,7 +953,7 @@ show_version() {
     echo "=============================================="
     echo "           $TOOL_NAME Version Info"
     echo "=============================================="
-    
+
     # 检查是否在run文件内部（安装前）
     if [ -f "version.txt" ]; then
         # 在构建目录中
@@ -965,7 +997,7 @@ show_help() {
 # 卸载模式的主函数
 uninstall_main() {
     local install_path=""
-    
+
     # 解析参数
     while [[ $# -gt 0 ]]; do
         case $1 in
@@ -979,26 +1011,26 @@ uninstall_main() {
                 ;;
         esac
     done
-    
+
     # 检查必须参数
     if [ -z "$install_path" ]; then
         log_error "Uninstall requires --install-path parameter"
         echo "Usage: $0 --uninstall --install-path=<path>"
         exit 1
     fi
-    
+
     # 如果install-path目录下存在cann_uninstall.sh，说明传入的是CANN根目录，需要追加tools子目录
     if [ -f "$install_path/cann_uninstall.sh" ]; then
         log_info "Detected CANN root directory, appending 'tools' to install path"
         install_path="$install_path/tools"
     fi
-    
+
     # 检查目标目录是否存在
     if [ ! -d "$install_path" ]; then
         log_error "Target installation directory does not exist: $install_path"
         exit 1
     fi
-    
+
     # 验证目标目录是否是有效的安装
     local uninstall_script="$install_path/msmemscope/uninstall.sh"
     if [ ! -f "$uninstall_script" ]; then
@@ -1007,12 +1039,12 @@ uninstall_main() {
         log_error "Please check the installation path and ensure you're pointing to an existing MSMemScope installation."
         exit 1
     fi
-    
+
     log_info "Starting uninstallation for: $install_path"
-    
+
     # 直接调用已安装软件包中的uninstall.sh，并自动输入多个y确认（支持多次确认提示）
     echo -e "y\ny" | bash "$uninstall_script"
-    
+
     # 删除cann_uninstall.sh中的注册信息
     local cann_uninstall_path="$install_path/cann_uninstall.sh"
     if [ -f "$cann_uninstall_path" ]; then
@@ -1020,7 +1052,7 @@ uninstall_main() {
         sed -i "/uninstall_package \"share\/info\/msmemscope\"/d" "$cann_uninstall_path"
         log_info "Uninstall registration removed from cann_uninstall.sh"
     fi
-    
+
     # 删除share/info/msmemscope目录
     local share_info_dir="$install_path/share/info/msmemscope"
     if [ -d "$share_info_dir" ]; then
@@ -1028,9 +1060,9 @@ uninstall_main() {
         rm -rf "$share_info_dir"
         log_info "share/info/msmemscope directory removed"
     fi
-    
+
     log_info "Uninstallation completed successfully"
-    
+
     # 检查卸载是否成功
     if [ $? -eq 0 ]; then
         log_info "Uninstallation completed successfully"
@@ -1047,7 +1079,7 @@ main() {
         show_help
         exit 0
     fi
-    
+
     case "$1" in
         --install)
             shift
@@ -1087,21 +1119,21 @@ EOF
 # 创建最终的run文件
 create_run_file() {
     log_info "Creating run file: $RUN_FILE"
-    
+
     # 复制安装脚本到run文件
     cp "$TEMP_DIR/install.sh" "$BUILD_DIR/$RUN_FILE"
-    
+
     # 替换版本号占位符为实际版本号
     sed -i "s/VERSION_PLACEHOLDER/$VERSION/g" "$BUILD_DIR/$RUN_FILE"
-    
+
     # 打包payload并追加到run文件
     log_info "Packaging payload..."
     cd "$TEMP_DIR/payload"
     tar -cz . >> "$BUILD_DIR/$RUN_FILE"  # 使用.而不是*避免隐藏文件被忽略
     cd - > /dev/null
-    
+
     chmod 740 "$BUILD_DIR/$RUN_FILE"
-    
+
     # 验证run文件是否创建成功
     if [ -f "$BUILD_DIR/$RUN_FILE" ] && [ -x "$BUILD_DIR/$RUN_FILE" ]; then
         log_info "Run file created successfully: $BUILD_DIR/$RUN_FILE"
@@ -1123,7 +1155,7 @@ cleanup() {
 show_build_info() {
     local run_file_size=$(du -h "$RUN_FILE" | cut -f1)
     local run_file_path="$BUILD_DIR/$RUN_FILE"
-    
+
     # 从version.txt获取版本信息
     local version_info=""
     local integrity_info=""
@@ -1131,7 +1163,7 @@ show_build_info() {
         version_info=$(grep "version:" "$TEMP_DIR/payload/msmemscope/version.txt" | cut -d' ' -f2)
         integrity_info=$(grep "integrity_check:" "$TEMP_DIR/payload/msmemscope/version.txt" | cut -d' ' -f2)
     fi
-    
+
     echo ""
     echo "=============================================="
     echo "           $TOOL_NAME Run Package Built"
@@ -1160,7 +1192,7 @@ main() {
     if [ -n "$BUILD_VERSION" ]; then
         VERSION="$BUILD_VERSION"
     fi
-    
+
     # 解析命令行参数
     while [[ $# -gt 0 ]]; do
         case $1 in
@@ -1182,36 +1214,36 @@ main() {
                 ;;
         esac
     done
-    
+
     # 更新 RUN_FILE
     RUN_FILE="mindstudio-memscope_${VERSION}_${ARCH}.run"
-    
+
     log_info "Starting build process for $RUN_FILE ..."
-    
+
     # 检查源目录
     if ! check_source_dirs; then
         log_error "Source directory check failed, build aborted"
         exit 1
     fi
-    
+
     # 创建临时目录
     create_temp_dir
-    
+
     # 设置退出时清理临时目录
     trap cleanup EXIT
-    
+
     # 复制交付件
     copy_artifacts
-    
+
     # 创建安装脚本
     create_install_script
-    
+
     # 创建run文件
     if ! create_run_file; then
         log_error "Failed to create run file"
         exit 1
     fi
-    
+
     # 显示构建完成信息
     show_build_info
 }

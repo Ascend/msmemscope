@@ -4,11 +4,11 @@
 
 This document describes msMemScope installation methods, including:
 
-- **Using the CANN package**: The complete functions of msMemScope are integrated into the CANN package. You can directly install the CANN package by referring to [CANN Quick Installation](<>).
+- **Using the CANN package**: The complete functions of msMemScope are integrated into the CANN package. You can directly install the CANN package by referring to [CANN Quick Installation](https://www.hiascend.com/cann/download).
 
 - **Using the RUN package**: The complete functions of msMemScope are integrated into the CANN package and depend on CANN. Therefore, you need to install the CANN package before using msMemScope. To upgrade msMemScope to the latest version, you can compile the latest msMemScope RUN package using the source code to overwrite the existing package. For details, see [Method 2: Obtain the latest RUN package](#method-2-obtain-the-latest-run-package).
 
-> [!NOTE]Note 
+> [!NOTE]Note
 > If a version earlier than CANN 8.5.0 is installed, install the CANN Toolkit as described in the training, inference, and development & debugging scenarios. If CANN 8.5.0 or a later version is installed, install the CANN Toolkit and OPS. Make preparations according to documents with specific version requirements.
 
 ## Installation via RUN Package
@@ -18,7 +18,7 @@ msMemScope can be used on Linux. Currently, you can obtain its RUN package in ei
 1. Stable version: Download the RUN package from the releases page.
 2. Latest version: Compile and build the RUN package from the source code.
 
-> [!NOTE]Note 
+> [!NOTE]Note
 > The RUN package can be used only after it is installed in an environment where CANN has been installed.
 
 ### Method 1: Obtain the Stable Version of the RUN Package
@@ -108,7 +108,7 @@ sudo yum install -y python3 git gcc gcc-c++ make cmake
    ```bash
    [INFO] Run file created successfully: xx/mindstudio-memscope_<version>_linux-<arch>.run
    Usage instructions:
-     Install: bash mindstudio-memscope_<version>_linux-<arch>.run --install --install-path=/path
+     Install: bash mindstudio-memscope_<version>_linux-<arch>.run --install [--install-path=/path]
      Upgrade: bash mindstudio-memscope_<version>_linux-<arch>.run --upgrade --install-path=/path
      Version: bash mindstudio-memscope_<version>_linux-<arch>.run --version
      Help:    bash mindstudio-memscope_<version>_linux-<arch>.run --help
@@ -131,7 +131,10 @@ sudo yum install -y python3 git gcc gcc-c++ make cmake
    bash mindstudio-memscope_<version>_linux-<arch>.run --install --install-path=<path>
    ```
 
-   Note: `path` indicates the installation directory.
+   Note: `path` indicates the installation directory. If `--install-path` is not specified, the tool will automatically detect the `ASCEND_TOOLKIT_HOME` or `ASCEND_HOME_PATH` environment variable:
+
+   - If either environment variable exists, you will be prompted to confirm whether to install to `$ASCEND_TOOLKIT_HOME/tools` (preferred) or `$ASCEND_HOME_PATH/tools`. If the msmemscope subdirectory already exists in that directory, upgrade mode will be automatically enabled.
+   - If neither environment variable exists, or you choose not to install to the suggested path, the tool will install to the current directory by default.
 
    Install msMemScope in the `path` directory. After the installation is successful, the following information is displayed:
 
@@ -222,7 +225,7 @@ Installation command syntax: `./mindstudio-memscope_<version>_linux-<arch>.run [
 
 For details, see [Table 1](#cli-args-table).
 
-  > [!NOTE]Note 
+  > [!NOTE]Note
   > If options queried by running the `./mindstudio-memscope_\<version>_linux-{arch}.run --help` command are not in the following table, they are reserved or apply to other products. You do not need to pay attention to them.
 
 **Table 1** Options
@@ -246,7 +249,7 @@ For details, see [Table 1](#cli-args-table).
   </tr>
   <tr>
     <td>--install</td>
-    <td>Installs the package. You can specify the installation path (--install-path=path) or use the default installation path.</td>
+    <td>Installs the package. You can specify the installation path (--install-path=path) or omit it. If omitted, the tool will automatically detect the ASCEND_TOOLKIT_HOME or ASCEND_HOME_PATH environment variable and prompt you to confirm the installation location; if neither exists, it installs to the current directory.</td>
   </tr>
   <tr>
     <td>--upgrade</td>
@@ -254,7 +257,7 @@ For details, see [Table 1](#cli-args-table).
   </tr>
   <tr>
     <td>--install-path</td>
-    <td>Specifies the installation path. This option must be used together with --install and --upgrade.</td>
+    <td>Specifies the installation path (optional for installation, required for upgrade). This option must be used together with --install and --upgrade. If not specified during installation, the tool will automatically detect Ascend environment variables to determine the installation location.</td>
   </tr>
 </tbody>
 </table>

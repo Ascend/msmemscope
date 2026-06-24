@@ -75,7 +75,7 @@ sudo yum install -y python3 git gcc gcc-c++ make cmake
    ```bash
    [INFO] Run file created successfully: xx/mindstudio-memscope_<version>_linux-<arch>.run
    Usage instructions:
-     Install: bash mindstudio-memscope_<version>_linux-<arch>.run --install --install-path=/path
+     Install: bash mindstudio-memscope_<version>_linux-<arch>.run --install [--install-path=/path]
      Upgrade: bash mindstudio-memscope_<version>_linux-<arch>.run --upgrade --install-path=/path
      Version: bash mindstudio-memscope_<version>_linux-<arch>.run --version
      Help:    bash mindstudio-memscope_<version>_linux-<arch>.run --help
@@ -98,7 +98,10 @@ sudo yum install -y python3 git gcc gcc-c++ make cmake
    bash mindstudio-memscope_<version>_linux-<arch>.run --install --install-path=<path>
    ```
 
-   注：其中`path`为安装目录。
+   注：其中`path`为安装目录。若未指定`--install-path`参数，工具将自动检测环境变量`ASCEND_TOOLKIT_HOME`或`ASCEND_HOME_PATH`：
+
+   - 若存在上述任一环境变量，将提示用户确认是否安装至`$ASCEND_TOOLKIT_HOME/tools`（优先）或`$ASCEND_HOME_PATH/tools`目录。若该目录下已存在msmemscope子目录，将自动启用升级模式。
+   - 若不存在上述环境变量，或用户选择不安装至推荐路径，则默认安装至当前目录。
 
    将msMemScope安装在`path`目录下，安装成功后，打印以下信息。
 
@@ -213,7 +216,7 @@ msmemscope environment setup completed
   </tr>
   <tr>
     <td>--install</td>
-    <td>安装软件包。后面可以指定安装路径--install-path=&lt;path&gt;，也可以不指定安装路径，直接安装到默认路径下。</td>
+    <td>安装软件包。后面可以指定安装路径--install-path=&lt;path&gt;，也可以不指定安装路径。若不指定，工具将自动检测环境变量ASCEND_TOOLKIT_HOME或ASCEND_HOME_PATH，并提示用户确认安装位置；若均不存在则安装至当前目录。</td>
   </tr>
   <tr>
     <td>--upgrade</td>
@@ -221,7 +224,7 @@ msmemscope environment setup completed
   </tr>
   <tr>
     <td>--install-path</td>
-    <td>指定安装路径，需配合安装--install、升级--upgrade参数使用。</td>
+    <td>指定安装路径（可选），需配合安装--install、升级--upgrade参数使用。若不指定，安装时工具将自动检测Ascend环境变量确定安装位置，升级时必须指定。</td>
   </tr>
 </tbody>
 </table>
