@@ -19,9 +19,16 @@
 #define DRIVER_PROF_API_H
 
 #include <cstdint>
+#include <string>
 #include "vallina_symbol.h"
 namespace MemScope {
 
+enum class DeviceSocType {
+    SOC_A2_A3,  // default / unknown
+    SOC_A5,     // 950-series
+    SOC_A6,     // 960-series
+};
+DeviceSocType GetDeviceSocType();
 
 constexpr uint64_t MAX_BUFFER_SIZE = 1024 * 1024 * 2;
 constexpr uint32_t SECTONSEC = 1000000000UL;
@@ -43,6 +50,8 @@ typedef struct TagStarsSocLogConfig {
     uint32_t ffts_thread_task;  // 1-enable,2-disable
     uint32_t ffts_block;        // 1-enable,2-disable
     uint32_t sdma_dmu;          // 1-enable,2-disable
+    uint32_t tag;               // A5/A6 only bit==0-enable immediately, bit0==1-enable delay
+    uint32_t block_shrink_flag; // A5/A6 only 1-enable,2-disable
 } StarsSocLogConfigT;
 
 typedef enum TAG_TS_PROFILE_COMMAND_TYPE {
@@ -76,8 +85,13 @@ struct StarsSocLog {
     uint32_t cnt : 4;
     uint32_t sqeType : 6;
     uint32_t magic : 16;
-    uint32_t streamId : 16;
-    uint32_t taskId : 16;
+    union {
+        struct {
+            uint32_t streamId : 16;
+            uint32_t taskId : 16;
+        };
+        uint32_t mergedTaskId;  // A5/A6: streamId + taskId merged into one 32-bit field
+    };
     uint32_t sysCntL : 32;
     uint32_t sysCntH : 32;
     uint32_t res0 : 16;
@@ -85,6 +99,7 @@ struct StarsSocLog {
     uint32_t acsqId : 10;
     uint32_t res1[11];
 };
+
 struct DevTimeInfo {
     uint64_t freq;
     uint64_t startRealTime;

@@ -38,7 +38,7 @@ void KernelEventTrace::KernelLaunch(const AclnnKernelMapInfo &kernelLaunchInfo)
     return;
 }
 
-void KernelEventTrace::KernelStartExcute(const TaskKey& key, uint64_t time)
+void KernelEventTrace::KernelStartExcute(TaskKey& key, uint64_t time)
 {
     auto kernelName = RuntimeKernelLinker::GetInstance().GetKernelName(key, RecordSubType::KERNEL_START);
     if (!kernelName.empty()) {
@@ -53,7 +53,7 @@ void KernelEventTrace::KernelStartExcute(const TaskKey& key, uint64_t time)
     return;
 }
 
-void KernelEventTrace::KernelEndExcute(const TaskKey& key, uint64_t time)
+void KernelEventTrace::KernelEndExcute(TaskKey& key, uint64_t time)
 {
     auto kernelName = RuntimeKernelLinker::GetInstance().GetKernelName(key, RecordSubType::KERNEL_END);
     if (!kernelName.empty()) {
@@ -74,10 +74,21 @@ static void ReportStarsSocLog(uint32_t deviceId, const StarsSocLog* socLog)
         return;
     }
     constexpr int32_t bitOffset = 32;
-    uint16_t streamId = StarsCommon::GetStreamId(static_cast<uint16_t>(socLog->streamId), static_cast<uint16_t>(socLog->taskId),
-                                                 static_cast<uint16_t>(socLog->sqeType));
-    uint16_t taskId = StarsCommon::GetTaskId(static_cast<uint16_t>(socLog->streamId), static_cast<uint16_t>(socLog->taskId),
-                                             static_cast<uint16_t>(socLog->sqeType));
+    DeviceSocType socType = GetDeviceSocType();
+    bool isNewSoc = (socType == DeviceSocType::SOC_A5 || socType == DeviceSocType::SOC_A6);
+
+    uint16_t streamId;
+    uint16_t taskId;
+    if (isNewSoc) {
+        // A5/A6: use mergedTaskId from union, streamId is 0 in the key
+        streamId = 0;
+        taskId = static_cast<uint16_t>(socLog->mergedTaskId);
+    } else {
+        streamId = StarsCommon::GetStreamId(static_cast<uint16_t>(socLog->streamId), static_cast<uint16_t>(socLog->taskId),
+                                            static_cast<uint16_t>(socLog->sqeType));
+        taskId = StarsCommon::GetTaskId(static_cast<uint16_t>(socLog->streamId), static_cast<uint16_t>(socLog->taskId),
+                                        static_cast<uint16_t>(socLog->sqeType));
+    }
     auto taskKey = std::make_tuple(static_cast<uint16_t>(deviceId), streamId, taskId);
     if (socLog->funcType == STARS_FUNC_TYPE_BEGIN) {
         auto start = static_cast<uint64_t>(socLog->sysCntH) << bitOffset | socLog->sysCntL;
@@ -151,6 +162,7 @@ void KernelEventTrace::CreateReadDataChannel(uint32_t devId)
 
 void KernelEventTrace::StartKernelEventTrace()
 {
+    GetDeviceSocType(); // trigger SoC type detection early
     int32_t devId = GD_INVALID_NUM;
     if (!GetDeviceInfo::Instance().GetDeviceId(devId) || devId == GD_INVALID_NUM) {
         LOG_ERROR("get device id failed");
@@ -225,13 +237,37 @@ void RuntimeKernelLinker::KernelLaunch()
     return;
 }
 
-std::string RuntimeKernelLinker::GetKernelName(const TaskKey& key, RecordSubType type)
+std::string RuntimeKernelLinker::GetKernelName(TaskKey& key, RecordSubType type)
 {
     std::lock_guard<std::mutex> lock(mutex_);
-    for (auto &pair : kernelNameMp_) {
-        auto& vec = pair.second;
-        for (auto it = vec.begin(); it != vec.end(); ++it) {
-            if (it->taskKey == key) {
+    DeviceSocType socType = GetDeviceSocType();
+    bool isNewSoc = (socType == DeviceSocType::SOC_A5 || socType == DeviceSocType::SOC_A6);
+
+    if (isNewSoc) {
+        // A5/A6: only compare deviceId and taskId (streamId is always 0 in key)
+        for (auto &pair : kernelNameMp_) {
+            auto& vec = pair.second;
+            for (auto it = vec.begin(); it != vec.end(); ++it) {
+                if (std::get<0>(it->taskKey) != std::get<0>(key) ||
+                    std::get<2>(it->taskKey) != std::get<2>(key)) {
+                    continue;
+                }
+                std::string name = it->kernelName;
+                // backfill streamId into key for subsequent data reporting
+                std::get<1>(key) = std::get<1>(it->taskKey);
+                if (type == RecordSubType::KERNEL_END) {
+                    vec.erase(it); // 使用完删除
+                }
+                return name;
+            }
+        }
+    } else {
+        for (auto &pair : kernelNameMp_) {
+            auto& vec = pair.second;
+            for (auto it = vec.begin(); it != vec.end(); ++it) {
+                if (it->taskKey != key) {
+                    continue;
+                }
                 std::string name = it->kernelName;
                 if (type == RecordSubType::KERNEL_END) {
                     vec.erase(it); // 使用完删除

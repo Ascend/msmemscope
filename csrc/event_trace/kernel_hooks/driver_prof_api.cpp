@@ -21,8 +21,37 @@
 #include "runtime_prof_api.h"
 #include "kernel_event_trace.h"
 #include "ascend_hal.h"
+#include <mutex>
 
 namespace MemScope {
+
+static DeviceSocType g_deviceSocType = DeviceSocType::SOC_A2_A3;
+static std::once_flag g_socDetectFlag;
+
+static void DetectSocType()
+{
+    using AclrtGetSocNameFunc = const char*(*)();
+    auto func = reinterpret_cast<AclrtGetSocNameFunc>(GetSymbol("aclrtGetSocName"));
+    if (func == nullptr) {
+        return; // keep default A2/A3
+    }
+    const char* name = func();
+    if (name == nullptr) {
+        return;
+    }
+    std::string socName(name);
+    if (socName.find("950") != std::string::npos) {
+        g_deviceSocType = DeviceSocType::SOC_A5;
+    } else if (socName.find("960") != std::string::npos) {
+        g_deviceSocType = DeviceSocType::SOC_A6;
+    }
+}
+
+DeviceSocType GetDeviceSocType()
+{
+    std::call_once(g_socDetectFlag, DetectSocType);
+    return g_deviceSocType;
+}
 
 static tagDrvError HalGetDeviceInfo(uint32_t deviceId, int32_t moduleType, int32_t infoType, int64_t* value)
 {
@@ -137,7 +166,13 @@ void StartDriverKernelInfoTrace(int32_t devId)
     profStartPara.samplePeriod = SAMPLE_PERIOD;
     profStartPara.realTime = 1;
     profStartPara.userData = &configP;
-    profStartPara.userDataSize = static_cast<unsigned int>(sizeof(StarsSocLogConfigT));
+    DeviceSocType socType = GetDeviceSocType();
+    if (socType == DeviceSocType::SOC_A5 || socType == DeviceSocType::SOC_A6) {
+        profStartPara.userDataSize = static_cast<unsigned int>(sizeof(StarsSocLogConfigT));
+    } else {
+        // A2/A3: exclude tag and block_shrink_flag fields
+        profStartPara.userDataSize = static_cast<unsigned int>(sizeof(StarsSocLogConfigT) - 2 * sizeof(uint32_t));
+    }
 
     using DriverProfStartFunc = int(*)(unsigned int, unsigned int, struct ProfStartPara*);
     static auto vallina = reinterpret_cast<DriverProfStartFunc>(GetSymbol("prof_drv_start"));

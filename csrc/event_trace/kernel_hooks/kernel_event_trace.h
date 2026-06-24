@@ -50,8 +50,8 @@ public:
     }
 
     void KernelLaunch(const AclnnKernelMapInfo &kernelLaunchInfo); // kernel下发
-    void KernelStartExcute(const TaskKey& key, uint64_t time); // kernel开始执行
-    void KernelEndExcute(const TaskKey& key, uint64_t time); // kernel结束执行
+    void KernelStartExcute(TaskKey& key, uint64_t time); // kernel开始执行
+    void KernelEndExcute(TaskKey& key, uint64_t time); // kernel结束执行
 
     void StartKernelEventTrace();
     void EndKernelEventTrace() const;
@@ -82,7 +82,7 @@ public:
     void KernelLaunch();
     void SetHashInfo(uint64_t hashId, const std::string &hashInfo);
     std::string GetHashInfo(uint64_t hashId);
-    std::string GetKernelName(const TaskKey& key, RecordSubType type);
+    std::string GetKernelName(TaskKey& key, RecordSubType type);
     std::string GetLastKernelName(uint64_t tid);
 private:
     RuntimeKernelLinker() = default;
