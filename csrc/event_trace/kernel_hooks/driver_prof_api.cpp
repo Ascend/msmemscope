@@ -16,19 +16,57 @@
  */
 
 #include "driver_prof_api.h"
-#include "securec.h"
-#include "event_report.h"
-#include "runtime_prof_api.h"
-#include "kernel_event_trace.h"
-#include "ascend_hal.h"
 
-namespace MemScope {
+#include <mutex>
+
+#include "ascend_hal.h"
+#include "event_report.h"
+#include "kernel_event_trace.h"
+#include "runtime_prof_api.h"
+#include "securec.h"
+
+namespace MemScope
+{
+
+static DeviceSocType g_deviceSocType = DeviceSocType::SOC_A2_A3;
+static std::once_flag g_socDetectFlag;
+
+static void DetectSocType()
+{
+    using AclrtGetSocNameFunc = const char* (*)();
+    auto func = reinterpret_cast<AclrtGetSocNameFunc>(GetSymbol("aclrtGetSocName"));
+    if (func == nullptr)
+    {
+        return;  // keep default A2/A3
+    }
+    const char* name = func();
+    if (name == nullptr)
+    {
+        return;
+    }
+    std::string socName(name);
+    if (socName.find("950") != std::string::npos)
+    {
+        g_deviceSocType = DeviceSocType::SOC_A5;
+    }
+    else if (socName.find("960") != std::string::npos)
+    {
+        g_deviceSocType = DeviceSocType::SOC_A6;
+    }
+}
+
+DeviceSocType GetDeviceSocType()
+{
+    std::call_once(g_socDetectFlag, DetectSocType);
+    return g_deviceSocType;
+}
 
 static tagDrvError HalGetDeviceInfo(uint32_t deviceId, int32_t moduleType, int32_t infoType, int64_t* value)
 {
-    using HalGetDeviceInfoFunc = tagDrvError(*)(uint32_t, int32_t, int32_t, int64_t*);
+    using HalGetDeviceInfoFunc = tagDrvError (*)(uint32_t, int32_t, int32_t, int64_t*);
     static auto vallina = reinterpret_cast<HalGetDeviceInfoFunc>(GetSymbol("halGetDeviceInfo"));
-    if (vallina == nullptr) {
+    if (vallina == nullptr)
+    {
         LOG_ERROR("halGetDeviceInfo api get failed");
         return DRV_ERROR_NOT_SUPPORT;
     }
@@ -47,12 +85,14 @@ static int64_t GetDrvVersion(uint32_t deviceId)
 static PlatformType GetChipTypeImpl(uint32_t deviceId)
 {
     int64_t versionInfo = GetDrvVersion(deviceId);
-    if (versionInfo < 0) {
+    if (versionInfo < 0)
+    {
         LOG_ERROR("Call GetDrvVersion failed");
         return PlatformType::END_TYPE;
     }
     uint32_t chipId = ((static_cast<uint64_t>(versionInfo) >> 8) & 0xff);
-    if (chipId >= static_cast<uint32_t>(PlatformType::END_TYPE)) {
+    if (chipId >= static_cast<uint32_t>(PlatformType::END_TYPE))
+    {
         LOG_ERROR("Get Chip Type failed");
         return PlatformType::END_TYPE;
     }
@@ -68,7 +108,8 @@ static uint64_t GetDevFreq(uint32_t device)
     };
     int64_t freq = 0;
     tagDrvError ret = HalGetDeviceInfo(device, DRV_MODULE_TYPE_SYSTEM, DRV_INFO_TYPE_DEV_OSC_FREQUE, &freq);
-    if (ret != DRV_ERROR_NONE) {
+    if (ret != DRV_ERROR_NONE)
+    {
         auto platform = GetChipTypeImpl(device);
         auto iter = FREQ_MAP.find(platform);
         uint64_t defaultFreq = (iter == FREQ_MAP.end()) ? freqDefault : iter->second;
@@ -80,7 +121,8 @@ static uint64_t GetDevFreq(uint32_t device)
 static uint64_t GetClockRealTimeNs()
 {
     struct timespec ts;
-    if (memset_s(&ts, sizeof(timespec), 0, sizeof(timespec)) != EOK) {
+    if (memset_s(&ts, sizeof(timespec), 0, sizeof(timespec)) != EOK)
+    {
         return 0;
     }
     clock_gettime(CLOCK_REALTIME, &ts);
@@ -95,7 +137,7 @@ static uint64_t GetDevStartSysCnt(uint32_t device)
     return (ret == DRV_ERROR_NONE) ? static_cast<uint64_t>(syscnt) : errorSystemCnt;
 }
 
-DevTimeInfo g_devTimeInfo = { };
+DevTimeInfo g_devTimeInfo = {};
 
 static void InitDevTimeInfo(uint32_t deviceId)
 {
@@ -111,12 +153,13 @@ static void InitDevTimeInfo(uint32_t deviceId)
 
 uint64_t GetRealTimeFromSysCnt(uint32_t deviceId, uint64_t sysCnt)
 {
-    if (g_devTimeInfo.freq == 0) {
+    if (g_devTimeInfo.freq == 0)
+    {
         LOG_ERROR("g_devTimeInfo.freq is 0, please check!");
         return 0;
     }
-    uint64_t realTime = MSTONS * (sysCnt - g_devTimeInfo.startSysCnt) / g_devTimeInfo.freq +
-        g_devTimeInfo.startRealTime;
+    uint64_t realTime =
+        MSTONS * (sysCnt - g_devTimeInfo.startSysCnt) / g_devTimeInfo.freq + g_devTimeInfo.startRealTime;
     return realTime;
 }
 
@@ -125,7 +168,8 @@ void StartDriverKernelInfoTrace(int32_t devId)
     InitDevTimeInfo(devId);
     SetProfCommand(devId);
     StarsSocLogConfigT configP;
-    if (memset_s(&configP, sizeof(StarsSocLogConfigT), 0, sizeof(StarsSocLogConfigT)) != EOK) {
+    if (memset_s(&configP, sizeof(StarsSocLogConfigT), 0, sizeof(StarsSocLogConfigT)) != EOK)
+    {
         LOG_ERROR("memset StarsSocLogConfigT failed");
         return;
     }
@@ -137,16 +181,27 @@ void StartDriverKernelInfoTrace(int32_t devId)
     profStartPara.samplePeriod = SAMPLE_PERIOD;
     profStartPara.realTime = 1;
     profStartPara.userData = &configP;
-    profStartPara.userDataSize = static_cast<unsigned int>(sizeof(StarsSocLogConfigT));
+    DeviceSocType socType = GetDeviceSocType();
+    if (socType == DeviceSocType::SOC_A5 || socType == DeviceSocType::SOC_A6)
+    {
+        profStartPara.userDataSize = static_cast<unsigned int>(sizeof(StarsSocLogConfigT));
+    }
+    else
+    {
+        // A2/A3: exclude tag and block_shrink_flag fields
+        profStartPara.userDataSize = static_cast<unsigned int>(sizeof(StarsSocLogConfigT) - 2 * sizeof(uint32_t));
+    }
 
-    using DriverProfStartFunc = int(*)(unsigned int, unsigned int, struct ProfStartPara*);
+    using DriverProfStartFunc = int (*)(unsigned int, unsigned int, struct ProfStartPara*);
     static auto vallina = reinterpret_cast<DriverProfStartFunc>(GetSymbol("prof_drv_start"));
-    if (vallina == nullptr) {
+    if (vallina == nullptr)
+    {
         LOG_ERROR("DriverProfStartFunc is nullptr");
         return;
     }
     int ret = vallina(static_cast<uint32_t>(devId), PROF_CHANNEL_STARS_SOC_LOG, &profStartPara);
-    if (ret != 0) {
+    if (ret != 0)
+    {
         LOG_ERROR("driver prof start failed.");
     }
     RuntimeKernelLinker::GetInstance();
@@ -157,20 +212,23 @@ void StartDriverKernelInfoTrace(int32_t devId)
 void EndDriverKernelInfoTrace()
 {
     int32_t devId = MemScope::GD_INVALID_NUM;
-    if (!GetDeviceInfo::Instance().GetDeviceId(devId) || devId == GD_INVALID_NUM) {
+    if (!GetDeviceInfo::Instance().GetDeviceId(devId) || devId == GD_INVALID_NUM)
+    {
         LOG_ERROR("get device id failed");
     }
-    using DriverProfEndFunc = int(*)(unsigned int, unsigned int);
+    using DriverProfEndFunc = int (*)(unsigned int, unsigned int);
     static auto vallina = reinterpret_cast<DriverProfEndFunc>(GetSymbol("prof_stop"));
-    if (vallina == nullptr) {
+    if (vallina == nullptr)
+    {
         LOG_ERROR("EndDriverKernelInfoTrace is nullptr");
         return;
     }
 
     int ret = vallina(static_cast<uint32_t>(devId), PROF_CHANNEL_STARS_SOC_LOG);
-    if (ret != 0) {
+    if (ret != 0)
+    {
         LOG_ERROR("driver prof end failed.");
     }
     return;
 }
-}
+}  // namespace MemScope
