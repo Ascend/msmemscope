@@ -49,6 +49,7 @@ sudo yum install -y python3 git gcc gcc-c++ make cmake
 2. 执行以下命令下载Python三方依赖。注：`sqlite3`为离线功能使用依赖，可选安装。
 
    ```bash
+   cd ./<remote-name>
    pip3 install -r ./requirements.txt
    ```
 

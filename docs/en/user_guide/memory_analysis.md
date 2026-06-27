@@ -36,7 +36,7 @@ Memory leak analysis supports both online and offline modes.
 
 **Online Mode**
 
-During memory analysis, use the mstx instrumentation function to locate issues. For details about mstx instrumentation, see [MindStudio Tools Extension Library Interfaces](<>).
+During memory analysis, use the mstx instrumentation function to locate issues. For details about mstx instrumentation, see [MindStudio Tools Extension Library Interfaces](https://gitcode.com/Ascend/mstx/blob/master/docs/en/api_reference/README.md).
 
 1. Use msMemScope to start the user program (represented by **Application**).
 
@@ -63,7 +63,7 @@ During memory analysis, use the mstx instrumentation function to locate issues. 
 
 msMemScope supports offline leak analysis of memory events in a specified range. After using mstx to mark the memory leak analysis range, you can use this function to analyze the dumped files.
 
-1. Apply the mstx mark function to the range where leak detection is required. For details about mstx instrumentation, see [MindStudio Tools Extension Library Interfaces](<>).
+1. Apply the mstx mark function to the range where leak detection is required. For details about mstx instrumentation, see [MindStudio Tools Extension Library Interfaces](https://gitcode.com/Ascend/mstx/blob/master/docs/en/api_reference/README.md).
 
     > [!NOTE]Note  
     > - The mark information is used as the input of the offline analysis interfaces.

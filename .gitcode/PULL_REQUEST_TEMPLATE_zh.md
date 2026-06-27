@@ -5,7 +5,7 @@ assignees: ['Martin_M', 'justice1717']
 ---
 
 感谢您贡献的Pull Request！
-在提交之前，请务必阅读 [Contributing](https://gitcode.com/Ascend/msmemscope/blob/master/docs/zh/development_guide/contributing_guide.md)。
+在提交之前，请务必阅读 [Contributing](https://gitcode.com/Ascend/msmemscope/blob/26.1.0/docs/zh/development_guide/contributing_guide.md)。
 
 ## 1. 修改描述
 <!--

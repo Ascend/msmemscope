@@ -37,7 +37,7 @@ msMemScope工具的安装，请参见[《msMemScope工具安装说明》](../ins
 
 **在线方式**
 
-在进行内存分析时，需配合使用mstx打点功能进行问题定位，mstx打点详情参考[MindStudio Tools Extension Library接口](https://gitcode.com/Ascend/mstx/blob/master/docs/zh/api_reference/README.md)。
+在进行内存分析时，需配合使用mstx打点功能进行问题定位，mstx打点详情参考[MindStudio Tools Extension Library接口](https://gitcode.com/Ascend/mstx/blob/26.1.0/docs/zh/api_reference/README.md)。
 
 1. 使用msMemScope工具启动用户程序，Application为用户程序。
 
@@ -66,7 +66,7 @@ msMemScope工具的安装，请参见[《msMemScope工具安装说明》](../ins
 
 msMemScope支持对指定范围内的内存事件进行离线泄漏分析。使用mstx标识好泄漏分析的范围后，可以使用该功能对落盘文件进行分析。
 
-1. 对需要检测泄漏的范围进行mstx的mark打点。mstx打点详情参考[MindStudio Tools Extension Library接口](https://gitcode.com/Ascend/mstx/blob/master/docs/zh/api_reference/README.md)。
+1. 对需要检测泄漏的范围进行mstx的mark打点。mstx打点详情参考[MindStudio Tools Extension Library接口](https://gitcode.com/Ascend/mstx/blob/26.1.0/docs/zh/api_reference/README.md)。
 
     > [!NOTE]
     >
