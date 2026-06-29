@@ -170,7 +170,7 @@ In non-Python scenarios, memory collection and analysis can be performed via CLI
 
 ### Precautions
 
-- The environment variable **TASK_QUEUE_ENABLE** can be configured as required. For details, see [TASK_QUEUE_ENABLE](https://gitcode.com/Ascend/pytorch/blob/v2.7.1-7.3.0/docs/en/environment_variable_reference/TASK_QUEUE_ENABLE.md). When **TASK_QUEUE_ENABLE** is set to **2**, the level-2 optimization of the **task_queue** operator dispatch queue is enabled. At this time, workspace will be collected.
+- The environment variable **TASK_QUEUE_ENABLE** can be configured as required. For details, see [TASK_QUEUE_ENABLE](https://gitcode.com/Ascend/pytorch/blob/v2.7.1-7.3.0/docs/zh/environment_variable_reference/TASK_QUEUE_ENABLE.md). When **TASK_QUEUE_ENABLE** is set to **2**, the level-2 optimization of the **task_queue** operator dispatch queue is enabled. At this time, workspace will be collected.
 - When you run msMemScope as the user **root**, the system skips file permission verification by printing a message, which poses security risks. You are advised to run msMemScope as a common user.
 - When using msMemScope to collect memory data, you are advised to customize collection items. For details, see [Collection via Python APIs](#collection-via-python-apis).
 - The CLI-based collection mode does not apply to vLLM-Ascend.
@@ -242,7 +242,7 @@ msMemScope can collect memory data based on the mstx instrumentation capability.
 
 ### Precautions
 
-- The mstx instrumentation methods vary slightly for C and Python scripts. For details, see [MindStudio Tools Extension Library Interfaces](<>).
+- The mstx instrumentation methods vary slightly for C and Python scripts. For details, see [MindStudio Tools Extension Library Interfaces](https://gitcode.com/Ascend/mstx/blob/master/docs/en/api_reference/README.md).
 - You are advised to refer to the C script example for mstx instrumentation.
 
 ### Usage Example
