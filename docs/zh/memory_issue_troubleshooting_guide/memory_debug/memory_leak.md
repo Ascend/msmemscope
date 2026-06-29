@@ -170,7 +170,7 @@ torch_npu.npu.empty_cache()
 
 ***
 
-"/opt/miniconda3/envs/torch2.6/lib/Python3.11/site\-packages/torch/\_ops.py\(723\): \_\_call\_\_
+"/opt/miniconda3/envs/torch2.6/lib/python3.11/site\-packages/torch/\_ops.py\(723\): \_\_call\_\_
 ./memscope/build/msmemscope/Python/msmemscope/aten\_collection.py\(187\): \_\_torch\_dispatch\_\_
 ./memscope/example/memory\_leak\_demo.py\(99\): create\_memory\_leak
 ./memscope/example/memory\_leak\_demo.py\(150\): main
@@ -305,7 +305,7 @@ print(sys.getrefcount(obj_global_ref))
 # 获取所有引用obj的对象
 referrers = gc.get_referrers(obj_global_ref)
 for ref in referrers:
-    print(f"referrer：{ref}")
+    print(f"referrer:{ref}")
 
 # 使用可视化库显示引用关系拓扑图
 objgraph.show_refs([obj_global_ref], filename="refs.png", max_depth=5)

@@ -20,8 +20,8 @@
 
 This repository complies with the issue submission and handling process of the Ascend community. For details, see the following:
 
-- [Issue Submission Guide in the Ascend Community](<>)
-- [Issue Handling Process in the Ascend Community](<>)
+- [Issue Submission Guide in the Ascend Community](https://gitcode.com/Ascend/community/blob/master/docs/contributor/issue-guide.md)
+- [Issue Handling Process in the Ascend Community](https://gitcode.com/Ascend/community/blob/master/docs/contributor/issue-workflow-guidelines.md)
 
 ## New Issue Process
 

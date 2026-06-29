@@ -102,8 +102,8 @@ msMemScope工具的安装，请参见[《msMemScope工具安装指南》](../ins
         # 装饰器模式，标记函数
         import msmemscope
         @msmemscope.RecordFunction("forward_pass")
-            def forward_pass(data):
-                return model(data)
+        def forward_pass(data):
+            return model(data)
         ```
 
     2. 自定义Trace数据的落盘路径和默认采集的Trace数据落盘路径一致，具体文件信息可参见[输出文件说明](./output_file_spec.md)。
