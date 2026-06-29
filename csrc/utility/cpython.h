@@ -179,11 +179,11 @@ class PythonDictObject : public PythonObject
     template <typename T>
     PythonDictObject& Delete(T key, bool ignore = true);
     template <typename T>
-    PythonObject GetItem(T key, bool ignore = true);
+    PythonObject GetItem(T key, PythonObject default_val = PythonObject());
     template <typename T>
     PythonObject operator[](T key)
     {
-        return GetItem(key, true);
+        return GetItem(key);
     }
 };
 
@@ -468,7 +468,7 @@ PythonDictObject& PythonDictObject::Delete(T key, bool ignore)
 }
 
 template <typename T>
-PythonObject PythonDictObject::GetItem(T key, bool ignore)
+PythonObject PythonDictObject::GetItem(T key, PythonObject default_val)
 {
     if (IsBad())
     {
@@ -477,9 +477,10 @@ PythonObject PythonDictObject::GetItem(T key, bool ignore)
 
     PythonObject o(key);
     PyObject* item = PyDict_GetItem(ptr, o);
-    if (item == nullptr && ignore)
+    if (item == nullptr && !default_val.IsBad())
     {
         PyErr_Clear();
+        return default_val;
     }
     return PythonObject(item);
 }

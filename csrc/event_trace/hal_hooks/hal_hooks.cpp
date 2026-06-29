@@ -264,7 +264,7 @@ aclError aclrtHostRegisterV2(void *ptr, uint64_t size, uint32_t flag)
         return ret;
     }
 
-    if (flag & static_cast<uint32_t>(ACL_HOST_REG_PINNED) == 0)
+    if ((flag & static_cast<uint32_t>(ACL_HOST_REG_PINNED)) == 0)
     {
         return ret;
     }

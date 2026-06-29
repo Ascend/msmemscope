@@ -52,6 +52,7 @@ extern "C"
     int PyObject_IsTrue(PyObject* v) __attribute__((weak));
     long PyLong_AsLong(PyObject* obj) __attribute__((weak));
     unsigned long PyLong_AsUnsignedLong(PyObject* obj) __attribute__((weak));
+    unsigned long long PyLong_AsUnsignedLongLong(PyObject* obj) __attribute__((weak));
     PyObject* PyDict_GetItemString(PyObject* v, const char* key) __attribute__((weak));
     PyObject* PyList_AsTuple(PyObject* v) __attribute__((weak));
     int PyType_IsSubtype(PyTypeObject* a, PyTypeObject* b) __attribute__((weak));
@@ -276,6 +277,16 @@ uint32_t PythonObject::Cast<uint32_t>()
         throw std::runtime_error("Unsupported type conversion");
     }
     return static_cast<uint32_t>(PyLong_AsUnsignedLong(ptr));
+}
+
+template <>
+uint64_t PythonObject::Cast<uint64_t>()
+{
+    if (IsBad() || !PyLong_Check(ptr))
+    {
+        throw std::runtime_error("Unsupported type conversion");
+    }
+    return static_cast<uint64_t>(PyLong_AsUnsignedLongLong(ptr));
 }
 
 template <>

@@ -20,6 +20,7 @@
 #include <fstream>
 
 #include "client_parser.h"
+#include "path.h"
 #include "securec.h"
 
 namespace Utility
@@ -318,6 +319,11 @@ bool JsonConfig::ReadJsonConfig(MemScope::Config& config)
         return false;
     }
 
+    if (!Utility::CheckIsValidInputPath(path))
+    {
+        return false;
+    }
+
     if (!Utility::JsonManager::GetInstance().LoadFromFile(path))
     {
         std::cout << "[msmemscope] Error: Failed to load json config file: " << path << std::endl;
@@ -344,7 +350,7 @@ bool JsonConfig::ReadJsonConfig(MemScope::Config& config)
     Utility::JsonManager::GetInstance().GetBoolValue("isEffective", config.isEffective);
 
     Utility::JsonManager::GetInstance().GetUint32ListsValue("SelectedStepList.stepIdList", config.stepList.stepIdList,
-                                                            sizeof(config.stepList.stepIdList));
+                                                            MemScope::SELECTED_STEP_MAX_NUM);
     Utility::JsonManager::GetInstance().GetUint8Value("SelectedStepList.stepCount", config.stepList.stepCount);
 
     Utility::JsonManager::GetInstance().GetBoolValue("watchConfig.isWatched", config.watchConfig.isWatched);
@@ -354,6 +360,15 @@ bool JsonConfig::ReadJsonConfig(MemScope::Config& config)
                                                          sizeof(config.watchConfig.start));
     Utility::JsonManager::GetInstance().GetCharListValue("watchConfig.end", config.watchConfig.end,
                                                          sizeof(config.watchConfig.end));
+
+    if (!Utility::CheckIsValidOutputPath(config.outputDir))
+    {
+        std::cout << "[msmemscope] Error:Invalid output path in file: " << path << std::endl;
+        return false;
+    }
+    constexpr uint32_t MAX_STACK_DEPTH = 1000;
+    config.cStackDepth = std::min(config.cStackDepth, MAX_STACK_DEPTH);
+    config.pyStackDepth = std::min(config.pyStackDepth, MAX_STACK_DEPTH);
 
     return true;
 }

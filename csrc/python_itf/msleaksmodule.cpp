@@ -23,6 +23,7 @@
 #include <vector>
 
 #include "call_stack.h"
+#include "cpython.h"
 #include "describerobject.h"
 #include "event_report.h"
 #include "oom_handler.h"
@@ -158,18 +159,18 @@ static PyObject* MsmemscopeTakeSnapshot(PyObject* self, PyObject* args)
         return nullptr;
     }
 
-    // 构建MemorySnapshotRecord结构体
+    // 构建MemorySnapshotRecord结构体，使用PythonDictObject安全提取字典字段
     MemorySnapshotInfo info;
+    Utility::PythonDictObject pyInfo(memory_info);
 
-    // 从memory_info字典中提取信息
-    info.device = PyLong_AsLong(PyDict_GetItemString(memory_info, "device"));
-    info.memory_reserved = PyLong_AsUnsignedLongLong(PyDict_GetItemString(memory_info, "memory_reserved"));
-    info.max_memory_reserved = PyLong_AsUnsignedLongLong(PyDict_GetItemString(memory_info, "max_memory_reserved"));
-    info.memory_allocated = PyLong_AsUnsignedLongLong(PyDict_GetItemString(memory_info, "memory_allocated"));
-    info.max_memory_allocated = PyLong_AsUnsignedLongLong(PyDict_GetItemString(memory_info, "max_memory_allocated"));
-    info.total_memory = PyLong_AsUnsignedLongLong(PyDict_GetItemString(memory_info, "total_memory"));
-    info.free_memory = PyLong_AsUnsignedLongLong(PyDict_GetItemString(memory_info, "free_memory"));
-    info.name = std::string(PyUnicode_AsUTF8(PyDict_GetItemString(memory_info, "name")));
+    info.device = pyInfo.GetItem("device", Utility::PythonObject(0)).Cast<int32_t>();
+    info.memory_reserved = pyInfo.GetItem("memory_reserved", Utility::PythonObject(0)).Cast<uint64_t>();
+    info.max_memory_reserved = pyInfo.GetItem("max_memory_reserved", Utility::PythonObject(0)).Cast<uint64_t>();
+    info.memory_allocated = pyInfo.GetItem("memory_allocated", Utility::PythonObject(0)).Cast<uint64_t>();
+    info.max_memory_allocated = pyInfo.GetItem("max_memory_allocated", Utility::PythonObject(0)).Cast<uint64_t>();
+    info.total_memory = pyInfo.GetItem("total_memory", Utility::PythonObject(0)).Cast<uint64_t>();
+    info.free_memory = pyInfo.GetItem("free_memory", Utility::PythonObject(0)).Cast<uint64_t>();
+    info.name = pyInfo.GetItem("name", Utility::PythonObject("")).Cast<std::string>();
 
     // 检查是否是OOM快照，如果是则获取调用栈信息
     CallStackString stack;
