@@ -40,7 +40,7 @@ TEST(TestKernelExcuteTrace, TestKernelExcuteTraceNormal)
     GetRealTimeFromSysCnt(deviceId, sysCnt);
 
     // aclnn下发
-    auto taskKey = std::make_tuple(static_cast<int16_t>(deviceId), streamId, taskId);
+    auto taskKey = std::make_tuple(static_cast<uint16_t>(deviceId), streamId, taskId);
 
     std::string hashInfo = "add";
     uint64_t hashId = GetHashIdCallBackImply(hashInfo.c_str(), hashInfo.size());

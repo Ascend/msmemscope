@@ -4,10 +4,10 @@
 <p><b><span style="font-size:24px;">Ascend AI-powered Tool for Memory Debugging and Tuning</span></b></p>
 
  [![Quick Start](https://badgen.net/badge/Quick%20Start/QuickStart/blue)](./docs/en/quick_start/quick_start.md)
- [![DeepWiki](https://badgen.net/badge/DeepWiki/DeepWiki/blue)](https://deepwiki.com/mindstudio-docs/master) 
- [![ZRead](https://badgen.net/badge/ZRead/ZRead/blue)](https://zread.ai/mindstudio-docs/master) 
- [![ReadTheDocs](https://badgen.net/badge/ReadTheDocs/ReadTheDocs/blue)](https://mindstudio-docs-master.readthedocs.io) 
- [![Community](https://badgen.net/badge/Community/MindStudio/blue)](https://www.hiascend.com/en/developer/software/mindstudio) 
+ [![DeepWiki](https://badgen.net/badge/DeepWiki/DeepWiki/blue)](https://deepwiki.com/mindstudio-docs/master)
+ [![ZRead](https://badgen.net/badge/ZRead/ZRead/blue)](https://zread.ai/mindstudio-docs/master)
+ [![ReadTheDocs](https://badgen.net/badge/ReadTheDocs/ReadTheDocs/blue)](https://mindstudio-docs-master.readthedocs.io)
+ [![Community](https://badgen.net/badge/Community/MindStudio/blue)](https://www.hiascend.com/en/developer/software/mindstudio)
  [![Report Issue](https://badgen.net/badge/Report%20Issue/Issues/blue)](https://gitcode.com/Ascend/msmemscope/issues/new)
 
 </div>
@@ -16,7 +16,7 @@
 
 <span style="font-size:14px;">
 
-🔹 **[2026.04.29]**：MindStudio Memscope 26.0.0 launched! It will take a shapshot of memory when OOM.
+🔹 **[2026.04.29]**：MindStudio Memscope 26.0.0 launched! It will take a snapshot of memory when OOM.
 
 🔹 **[2026.04.08]**：MindStudio Memscope 26.0.beta.1 launched! One-click analysis for memory decomposition support vLLM and MindSpeed.
 
@@ -141,9 +141,9 @@ For more information about historical versions, see [Historical Versions](./docs
 
 </details>
 
-🔹 [License Declaration](./docs/en/legal/license_notice.md)  
-🔹 [Security Statement](./docs/en/legal/security_statement.md)  
-🔹 [Disclaimer](./docs/en/legal/disclaimer.md)  
+🔹 [License Declaration](./docs/en/legal/license_notice.md)
+🔹 [Security Statement](./docs/en/legal/security_statement.md)
+🔹 [Disclaimer](./docs/en/legal/disclaimer.md)
 
 ## 🤝 Suggestions and Feedback
 
@@ -155,5 +155,5 @@ You are welcome to contribute to the community. If you have any questions or sug
 
 ## 🙏 Acknowledgments
 
-This tool is contributed by the Huawei MindStudio full-pipeline development toolchain team, dedicated to providing an end-to-end solution for building Ascend AI applications, accelerating the processes of training, inference, and operator development.  
+This tool is contributed by the Huawei MindStudio full-pipeline development toolchain team, dedicated to providing an end-to-end solution for building Ascend AI applications, accelerating the processes of training, inference, and operator development.
 Thank you to everyone in the community for your PRs. We warmly welcome contributions to msMemScope!

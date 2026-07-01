@@ -41,54 +41,54 @@ TEST(AtenManagerTest, ReportAtenStartLaunchTest) {
     config.enablePyStack = true;
     ConfigManager::Instance().SetConfig(config);
     const char* msg = "memscope-aten-b: {func.__module__}.{func.__name__}";
-    uint32_t streamId = 0;
-    MstxManager::GetInstance().ReportMarkA(msg, streamId, MemScopeCommType::MEMORY_DEBUG);
+    aclrtStream stream = nullptr;
+    MstxManager::GetInstance().ReportMarkA(msg, stream, MemScopeCommType::MEMORY_DEBUG);
 }
 
 TEST(AtenManagerTest, ReportAtenStart_nullname_Test) {
     const char* msg = "memscope-aten-b:";
-    uint32_t streamId = 0;
-    MstxManager::GetInstance().ReportMarkA(msg, streamId, MemScopeCommType::MEMORY_DEBUG);
+    aclrtStream stream = nullptr;
+    MstxManager::GetInstance().ReportMarkA(msg, stream, MemScopeCommType::MEMORY_DEBUG);
 }
 
 TEST(AtenManagerTest, ReportAtenEndLaunchTest) {
     const char* msg = "memscope-aten-e: {func.__module__}.{func.__name__}";
-    uint32_t streamId = 0;
-    MstxManager::GetInstance().ReportMarkA(msg, streamId, MemScopeCommType::MEMORY_DEBUG);
+    aclrtStream stream = nullptr;
+    MstxManager::GetInstance().ReportMarkA(msg, stream, MemScopeCommType::MEMORY_DEBUG);
 }
 
 TEST(AtenManagerTest, ReportAtenUnknownAccessTest) {
     const char* msg = "memscope-aten-ac:ptr=1000;is_write=False;is_read=False;is_output=False;"\
         "name={func.__module__}.{func.__name__};shape={value.shape};dtype={value.dtype};tensor_size=500;device=0";
-    uint32_t streamId = 0;
-    MstxManager::GetInstance().ReportMarkA(msg, streamId, MemScopeCommType::MEMORY_DEBUG);
+    aclrtStream stream = nullptr;
+    MstxManager::GetInstance().ReportMarkA(msg, stream, MemScopeCommType::MEMORY_DEBUG);
 }
 
 TEST(AtenManagerTest, ReportAtenWriteAccessTest) {
     const char* msg = "memscope-aten-ac:ptr=1000;is_write=True;is_read=False;is_output=False;"\
         "name={func.__module__}.{func.__name__};shape={value.shape};dtype={value.dtype};tensor_size=500;device=0";
-    uint32_t streamId = 0;
-    MstxManager::GetInstance().ReportMarkA(msg, streamId, MemScopeCommType::MEMORY_DEBUG);
+    aclrtStream stream = nullptr;
+    MstxManager::GetInstance().ReportMarkA(msg, stream, MemScopeCommType::MEMORY_DEBUG);
 }
 
 TEST(AtenManagerTest, ReportAtenReadAccessTest) {
     const char* msg = "memscope-aten-ac:ptr=1000;is_write=False;is_read=True;is_output=False;"\
         "name={func.__module__}.{func.__name__};shape={value.shape};dtype={value.dtype};tensor_size=500;device=0";
-    uint32_t streamId = 0;
-    MstxManager::GetInstance().ReportMarkA(msg, streamId, MemScopeCommType::MEMORY_DEBUG);
+    aclrtStream stream = nullptr;
+    MstxManager::GetInstance().ReportMarkA(msg, stream, MemScopeCommType::MEMORY_DEBUG);
 }
 
 TEST(AtenManagerTest, ReportAtenReadAccess_nullname_Test) {
     const char* msg = "memscope-aten-ac:ptr=1000;is_write=False;is_read=True;is_output=False;"\
         "name=;shape={value.shape};dtype={value.dtype};tensor_size=500;device=0";
-    uint32_t streamId = 0;
-    MstxManager::GetInstance().ReportMarkA(msg, streamId, MemScopeCommType::MEMORY_DEBUG);
+    aclrtStream stream = nullptr;
+    MstxManager::GetInstance().ReportMarkA(msg, stream, MemScopeCommType::MEMORY_DEBUG);
 }
 
 TEST(AtenManagerTest, ExtractTensorInfoTest) {
     const char* msg = "memscope-aten-ac:ptr=1000";
-    uint32_t streamId = 0;
-    MstxManager::GetInstance().ReportMarkA(msg, streamId, MemScopeCommType::MEMORY_DEBUG);
+    aclrtStream stream = nullptr;
+    MstxManager::GetInstance().ReportMarkA(msg, stream, MemScopeCommType::MEMORY_DEBUG);
 }
 
 TEST(AtenManagerTest, ExtractTensorInfoSuccessTest)

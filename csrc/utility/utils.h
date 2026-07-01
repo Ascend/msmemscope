@@ -124,7 +124,7 @@ inline bool StrToUint64(uint64_t &dest, const std::string &str)
     size_t pos = 0;
     try
     {
-        dest = std::stoull(str, &pos);
+        dest = std::stoull(str, &pos, 0);
     }
     catch (...)
     {
@@ -146,7 +146,7 @@ inline bool StrToUint32(uint32_t &dest, const std::string &str)
     size_t pos = 0;
     try
     {
-        unsigned long value = std::stoul(str, &pos);
+        unsigned long value = std::stoul(str, &pos, 0);
         if (pos == str.size() && value <= std::numeric_limits<uint32_t>::max())
         {
             dest = static_cast<uint32_t>(value);

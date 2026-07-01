@@ -21,27 +21,27 @@ using namespace MemScope;
 
 TEST(MstxManagerTest, ReportMarkATest) {
     const char* msg = "Test Message A";
-    uint32_t streamId = 0;
-    MstxManager::GetInstance().ReportMarkA(msg, streamId);
+    aclrtStream stream = nullptr;
+    MstxManager::GetInstance().ReportMarkA(msg, stream);
 }
 
 TEST(MstxManagerTest, ReportMarkATest_Nullptr_Msg_Strcpy_Failed) {
     const char* msg = "";
-    uint32_t streamId = 0;
-    MstxManager::GetInstance().ReportMarkA(msg, streamId);
+    aclrtStream stream = nullptr;
+    MstxManager::GetInstance().ReportMarkA(msg, stream);
 }
 
 TEST(MstxManagerTest, ReportRangeStartTest) {
     const char* msg = "Test Message A";
-    uint32_t streamId = 0;
-    std::uint64_t rangeId = MstxManager::GetInstance().ReportRangeStart(msg, streamId);
+    aclrtStream stream = nullptr;
+    std::uint64_t rangeId = MstxManager::GetInstance().ReportRangeStart(msg, stream);
     EXPECT_GT(rangeId, 0);
 }
 
 TEST(MstxManagerTest, ReportRangeStartTest_Nullptr_Msg_Strcpy_Failed) {
     const char* msg = "";
-    uint32_t streamId = 0;
-    std::uint64_t rangeId = MstxManager::GetInstance().ReportRangeStart(msg, streamId);
+    aclrtStream stream = nullptr;
+    std::uint64_t rangeId = MstxManager::GetInstance().ReportRangeStart(msg, stream);
     EXPECT_GT(rangeId, 0);
 }
 
@@ -51,9 +51,9 @@ TEST(MstxManagerTest, ReportRangeEndTest) {
 
 TEST(MstxManagerTest, GetRangeIdTest) {
     const char* msg = "GetRangeIdTest";
-    uint32_t streamId = 0;
-    uint64_t firstId = MstxManager::GetInstance().ReportRangeStart(msg, streamId);
-    uint64_t secondId = MstxManager::GetInstance().ReportRangeStart(msg, streamId);
+    aclrtStream stream = nullptr;
+    uint64_t firstId = MstxManager::GetInstance().ReportRangeStart(msg, stream);
+    uint64_t secondId = MstxManager::GetInstance().ReportRangeStart(msg, stream);
     EXPECT_EQ(secondId, firstId +1);
 }
 

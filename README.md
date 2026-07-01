@@ -4,10 +4,10 @@
 <p><b><span style="font-size:24px;">昇腾 AI 内存调试调优利器</span></b></p>
 
  [![快速入门](https://badgen.net/badge/快速入门/QuickStart/blue)](./docs/zh/quick_start/quick_start.md)
- [![AI问答(DeepWiki)](https://badgen.net/badge/AI问答/DeepWiki/blue)](https://deepwiki.com/mindstudio-docs/master) 
- [![AI问答(ZRead)](https://badgen.net/badge/AI问答/ZRead/blue)](https://zread.ai/mindstudio-docs/master) 
- [![精确搜索](https://badgen.net/badge/精确搜索/ReadTheDocs/blue)](https://mindstudio-docs-master.readthedocs.io) 
- [![昇腾社区](https://badgen.net/badge/昇腾社区/Community/blue)](https://www.hiascend.com/cn/developer/software/mindstudio) 
+ [![AI问答(DeepWiki)](https://badgen.net/badge/AI问答/DeepWiki/blue)](https://deepwiki.com/mindstudio-docs/master)
+ [![AI问答(ZRead)](https://badgen.net/badge/AI问答/ZRead/blue)](https://zread.ai/mindstudio-docs/master)
+ [![精确搜索](https://badgen.net/badge/精确搜索/ReadTheDocs/blue)](https://mindstudio-docs-master.readthedocs.io)
+ [![昇腾社区](https://badgen.net/badge/昇腾社区/Community/blue)](https://www.hiascend.com/cn/developer/software/mindstudio)
  [![报告问题](https://badgen.net/badge/报告问题/Issues/blue)](https://gitcode.com/Ascend/msmemscope/issues/new)
 
 </div>
@@ -20,7 +20,7 @@
 
 🔹 **[2026.04.08]**：MindStudio Memscope 26.0.beta.1版本上线！显存占用一键拆解功能新增支持vllm、mindspeed场景。
 
-🔹 **[2026.02.01]**：MindStudio Memscope 26.0.0-alpha.1版本上线！ 支持Python API采集方式使用、支持PyTorch框架下采集内存快照、支持识别显存页表属性并进行落盘、支持获取Driver新增的显存分配接口。 
+🔹 **[2026.02.01]**：MindStudio Memscope 26.0.0-alpha.1版本上线！ 支持Python API采集方式使用、支持PyTorch框架下采集内存快照、支持识别显存页表属性并进行落盘、支持获取Driver新增的显存分配接口。
 
 🔹 **[2025.12.30]**：MindStudio Memscope 项目首次上线
 
@@ -152,9 +152,9 @@ msMemScope 工具提供 API 接口，便于快速分析内存情况，请参见 
 
 </details>
 
-🔹 《[许可证声明](./docs/zh/legal/license_notice.md)》  
-🔹 《[安全声明](./docs/zh/legal/security_statement.md)》  
-🔹 《[免责声明](./docs/zh/legal/disclaimer.md)》  
+🔹 《[许可证声明](./docs/zh/legal/license_notice.md)》
+🔹 《[安全声明](./docs/zh/legal/security_statement.md)》
+🔹 《[免责声明](./docs/zh/legal/disclaimer.md)》
 
 ## 🤝 建议与交流
 
@@ -166,5 +166,5 @@ msMemScope 工具提供 API 接口，便于快速分析内存情况，请参见 
 
 ## 🙏 致谢
 
-本工具由华为 MindStudio 全流程开发工具链团队贡献，致力于提供端到端的昇腾 AI 应用开发解决方案，使能开发者高效完成训练开发、推理开发和算子开发。  
+本工具由华为 MindStudio 全流程开发工具链团队贡献，致力于提供端到端的昇腾 AI 应用开发解决方案，使能开发者高效完成训练开发、推理开发和算子开发。
 感谢来自社区的每一个 PR，欢迎贡献 msMemScope。
