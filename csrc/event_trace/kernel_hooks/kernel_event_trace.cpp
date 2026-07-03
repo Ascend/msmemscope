@@ -85,25 +85,12 @@ static void ReportStarsSocLog(uint32_t deviceId, const StarsSocLog* socLog)
         return;
     }
     constexpr int32_t bitOffset = 32;
-    DeviceSocType socType = GetDeviceSocType();
-    bool isNewSoc = (socType == DeviceSocType::SOC_A5 || socType == DeviceSocType::SOC_A6);
-
-    uint16_t streamId;
-    uint16_t taskId;
-    if (isNewSoc)
-    {
-        // A5/A6: use mergedTaskId from union, streamId is 0 in the key
-        streamId = 0;
-        taskId = static_cast<uint16_t>(socLog->mergedTaskId);
-    }
-    else
-    {
-        streamId =
-            StarsCommon::GetStreamId(static_cast<uint16_t>(socLog->streamId), static_cast<uint16_t>(socLog->taskId),
-                                     static_cast<uint16_t>(socLog->sqeType));
-        taskId = StarsCommon::GetTaskId(static_cast<uint16_t>(socLog->streamId), static_cast<uint16_t>(socLog->taskId),
-                                        static_cast<uint16_t>(socLog->sqeType));
-    }
+    uint16_t streamId =
+        StarsCommon::GetStreamId(static_cast<uint16_t>(socLog->streamId), static_cast<uint16_t>(socLog->taskId),
+                                 static_cast<uint16_t>(socLog->sqeType));
+    uint16_t taskId =
+        StarsCommon::GetTaskId(static_cast<uint16_t>(socLog->streamId), static_cast<uint16_t>(socLog->taskId),
+                               static_cast<uint16_t>(socLog->sqeType));
     auto taskKey = std::make_tuple(static_cast<uint16_t>(deviceId), streamId, taskId);
     if (socLog->funcType == STARS_FUNC_TYPE_BEGIN)
     {
@@ -121,14 +108,50 @@ static void ReportStarsSocLog(uint32_t deviceId, const StarsSocLog* socLog)
     return;
 }
 
+static void ReportStarsSocLogA5A6(uint32_t deviceId, const StarsSocLogA5A6* socLog)
+{
+    if (!socLog)
+    {
+        return;
+    }
+    uint16_t streamId = 0;
+    uint16_t taskId = static_cast<uint16_t>(socLog->taskId);
+    auto taskKey = std::make_tuple(static_cast<uint16_t>(deviceId), streamId, taskId);
+    if (socLog->funcType == STARS_FUNC_TYPE_BEGIN)
+    {
+        auto start = socLog->timestamp;
+        start = GetRealTimeFromSysCnt(deviceId, start);
+        KernelEventTrace::GetInstance().KernelStartExcute(taskKey, start);
+    }
+    else if (socLog->funcType == STARS_FUNC_TYPE_END)
+    {
+        auto end = socLog->timestamp;
+        end = GetRealTimeFromSysCnt(deviceId, end);
+        KernelEventTrace::GetInstance().KernelEndExcute(taskKey, end);
+    }
+
+    return;
+}
+
 static size_t TransStarsLog(char buffer[], size_t validSize, uint32_t deviceId)
 {
     size_t pos = 0;
-    while (validSize - pos >= sizeof(StarsSocLog))
+    DeviceSocType socType = GetDeviceSocType();
+    bool isNewSoc = (socType == DeviceSocType::SOC_A5 || socType == DeviceSocType::SOC_A6);
+    size_t size = isNewSoc ? sizeof(StarsSocLogA5A6) : sizeof(StarsSocLog);
+    while (validSize - pos >= size)
     {
-        StarsSocLog* data = reinterpret_cast<StarsSocLog*>(buffer + pos);
-        ReportStarsSocLog(deviceId, data);
-        pos += sizeof(StarsSocLog);
+        if (isNewSoc)
+        {
+            const StarsSocLogA5A6* data = reinterpret_cast<StarsSocLogA5A6*>(buffer + pos);
+            ReportStarsSocLogA5A6(deviceId, data);
+        }
+        else
+        {
+            const StarsSocLog* data = reinterpret_cast<StarsSocLog*>(buffer + pos);
+            ReportStarsSocLog(deviceId, data);
+        }
+        pos += size;
     }
     return pos;
 }
