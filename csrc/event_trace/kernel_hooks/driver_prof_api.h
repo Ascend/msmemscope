@@ -95,21 +95,28 @@ struct StarsSocLog
     uint32_t cnt : 4;
     uint32_t sqeType : 6;
     uint32_t magic : 16;
-    union
-    {
-        struct
-        {
-            uint32_t streamId : 16;
-            uint32_t taskId : 16;
-        };
-        uint32_t mergedTaskId;  // A5/A6: streamId + taskId merged into one 32-bit field
-    };
+    uint32_t streamId : 16;
+    uint32_t taskId : 16;
     uint32_t sysCntL : 32;
     uint32_t sysCntH : 32;
     uint32_t res0 : 16;
     uint32_t accId : 6;
     uint32_t acsqId : 10;
     uint32_t res1[11];
+};
+
+struct StarsSocLogA5A6
+{
+    uint32_t funcType : 6;
+    uint32_t cnt : 4;
+    uint32_t sqeType : 6;
+    uint32_t magic : 16;
+    uint32_t taskId : 32;
+    uint64_t timestamp : 64;
+    uint32_t res0 : 16;
+    uint32_t accId : 6;
+    uint32_t acsqId : 10;
+    uint32_t res1[3];
 };
 
 struct DevTimeInfo
