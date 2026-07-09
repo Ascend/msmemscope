@@ -100,7 +100,7 @@ msMemScope provides memory collection and analysis functions.
         <a href="./docs/en/memory_profile.md">Memory Collection</a>
       </td>
       <td rowspan="2">
-        msMemScope can collection memory events and allows custom memory collection scopes and items to provide raw data for subsequent analysis.
+        msMemScope can collect memory events and allows custom memory collection scopes and items to provide raw data for subsequent analysis.
       </td>
       <td>Collection via Python APIs</td>
       <td>Information is collected through Python APIs, including custom collection scopes and items, memory events, and Python Trace events, for precise collection and efficient analysis.</td>

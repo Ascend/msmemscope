@@ -78,7 +78,7 @@ Similar to most memory analysis tools, it consists of three modules: data collec
 ![image](./figures/96abcebd-f98d-4594-9856-17ea7aac212c.png)    The class diagram is divided into three parts: data collection (green part), data analysis (red part), and frame (yellow part).
 
  * Data collection: Data collection includes LD_PRELOAD hijacking (hooks), MSTX dotting (MstxManager), runtime, and driver (kernel data in Hooks) reporting. The EventTraceManager class is used to determine whether data needs to be collected. If data needs to be reported, the EventReport interface is invoked to report the data to the framework. You can use the msmemscope_python module to set the collection scope and collection items.
- * Data analysis: Currently, the analysis module includes LeakAnalyzer, StepInterAnalyzer, OpExcuteWatch, DecomposeAnalyzer, and low efficiency. InefficientAnalyzer.
+ * Data analysis: Currently, the analysis module includes LeakAnalyzer, StepInterAnalyzer, OpExecuteWatch, DecomposeAnalyzer, and low efficiency. InefficientAnalyzer.
  * Framework module: Parses the Linux common command line (ClientParser), connects the data collection module and analysis module (Process and EventDispatcher), and communication module (server and client).
  * Tool modules: Not shown in the figure, mainly log modules, character string processing, numerical calculation, and file reading and writing.
 
@@ -262,7 +262,7 @@ The following describes the main interfaces based on the framework module, data 
     API name: rtError_t rtKernelLaunch(const void *stubFunc, uint32_t blockDim, void *args, uint32_t argsSize, rtSmDesc_t *smDesc, rtStream_t stm)
     API function: Hijacks the kernellaunch-related APIs. (There are several similar APIs, which are not described here.)
     API direction: runtime -&gt; tool
-    Input parameter: operator registration function, blockdim, output and output information, stream status, etc.
+    Input parameter: operator registration function, blockdim, output information, stream status, etc.
     Output parameter: runtime error code.
     Return value: N/A.
     Precautions: N/A.
@@ -418,11 +418,20 @@ At the same time, the algorithm introduces the concept of k-line:`k=x-y`d indica
 
 High-risk module security hardening
 
-**1. Data protection does not involve customer privacy data.**
+**1. Data protection**
 
-**2. The input of the module dependency and third-party library on the northbound interface is verified in the ClientParser.Parse/CheckIsValidInputPath/CheckIsValidOutputPath interface, avoiding pollution of the internal running environment. Southbound interfaces are standardized in their hijacking interfaces to ensure that the data to be flushed to disks is unified and valid.**
+    Does not involve customer privacy data.
 
-**3. Error Handling If the input parameters in the command line fail to be verified, the system prompts the user to output help information and terminates the program. If the input file path, permission, soft link, invalid characters, writable, owner group, and owner are verified, If the verification fails, the process exits and no further operation is required. Output files are flushed to disks with the permission of folder 750, file 640, and read-only file 400. If the flushing fails, the tool generates a log indicating the current exception. If an error occurs when the hash algorithm is used, the program stops immediately and the corresponding print is recorded in the log module.**
+**2. Module Dependencies and Third-Party Libraries**
+
+    For input to the northbound interface, unified validation is performed in ClientParser.Parse/CheckIsValidInputPath/CheckIsValidOutputPath interface, avoiding pollution of the internal running environment. Southbound interfaces are standardized in their hijacking interfaces to ensure that the data to be flushed to disks is unified and valid. 
+
+**3. Error Handling**
+
+    If the input parameters in the command line fail to be verified, the system prompts the user to output help information and terminates the program.<br>
+    If the input file path, permission, soft link, invalid characters, writable, owner group, and owner are verified, If the verification fails, the process exits and no further operation is required.<br>
+    Output files are flushed to disks with the permission of folder 750, file 640, and read-only file 400. If the flushing fails, the tool generates a log indicating the current exception.<br>
+    If an error occurs when the hash algorithm is used, the program stops immediately and the corresponding print is recorded in the log module.
 
 **4. Log audit**
 
@@ -450,7 +459,7 @@ The test directory is added to the home directory for white-box test monitoring.
 
 #### 4.5.4 Layered Test
 
-Generally, the test is divided into three modules: unit test (UT), interface test (IT), and system test (ST). Due to the particularity of the tool, the interfaces of the test are relatively few and can be directly covered by the UT because the UT is divided into two layers: UT and ST. The UT monitors the logic errors of the code units, intercepts problems at the front end, and ensures that a large number of problems are found and solved before the board is put into use. ST is an end-to-end test, which is also the most important for tools. The smoke test is also divided into two layers. Level 1 is the primary path for monitoring most functions (more than 80%) and the efficiency is high (minute-level). Level 1 is used as the verification before large-granularity code is uploaded to the database. Level 2 provides complete test case monitoring, covering all test cases and analysis. Tests are performed before each version is released and iteration is transferred to the test.
+Generally, the test is divided into three modules: unit test (UT), interface test (IT), and system test (ST). Due to the particularity of the tool, the interfaces of the test are relatively few and can be directly covered by the UT，as the testing is primarily structured into two layers: UT and ST. The UT monitors the logic errors of the code units, intercepts problems at the front end, and ensures that a large number of problems are found and solved before the board is put into use. ST is an end-to-end test, which is also the most important for tools. The smoke test is also divided into two layers. Level 1 is the primary path for monitoring most functions (more than 80%) and the efficiency is high (minute-level). Level 1 is used as the verification before large-granularity code is uploaded to the database. Level 2 provides complete test case monitoring, covering all test cases and analysis. Tests are performed before each version is released and iteration is transferred to the test.
 
 #### 4.5.5 Key test technical solution
 

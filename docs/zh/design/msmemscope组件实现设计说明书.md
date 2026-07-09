@@ -78,7 +78,7 @@
 整个类图分为三大块：数据采集（绿色部分）、数据分析（红色部分）、框架（黄色部分）。
 
 * 数据采集：数据采集当前有LD_PRELOAD劫持（Hooks）、MSTX打点（MstxManager）、runtime和driver（Hooks中的kernel数据）上报等方式。通过EventTraceManager类来判断数据是否需要采集，如果需要上报，调用EventReport的接口上报到框架侧。可以通过msmemscope_python模块来设置采集的范围和采集项。
-* 数据分析：分析模块目前主要包括泄漏分析（LeakAnalyzer）、内存比对（StepInterAnalyzer）、显存块监测（OpExcuteWatch）、显存拆解（DecomposeAnalyzer）、低效模式识别（InefficientAnalyzer）。
+* 数据分析：分析模块目前主要包括泄漏分析（LeakAnalyzer）、内存比对（StepInterAnalyzer）、显存块监测（OpExecuteWatch）、显存拆解（DecomposeAnalyzer）、低效模式识别（InefficientAnalyzer）。
 * 框架模块：负责解析linux通用命令行（ClientParser）、串联数据采集模块和分析模块（Process、EventDispatcher）以及通信模块（server和client）。
 * 工具模块：没有在图中展示，主要是一些LOG模块、字符串处理、数值计算、文件读写等。
 
@@ -262,7 +262,7 @@ NA
    接口名：rtError_t rtKernelLaunch(const void *stubFunc, uint32_t blockDim, void *args, uint32_t argsSize, rtSmDesc_t *smDesc, rtStream_t stm)
    接口功能：劫持kernellaunch相关的接口（类似的还有几个，此处不再赘述）
    接口方向：runtime->工具
-   输入参数名：算子注册函数、blockdim、输出输出信息、流状态等
+   输入参数名：算子注册函数、blockdim、输出信息、流状态等
    输出参数名：runtime错误码。
    返回值：NA。
    注意事项：NA。

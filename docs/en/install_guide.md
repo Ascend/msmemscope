@@ -1,61 +1,28 @@
 # **msMemScope Installation Guide**
 
-## Instructions
+## 1. Installation Description
 
-This document describes msMemScope installation methods, including:
+This tool has been integrated into CANN. If CANN has been installed and this tool does not need to be updated, you can directly use it without following the instructions in this document.
 
-- **Using the CANN package**: The complete functions of msMemScope are integrated into the CANN package. You can directly install the CANN package by referring to [CANN Quick Installation](https://www.hiascend.com/cann/download).
+If CANN has not been installed in your environment, install the Ascend NPU driver and CANN software (including the Toolkit and ops) by referring to [CANN Quick Installation](https://www.hiascend.com/cann/download), and configure environment variables.
 
-- **Using the RUN package**: The complete functions of msMemScope are integrated into the CANN package and depend on CANN. Therefore, you need to install the CANN package before using msMemScope. To upgrade msMemScope to the latest version, you can compile the latest msMemScope RUN package using the source code to overwrite the existing package. For details, see [Method 2: Obtain the latest RUN package](#method-2-obtain-the-latest-run-package).
+If you need to upgrade this tool separately or use the latest version, you can install it in any of the following ways: [Online Installation](#21-online-installation), [Offline Installation](#22-offline-installation), and [Installation from Source](#23-installation-from-source).
 
-> [!NOTE]Note 
-> If a version earlier than CANN 8.5.0 is installed, install the CANN Toolkit as described in the training, inference, and development & debugging scenarios. If CANN 8.5.0 or a later version is installed, install the CANN Toolkit and OPS. Make preparations according to documents with specific version requirements.
+## 2. Installation Methods
 
-## Installation via RUN Package
+### 2.1 Online Installation
 
-msMemScope can be used on Linux. Currently, you can obtain its RUN package in either of the following ways:
+If your device has Internet access, you can run a single command to automatically download and install the tool. Visit the [Ascend community](https://www.hiascend.com/developer/software/mindstudio/download ), select the target CANN version, and choose "online installation". The system will guide you through the subsequent operations.
 
-1. Stable version: Download the RUN package from the releases page.
-2. Latest version: Compile and build the RUN package from the source code.
+### 2.2 Offline Installation
 
-> [!NOTE]Note 
-> The RUN package can be used only after it is installed in an environment where CANN has been installed.
+For devices that are not connected to the Internet, such as those on an enterprise intranet, download the complete offline installation package on a device that has Internet access and then transfer the package to the target device for installation. Visit the [Ascend community](https://www.hiascend.com/developer/software/mindstudio/download ), select the target CANN version, and choose "offline installation". The system will guide you through the subsequent operations.
 
-### Method 1: Obtain the Stable Version of the RUN Package
+### 2.3 Installation from Source
 
-**Package Download**
+#### 2.3.1 Installing Dependencies
 
-Access [releases](https://gitcode.com/Ascend/msmemscope/releases) to download the target msMemScope package.
-
-The package name is `mindstudio-memscope_<version>_linux-<arch>.run`, where `<version>` indicates the version number and `<arch>` indicates the CPU architecture.
-
-Once you download the software, you agree to the terms and conditions of [Huawei Enterprise End User License Agreement (EULA)](https://e.huawei.com/en/about/eula).
-
-**Package Verification**
-
-After downloading the package, you are advised to verify its integrity (SHA256) before installation.
-
-```bash
-sha256sum mindstudio-memscope_<version>_linux-<arch>.run
-echo "<expected-sha256> mindstudio-memscope_<version>_linux-<arch>.run" | sha256sum -c
-```
-
-**NOTE**
-
-- In the verification command, `<expected-sha256>` is the SHA256 value obtained when the package is downloaded.
-- For details about the SHA256 value of installation packages for each version, see [Release Notes](./release_note.md).
-
-Handling suggestions for inconsistent SHA256 values:
-
-If `FAILED` is displayed in the output of `sha256sum -c -`, do not continue the installation.
-Delete the current file, download it again, and perform the SHA256 verification again.
-If the verification still fails, check whether the file name and version on the **releases** page are consistent, and report the issue.
-
-### Method 2: Obtain the Latest RUN Package
-
-#### Installing Dependencies
-
-Before the installation, ensure that the Git and Python environments are available. For details, see [version requirements](./development_guide/development_guide.md#1-development-environment-settings). If requirements are not met, run the following command to install dependencies.
+Before the installation, ensure that the Git and Python environments are available. For details, see [version requirements](./development_guide/development_guide.md#development environment-settings). If requirements are not met, run the following command to install dependencies.
 
 Debian:
 
@@ -69,15 +36,13 @@ openEuler:
 sudo yum install -y python3 git gcc gcc-c++ make cmake
 ```
 
-#### Compiling and Building the Package
+#### 2.3.2 Compiling and Building a RUN Package
 
-1. Run the `git` command on the terminal to clone the msMemScope source code.
+1. Run the following git command on the terminal to clone the msMemScope source code.
 
    ```bash
-   git clone https://gitcode.com/Ascend/msmemscope.git <remote-name>
+   git clone https://gitcode.com/Ascend/msmemscope.git -b 26.0.0
    ```
-
-   Note: `remote-name` indicates the alias of the remote repository, which needs to be specified.
 
 2. Download the Python third-party dependencies. Note that `sqlite3` is an optional choice and is used for offline functions.
 
@@ -103,7 +68,7 @@ sudo yum install -y python3 git gcc gcc-c++ make cmake
    bash make_run.sh
    ```
 
-   Pack all the outputs into a .run package for installation and upgrade. If the following information is displayed, the packaging is successful.
+   Pack all the outputs into a RUN package for installation and upgrade. If the following information is displayed, packaging is successful.
 
    ```bash
    [INFO] Run file created successfully: xx/mindstudio-memscope_<version>_linux-<arch>.run
@@ -117,7 +82,7 @@ sudo yum install -y python3 git gcc gcc-c++ make cmake
    Note: `arch` indicates the CPU architecture.
    After the compilation is complete, the package is generated in the `./build` directory.
 
-### Installing the RUN Package
+#### 2.3.3 Installing the RUN Package
 
 1. Grant the execute permission on the RUN package.
 
@@ -140,13 +105,13 @@ sudo yum install -y python3 git gcc gcc-c++ make cmake
    [INFO] Installation completed successfully
    ```
 
-#### Verifying the Installation
+#### 2.3.4 Verifying the Installation
 
 Check whether the `set_env.sh` file is generated in the `<path>/msmemscope` directory.
 
-### Configuration After Installation
+#### 2.3.5 Configuring Environment Variables
 
-Before using msMemScope, run the following command to configure the `PYTHONPATH` and `PATH` environment variables.
+Before using msMemScope, run the following command to configure the `PYTHONPATH`and `PATH` environment variables.
 
 ```bash
 source <path>/msmemscope/set_env.sh
@@ -163,67 +128,56 @@ bash: local: can only be used in a function
 msmemscope environment setup completed
 ```
 
-## Upgrade
+## 3. Uninstallation
 
-The msMemScope package includes the upgrade script.
+> [!NOTE]
+> 
+> If you have set the `LD_PRELOAD` environment variable when using the [memory profiling function](./memory_profile.md), run the `unset LD_PRELOAD` command to reset the environment variable before uninstallation to avoid uninstallation failure.
 
-1. [Download](https://www.openlibing.com/apps/obsDetails?bucketName=ascend-package) the target package.
+Perform the following steps to uninstall the tool:
 
-2. Run the following script to upgrade the software.
-
-   ```bash
-   bash mindstudio-memscope_<version>_linux-<arch>.run --upgrade --install-path=<path>
-   ```
-
-   Parameters:
-
-   - `--upgrade` specifies the upgrade operation.
-   - `--install-path` specifies the target directory. Only the selected directory is upgraded.
-
-   If the following information is displayed, the software is successfully upgraded:
+1. Download the script.
 
    ```bash
-   [INFO] Upgrade completed successfully
+   curl -O https://inst.obs.cn-north-4.myhuaweicloud.com/26.0.0/ms_install.py
    ```
 
-## Uninstallation
+   > [!NOTE]
+   >
+   > - An internet connection is required for downloading. If the environment does not allow internet access or is offline, download the script on a machine with internet connectivity first, and then copy it to the target device.
+   > - If the command does not respond, or if you encounter connection failures, SSL certificate errors, or other issues, please refer to the [FAQs](https://www.hiascend.com/developer/blog/details/02176213671719317003).
 
-**Uninstallation Using a Script**
-
-1. Go to the path where msMemScope is installed.
+2. Uninstall the tool.
 
    ```bash
-   cd <path>/msmemscope
+   python ms_install.py uninstall {tools_name}
    ```
 
-   Note: `path` indicates the installation path. Replace it with the actual path.
+   Replace `{tools_name}` with the name of the tool to be uninstalled. You can run the `python ms_install.py help` command to query the tool name, which is displayed under the `Available Tools` field in the command output.
 
-2. Run the following command to execute the uninstallation script.
+   If the uninstallation is successful, the following information is displayed:
 
-   ```bash
-   ./uninstall.sh
+   ```ColdFusion
+   Successfully uninstalled 1 tool ({tools_name})
    ```
 
-   The uninstallation program will display a message to confirm uninstallation. Enter **y** for confirmation or **n** for cancellation.
+## 4. Upgrade
 
-   If the following information is printed, the software is successfully uninstalled:
+Upgrading follows a "uninstall first, then install" approach. Simply run the installation command, and the tool will automatically uninstall the old version and guide you through the overlay installation process.
 
-   ```tex
-   [INFO] Uninstallation completed successfully
-   ```
+## 5. Appendix
 
-## Appendix A: Reference
+### Option Description
 
-### Options
-
-This section describes the options related to the RUN package, which supports one-click installation using command line options. The commands can be used together. You can select installation options as required.
+This section describes the parameters related to the RUN package. This package supports one-click installation using command line options. The options can be used together. You can select the options as required.
 
 Installation command syntax: `./mindstudio-memscope_<version>_linux-<arch>.run [options]`
 
 For details, see [Table 1](#cli-args-table).
 
-  > [!NOTE]Note 
-  > If options queried by running the `./mindstudio-memscope_\<version>_linux-{arch}.run --help` command are not in the following table, they are reserved or apply to other products. You do not need to pay attention to them.
+  > [!NOTE]
+  > 
+  > If options queried by running the `./mindstudio-memscope_<version>_linux-{arch}.run --help` command are not in the following table, they are reserved or apply to other products. You do not need to pay attention to them.
 
 **Table 1** Options
 
@@ -246,7 +200,7 @@ For details, see [Table 1](#cli-args-table).
   </tr>
   <tr>
     <td>--install</td>
-    <td>Installs the package. You can specify the installation path (--install-path=path) or use the default installation path.</td>
+    <td>Installs the package. You can specify the installation path `--install-path=&lt;path&gt` or use the default installation path.</td>
   </tr>
   <tr>
     <td>--upgrade</td>
