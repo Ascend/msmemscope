@@ -1,7 +1,7 @@
 ASCEND_HOME_PATH	    ?= /usr/local/Ascend/ascend-toolkit/latest
 
-COMPILER                    := ${ASCEND_HOME_PATH}/compiler/ccec_compiler/bin/ccec
-HOST_COMPILER               := g++ 
+COMPILER                    := $(if $(wildcard ${ASCEND_HOME_PATH}/compiler/ccec_compiler/bin/ccec),${ASCEND_HOME_PATH}/compiler/ccec_compiler/bin/ccec,${ASCEND_HOME_PATH}/bin/ccec)
+HOST_COMPILER               := g++
 COMPILER_FLAG               := -xcce -O2 -std=c++17 --cce-enable-sanitizer -g
 HOST_COMPILER_FLAG          := -O2 -std=c++17
 LINK_FLAG                   := --cce-fatobj-link --cce-enable-sanitizer
