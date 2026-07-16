@@ -2,7 +2,7 @@
 
 ## 致msMemScope使用者
 
-1. 对于msMemScope测试用例以及示例文件中所涉及的数据，平台仅用于功能测试，华为不提供任何数据。
+1. 对于msMemScope测试用例以及示例文件中所涉及的数据，仅用于功能测试，华为不提供任何数据。
 
 2. 如您在使用msMemScope工具过程中，发现任何问题（包括但不限于功能问题、合规问题），请在GitCode提交Issues，我们将及时审视并解决。
 
@@ -10,4 +10,4 @@
 
 ## 致数据所有者
 
-如果您不希望您的数据集在msMemScope中被提及，或希望更新msMemScope中有关的描述，请在GitCode提交Issues，我们将根据您的Issues要求删除或更新您相关描述。衷心感谢您对msMemScope的理解和贡献。
+如果您不希望您的数据集在msMemScope中被提及，或希望更新msMemScope中有关的描述，请在GitCode提交Issues，我们将根据您的Issues要求删除或更新相关描述。衷心感谢您对msMemScope的理解和贡献。

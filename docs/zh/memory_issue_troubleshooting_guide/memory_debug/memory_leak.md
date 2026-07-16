@@ -67,7 +67,7 @@ torch_npu.npu.empty_cache()
 
 ![empty_cache](./figures/empty_cache.png)
 
-从缓存清理的前后对比中，可以清晰的看出清理缓存前内存持续增长，清理后内存稳定。
+从缓存清理的前后对比中，可以清晰地看出清理缓存前内存持续增长，清理后内存稳定。
 
 缓存清理是解决片上内存泄漏的第一步，但如果清理缓存后问题仍未解决，可能是内存碎片在作祟。接下来，我们将介绍如何排查和解决内存碎片问题。
 
@@ -95,7 +95,7 @@ export PYTORCH_NPU_ALLOC_CONF=expandable_segments:True
 
 ![alt text](./figures/snapshot-2.png)
 
-此时可在每个epoch结束后、批次处理完成后、请求处理低峰期等合适位置显示触发内存重整。
+此时可在每个epoch结束后、批次处理完成后、请求处理低峰期等合适位置显式触发内存重整。
 
 ```python
 torch_npu.npu.empty_cache()

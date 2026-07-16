@@ -41,7 +41,7 @@
 
 #### 4.1.1 概述
 
-本节通过期望通过以下几个视图描述组件的软件架构：
+本节期望通过以下几个视图描述组件的软件架构：
 
 * 上下文视图：这一视图将组件作为一个黑盒，描述组件的周边关系，从依赖关系中可以看到组件采集数据的范围，涵盖了AI框架和应用层、CANN层以及driver。
 * 逻辑视图：描绘了整个组件三大模块之间的接口和关系，即框架模块依赖信息采集模块上报数据，调用分析器进行数据分析，同时展示了各个模块内部的子模块。
@@ -78,7 +78,7 @@
 整个类图分为三大块：数据采集（绿色部分）、数据分析（红色部分）、框架（黄色部分）。
 
 * 数据采集：数据采集当前有LD_PRELOAD劫持（Hooks）、MSTX打点（MstxManager）、runtime和driver（Hooks中的kernel数据）上报等方式。通过EventTraceManager类来判断数据是否需要采集，如果需要上报，调用EventReport的接口上报到框架侧。可以通过msmemscope_python模块来设置采集的范围和采集项。
-* 数据分析：分析模块目前主要包括泄漏分析（LeakAnalyzer）、内存比对（StepInterAnalyzer）、显存块监测（OpExcuteWatch）、显存拆解（DecomposeAnalyzer）、低效模式识别（InefficientAnalyzer）。
+* 数据分析：分析模块目前主要包括泄漏分析（LeakAnalyzer）、内存比对（StepInterAnalyzer）、显存块监测（OpExecuteWatch）、显存拆解（DecomposeAnalyzer）、低效模式识别（InefficientAnalyzer）。
 * 框架模块：负责解析linux通用命令行（ClientParser）、串联数据采集模块和分析模块（Process、EventDispatcher）以及通信模块（server和client）。
 * 工具模块：没有在图中展示，主要是一些LOG模块、字符串处理、数值计算、文件读写等。
 
@@ -293,7 +293,7 @@ NA
 1. 接口描述
 
    ```tex
-   数据采集模块主要有几大功能（接口）：  
+   数据分析模块主要有几大功能（接口）：  
    *分析模块的入口（抽象接口）
    *各个分析器的分析入口（具体接口）
    ```
@@ -485,18 +485,18 @@ NA
       |-- test_main.cpp
    ```
 
-   冒烟工程目录如下：包含msmemscope交付件目录（msmemscope）、冒烟用例源码目录（csrc）、测试脚本目录（testfile）以及产物和日志目录（workbench），workbench下的子目录和测试套一一对应，方便问题定位。
+   冒烟工程目录如下：包含msmemscope交付件目录（msmemscope）、冒烟用例源码目录（src）、测试脚本目录（testfile）以及产物和日志目录（workbench），workbench下的子目录和测试套一一对应，方便问题定位。
 
    ```tex
-   memscope_case
+   smoke
    |-- msmemscope
       |-- output
-   |-- csrc
+   |-- src
       |-- test_suit
       |-- utils
    |-- testfile
       |-- csvfile
-      |-- script
+      |-- scripts
    |-- workbench
    ```
 
@@ -523,7 +523,7 @@ NA
 #### 5.1.3 交互模型设计
 
 **时序图**
-在客户输入对应命令行后，框架模块会根据客户输入的参数进行解析，同时fork子进程，在子进程中拉起被测程序。在被测程序运行过程中，event_trace中的劫持模块会对被测程序中的内存时间进行劫持并且记录，通过socket进程间通信的方式将数据传回到框架模块，框架模块完成数据清洗后转发给对应的分析模块进行分析。特别地，如果是step间比对模式，是离线处理的，不涉及数据采集过程；另外如果是watch功能，由于其无需数据汇总，其判断和落盘功能统一在client模块处理。整体运行视图如下：
+在客户输入对应命令行后，框架模块会根据客户输入的参数进行解析，同时fork子进程，在子进程中拉起被测程序。在被测程序运行过程中，event_trace中的劫持模块会对被测程序中的内存事件进行劫持并且记录，将数据传回到框架模块，框架模块完成数据清洗后转发给对应的分析模块进行分析。特别地，如果是step间比对模式，是离线处理的，不涉及数据采集过程；另外如果是watch功能，由于其无需数据汇总，其判断和落盘功能统一在client模块处理。整体运行视图如下：
 
 ![image](./figures/a208c7b1-ef2d-4361-aa6e-f46e956f5d8e.png)
 

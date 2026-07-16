@@ -44,7 +44,7 @@ sudo yum install -y python3 git gcc gcc-c++ make cmake
    git clone https://gitcode.com/Ascend/msmemscope.git <remote-name>
    ```
 
-   注：其中`remote-name`为远程仓库别名，需要指定。
+   注：其中`remote-name`为本地克隆目录名，需要指定。
 
 2. 执行以下命令下载Python三方依赖。注：`sqlite3`为离线功能使用依赖，可选安装。
 

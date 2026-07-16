@@ -57,7 +57,7 @@
 1. 每一次commit的message需要明确对应代码的功能，无效信息不会通过，如“添加适配文件”、“First commit”等。
 2. 对于多余无效的commits需要压缩，如连续的相同commit messages的commits、连续的codecheck修改等。
 
-若存在多次commit，请按照两种方式其一，压缩为一条commit记录（尽管GitCode在合并PR时提供了`Squash 合并`的选项, 提前将PR整理为单个简洁的commit仍然被视为最佳实践，并且深受commiter们的欢迎）。
+若存在多次commit，请按照两种方式其一，压缩为一条commit记录（尽管GitCode在合并PR时提供了`Squash 合并`的选项, 提前将PR整理为单个简洁的commit仍然被视为最佳实践，并且深受committer们的欢迎）。
 
 ### 方式一：交互式变基（推荐）
 
@@ -115,7 +115,7 @@ git push --force-with-lease origin your-branch-name
 
 若您在合入PR过程中遇到任何问题或需要进一步的帮助，请联系维护团队。您可以通过以下方式联系：
 
-- 邮件：<memscope@outlook.com>
+- 邮件：`memscope@outlook.com`
 - 群聊：扫码添加昇腾开源小助手，获取群链接，进入 MindStudio 社区技术交流群，获取更多帮助和支持。详情请查看[群聊介绍](../communication_guide/communication.md#3-开源小助手)。
 
 ## 提交Issue
