@@ -2,7 +2,7 @@
 
 ## 🌟 最新动态
 
-- **[2026.2.02]** 🎉 **MindStudio Memscope 26.0.0-alpha.1版本上线！** 支持**Python API采集**方式使用、支持PyTorch框架下**采集内存快照**、支持**识别显存页表属性**并进行落盘、支持获取Driver新增的显存分配接口。
+- **[2026.2.02]** 🎉 **MindStudio Memscope 26.0.0-alpha.1版本上线！** 支持**Python API采集**方式使用、支持Ascend for PyTorch框架下**采集内存快照**、支持**识别显存页表属性**并进行落盘、支持获取Driver新增的显存分配接口。
 
 - [2025.12.30]：MindStudio Memscope项目首次上线。
 
@@ -60,7 +60,7 @@ msMemScope工具提供内存采集、内存分析两大功能。
     </tr>
     <tr>
       <td>内存拆解</td>
-      <td>msMemScope工具提供内存拆解功能，支持对CANN层和Ascend Extension for PyTorch框架的内存使用情况进行拆解，输出模型权重、激活值、梯度，以及优化器等组件的内存占用情况。</td>
+      <td>msMemScope工具提供内存拆解功能，支持对CANN层和Ascend for PyTorch框架的内存使用情况进行拆解，输出模型权重、激活值、梯度，以及优化器等组件的内存占用情况。</td>
     </tr>
     <tr>
       <td>低效内存识别</td>

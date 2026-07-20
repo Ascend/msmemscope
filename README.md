@@ -20,7 +20,7 @@
 
 🔹 **[2026.04.08]**：MindStudio Memscope 26.0.beta.1版本上线！显存占用一键拆解功能新增支持vllm、mindspeed场景。
 
-🔹 **[2026.02.01]**：MindStudio Memscope 26.0.0-alpha.1版本上线！ 支持Python API采集方式使用、支持PyTorch框架下采集内存快照、支持识别显存页表属性并进行落盘、支持获取Driver新增的显存分配接口。
+🔹 **[2026.02.01]**：MindStudio Memscope 26.0.0-alpha.1版本上线！ 支持Python API采集方式使用、支持Ascend for PyTorch框架下采集内存快照、支持识别显存页表属性并进行落盘、支持获取Driver新增的显存分配接口。
 
 🔹 **[2025.12.30]**：MindStudio Memscope 项目首次上线
 
@@ -80,7 +80,7 @@ msMemScope 工具提供内存采集、内存分析两大功能。
     </tr>
     <tr>
       <td>内存拆解</td>
-      <td>msMemScope 工具提供内存拆解功能，支持对 CANN 层和 Ascend Extension for PyTorch 框架的内存使用情况进行拆解，输出模型权重、激活值、梯度，以及优化器等组件的内存占用情况。</td>
+      <td>msMemScope 工具提供内存拆解功能，支持对 CANN 层和 Ascend for PyTorch 框架的内存使用情况进行拆解，输出模型权重、激活值、梯度，以及优化器等组件的内存占用情况。</td>
     </tr>
     <tr>
       <td>低效内存识别</td>
@@ -97,12 +97,12 @@ msMemScope 工具提供内存采集、内存分析两大功能。
 
 msMemScope 工具支持通过软件包和源码两种方式进行安装，可根据实际需求选择合适的安装方式，请参见 《[msMemScope 安装指南](./docs/zh/install_guide/install_guide.md)》。
 
-msMemScope 工具当前支持 CANN、Ascend Extension for PyTorch、MindSpore 以及 Aten 算子的内存采集，具体版本支持情况如下表所示。
+msMemScope 工具当前支持 CANN、Ascend for PyTorch、MindSpore 以及 Aten 算子的内存采集，具体版本支持情况如下表所示。
 
 | 产品 | 说明 |
 |------|------|
 | CANN | CANN 8.2.RC1 及之后版本的 ATB 算子（Ascend Transformers Boost）。 |
-| Ascend Extension for PyTorch | Ascend Extension for PyTorch 7.0.0 及之后版本。 |
+| Ascend for PyTorch | Ascend for PyTorch 7.0.0 及之后版本。 |
 | MindSpore | MindSpore 2.7.0 及之后版本。 |
 | Aten 算子 | 当采集 Aten 算子下发与访问事件时，需使用 PyTorch 2.3.1 或更高版本。 |
 

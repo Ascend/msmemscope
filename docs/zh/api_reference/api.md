@@ -79,11 +79,11 @@ list_analyzers() -> List[str]
 
 **参数说明**
 
-|参数名|输入/输出|说明|
-|--|--|--|
-|List|输出|字符串列表。|
+无参数。
 
 **返回值说明**
+
+List[str]：字符串列表。
 
 运行后会输出当前msMemScope工具支持的内存分析类型。
 
@@ -112,11 +112,10 @@ get_analyzer_config(analyzer_type: str) -> Dict[str, Any]
 |参数名|输入/输出|说明|
 |--|--|--|
 |str|输入|字符串，代表对应的内存分析类型，可参考list_analyzers的输出结果，例如“leaks”或“inefficient”。|
-|Dict[str, Any]|输出|包含所有参数的字典，支持直接打印。|
 
 **返回值说明**
 
-所有参数的字典，支持直接打印。
+Dict[str, Any]：所有参数的字典，支持直接打印。
 
 运行后会直接输出对应内存分析类型所需的入参信息。
 

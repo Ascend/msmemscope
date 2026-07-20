@@ -41,22 +41,20 @@ sudo yum install -y python3 git gcc gcc-c++ make cmake
 1. 在终端执行以下git命令，克隆（clone）msMemScope源码。
 
    ```bash
-   git clone https://gitcode.com/Ascend/msmemscope.git <remote-name>
+   git clone https://gitcode.com/Ascend/msmemscope.git
    ```
-
-   注：其中`remote-name`为本地克隆目录名，需要指定。
 
 2. 执行以下命令下载Python三方依赖。注：`sqlite3`为离线功能使用依赖，可选安装。
 
    ```bash
-   cd ./<remote-name>
+   cd ./msmemscope
    pip3 install -r ./requirements.txt
    ```
 
 3. 下载构建依赖以及编译。
 
    ```bash
-   cd ./<remote-name>/build
+   cd ./msmemscope/build
    python3 build.py local test
    ```
 
@@ -155,7 +153,7 @@ msmemscope environment setup completed
 1. 下载脚本。
 
    ```bash
-   curl -O https://inst.obs.cn-north-4.myhuaweicloud.com/26.0.0/ms_install.py
+   curl -O https://inst.obs.cn-north-4.myhuaweicloud.com/26.1.0/ms_install.py
    ```
 
    > [!NOTE]

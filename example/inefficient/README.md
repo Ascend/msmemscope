@@ -8,7 +8,7 @@
 
 请参见[安装指南](../../docs/zh/install_guide/install_guide.md)安装msMemScope工具。
 
-此外在运行本样例中的python场景时，需要配置torch以及torch_npu，具体请参见[Pytorch框架训练环境准备](https://www.hiascend.com/document/detail/zh/Pytorch/720/configandinstg/instg/insg_0001.html)文档。
+此外在运行本样例中的python场景时，需要配置torch以及TorchNPU，具体请参见[Pytorch框架训练环境准备](https://www.hiascend.com/document/detail/zh/Pytorch/720/configandinstg/instg/insg_0001.html)文档。
 
 ## 执行样例
 
