@@ -24,6 +24,7 @@
 
 #include "call_stack.h"
 #include "log.h"
+#include "oom_detailed_analyzer.h"
 #include "oom_handler.h"
 #include "record_info.h"
 #include "trace_manager/event_trace_manager.h"
@@ -31,7 +32,7 @@
 using namespace MemScope;
 
 // 通用OOM错误处理函数
-void HandleOOM(size_t size, uint64_t flag, int ret)
+void HandleOOM(size_t size, uint64_t flag, int ret, const char* funcName)
 {
     if (!EventTraceManager::Instance().IsNeedTrace(EventBaseType::MALLOC) &&
         !EventTraceManager::Instance().IsNeedTrace(EventBaseType::FREE))
@@ -46,6 +47,40 @@ void HandleOOM(size_t size, uint64_t flag, int ret)
     // 将调用栈保存到OOMHandler实例中，并触发OOM快照
     OOMHandler::Instance().SetOOMStack(stack);
     EventReport::Instance(MemScopeCommType::SHARED_MEMORY).ReportMemorySnapshotOnOOM(stack);
+
+    // OOM详细分析
+    auto& oomAnalyzer = OOMDetailedAnalyzer::GetInstance(GetConfig());
+    if (oomAnalyzer.IsEnabled())
+    {
+        int32_t devId = GD_INVALID_NUM;
+        GetDeviceInfo::Instance().GetDeviceId(devId);
+
+        OOMTriggerInfo triggerInfo;
+        triggerInfo.requestSize = size;
+        triggerInfo.flag = flag;
+        triggerInfo.retCode = ret;
+        triggerInfo.funcName = funcName;
+        triggerInfo.stack = stack;
+        triggerInfo.deviceId = devId;
+        triggerInfo.timestamp = Utility::GetTimeNanoseconds();
+
+        EventReport::Instance(MemScopeCommType::SHARED_MEMORY).ReportOOMTrigger(triggerInfo);
+
+        uint32_t clientId = static_cast<uint32_t>(Utility::GetPid());
+        auto recentRecs = oomAnalyzer.QueryRecentAllocs(devId, clientId);
+        for (const auto& rec : recentRecs)
+        {
+            EventReport::Instance(MemScopeCommType::SHARED_MEMORY)
+                .ReportOOMMemRecord(rec, EventSubType::OOM_RECENT_ALLOC);
+        }
+
+        auto topRecs = oomAnalyzer.QueryTopAllocs(devId, clientId);
+        for (const auto& rec : topRecs)
+        {
+            EventReport::Instance(MemScopeCommType::SHARED_MEMORY)
+                .ReportOOMMemRecord(rec, EventSubType::OOM_TOP_ALLOC);
+        }
+    }
 }
 
 drvError_t halMemAlloc(void **pp, unsigned long long size, unsigned long long flag)
@@ -64,7 +99,7 @@ drvError_t halMemAlloc(void **pp, unsigned long long size, unsigned long long fl
         // Check for OOM errors
         if (ret == DRV_ERROR_OUT_OF_MEMORY)
         {
-            HandleOOM(size, flag, ret);
+            HandleOOM(size, flag, ret, "halMemAlloc");
         }
         return ret;
     }
@@ -155,7 +190,7 @@ drvError_t halMemCreate(drv_mem_handle_t **handle, size_t size, const struct drv
         // Check for OOM errors
         if (ret == DRV_ERROR_OUT_OF_MEMORY)
         {
-            HandleOOM(size, flag, ret);
+            HandleOOM(size, flag, ret, "halMemCreate");
         }
         else
         {

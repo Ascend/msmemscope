@@ -53,6 +53,8 @@ class Dump : public AnalyzerBase
     void DumpKernelLaunchEvent(std::shared_ptr<KernelLaunchEvent>& event);
     void DumpSystemEvent(std::shared_ptr<SystemEvent>& event);
     void DumpSnapshotEvent(std::shared_ptr<SnapshotEvent>& snapshotEvent);
+    void DumpOOMTriggerEvent(std::shared_ptr<OOMTriggerEvent>& event);
+    void DumpOOMMemRecordEvent(std::shared_ptr<OOMMemRecordEvent>& event);
 
     void WriteToFile(const std::shared_ptr<EventBase>& event);
     bool ShouldDumpEvent(EventBaseType type) const;

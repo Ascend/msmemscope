@@ -38,7 +38,7 @@ Dump::Dump(Config config)
     auto func = std::bind(&Dump::EventHandle, this, std::placeholders::_1, std::placeholders::_2);
     std::vector<EventBaseType> eventList{EventBaseType::FREE,          EventBaseType::MSTX,   EventBaseType::OP_LAUNCH,
                                          EventBaseType::KERNEL_LAUNCH, EventBaseType::SYSTEM, EventBaseType::SNAPSHOT,
-                                         EventBaseType::CLEAN_UP};
+                                         EventBaseType::CLEAN_UP,      EventBaseType::OOM_DETAIL};
     EventDispatcher::GetInstance().Subscribe(SubscriberId::DUMP, eventList, EventDispatcher::Priority::Lowest, func);
     return;
 }
@@ -87,6 +87,16 @@ void Dump::EventHandle(std::shared_ptr<EventBase>& event, MemoryState* state)
             if (auto snapshotEvent = std::dynamic_pointer_cast<SnapshotEvent>(event))
             {
                 DumpSnapshotEvent(snapshotEvent);
+            }
+            break;
+        case EventBaseType::OOM_DETAIL:
+            if (auto oomTriggerEvent = std::dynamic_pointer_cast<OOMTriggerEvent>(event))
+            {
+                DumpOOMTriggerEvent(oomTriggerEvent);
+            }
+            else if (auto oomMemEvent = std::dynamic_pointer_cast<OOMMemRecordEvent>(event))
+            {
+                DumpOOMMemRecordEvent(oomMemEvent);
             }
             break;
         default:
@@ -308,6 +318,34 @@ void Dump::DumpSnapshotEvent(std::shared_ptr<SnapshotEvent>& snapshotEvent)
 
     // 调用WriteToFile函数写入事件
     WriteToFile(snapshotEvent);
+}
+
+void Dump::DumpOOMTriggerEvent(std::shared_ptr<OOMTriggerEvent>& event)
+{
+    std::string attr;
+    attr += "func:" + event->funcName + ",";
+    attr += "req_size:" + std::to_string(event->requestSize) + ",";
+    attr += "flag:" + std::to_string(event->flag) + ",";
+    attr += "ret:" + std::to_string(event->retCode);
+    event->attr = "\"{" + attr + "}\"";
+
+    WriteToFile(event);
+}
+
+void Dump::DumpOOMMemRecordEvent(std::shared_ptr<OOMMemRecordEvent>& event)
+{
+    std::string attr;
+    auto poolIt = PoolTypeMap.find(event->poolType);
+    attr += "pool:" + (poolIt != PoolTypeMap.end() ? poolIt->second : "UNKNOWN") + ",";
+    attr += "ptr:" + Uint64ToHexString(event->addr) + ",";
+    attr += "size:" + std::to_string(event->memSize) + ",";
+    attr += "timestamp:" + std::to_string(event->allocTimestamp) + ",";
+    attr += "step:" + std::to_string(event->stepId) + ",";
+    attr += "kernel:" + std::to_string(event->kernelIndex) + ",";
+    attr += "client:" + std::to_string(event->clientId);
+    event->attr = "\"{" + attr + "}\"";
+
+    WriteToFile(event);
 }
 
 void Dump::FflushEventToFile() const

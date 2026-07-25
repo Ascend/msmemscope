@@ -89,6 +89,8 @@ class EventReport
     bool ReportPyStepRecord();
     bool ReportMemorySnapshot(const MemorySnapshotInfo& memory_info, CallStackString&& stack);
     void ReportMemorySnapshotOnOOM(const CallStackString& stack = CallStackString());
+    bool ReportOOMTrigger(const OOMTriggerInfo& info);
+    bool ReportOOMMemRecord(const OOMMemRecord& record, EventSubType subType);
     void UpdateAnalysisType();
 
    private:

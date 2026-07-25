@@ -102,9 +102,10 @@ bool StepInnerAnalyzer::CreateLeakSumTables(const DeviceId &deviceId)
 
 bool StepInnerAnalyzer::IsStepInnerAnalysisEnable()
 {
-    // 确认analysis设置中是否包含泄漏分析
+    // 确认analysis设置中是否包含泄漏分析或OOM详细分析
     BitField<decltype(config_.analysisType)> analysisType(config_.analysisType);
-    if (!(analysisType.checkBit(static_cast<size_t>(AnalysisType::LEAKS_ANALYSIS))))
+    if (!(analysisType.checkBit(static_cast<size_t>(AnalysisType::LEAKS_ANALYSIS))) &&
+        !(analysisType.checkBit(static_cast<size_t>(AnalysisType::OOM_ANALYSIS))))
     {
         return false;
     }
@@ -317,7 +318,8 @@ void StepInnerAnalyzer::RecordNpuMalloc(const ClientId &clientId, const DeviceId
     }
 
     NpuMemInfo npuMemInfo = {
-        poolType, memEvent->size, memEvent->timestamp, 0, npuMemUsages_[deviceId].duringStep, memEvent->kernelIndex};
+        poolType, memEvent->size, memEvent->timestamp, 0, npuMemUsages_[deviceId].duringStep, memEvent->kernelIndex,
+        memEvent->cCallStack, memEvent->pyCallStack};
     npuMemUsages_[deviceId].poolOpTable.emplace(NpuMemKey(npumemptr, poolType), npuMemInfo);
     UpdateAllocated(deviceId, poolType, memEvent->used);
     npuMemUsages_[deviceId].poolStatusTable[poolType].totalAllocated = memEvent->used;
@@ -620,6 +622,30 @@ StepInnerAnalyzer::~StepInnerAnalyzer()
     }
 
     return;
+}
+
+std::vector<OOMMemRecord> StepInnerAnalyzer::QueryUnfreedRecords(int32_t deviceId) const
+{
+    std::vector<OOMMemRecord> records;
+    auto it = npuMemUsages_.find(deviceId);
+    if (it == npuMemUsages_.end())
+    {
+        return records;
+    }
+    for (const auto& pair : it->second.poolOpTable)
+    {
+        OOMMemRecord rec;
+        rec.poolType = pair.second.type;
+        rec.ptr = pair.first.ptr;
+        rec.memSize = pair.second.memSize;
+        rec.allocTimestamp = pair.second.timestamp;
+        rec.stepId = pair.second.stepId;
+        rec.kernelIndex = pair.second.kernelIndex;
+        rec.cCallStack = pair.second.cCallStack;
+        rec.pyCallStack = pair.second.pyCallStack;
+        records.push_back(rec);
+    }
+    return records;
 }
 
 }  // namespace MemScope

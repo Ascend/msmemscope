@@ -36,9 +36,10 @@ HalAnalyzer::HalAnalyzer(Config config)
 
 bool HalAnalyzer::IsHalAnalysisEnable()
 {
-    // 确认analysis设置中是否包含泄漏分析
+    // 确认analysis设置中是否包含泄漏分析或OOM详细分析
     BitField<decltype(config_.analysisType)> analysisType(config_.analysisType);
-    if (!(analysisType.checkBit(static_cast<size_t>(AnalysisType::LEAKS_ANALYSIS)))) {
+    if (!(analysisType.checkBit(static_cast<size_t>(AnalysisType::LEAKS_ANALYSIS))) &&
+        !(analysisType.checkBit(static_cast<size_t>(AnalysisType::OOM_ANALYSIS)))) {
         return false;
     }
     // 当开启--steps时，关闭所有分析功能
@@ -107,6 +108,16 @@ void HalAnalyzer::RecordMalloc(const ClientId &clientId, std::shared_ptr<const E
     }
     memtables_[clientId][memkey].deviceId = memEvent->device;
     memtables_[clientId][memkey].addrStatus = AddrStatus::FREE_WAIT;
+    memtables_[clientId][memkey].size = memEvent->size;
+    memtables_[clientId][memkey].timestamp = memEvent->timestamp;
+    if (!memEvent->cCallStack.empty())
+    {
+        memtables_[clientId][memkey].cCallStack = memEvent->cCallStack;
+    }
+    if (!memEvent->pyCallStack.empty())
+    {
+        memtables_[clientId][memkey].pyCallStack = memEvent->pyCallStack;
+    }
 }
 
 void HalAnalyzer::RecordFree(const ClientId &clientId, std::shared_ptr<const EventBase> event)
@@ -187,6 +198,32 @@ HalAnalyzer::~HalAnalyzer()
     } catch (const std::exception &ex) {
         std::cerr << "HalAnalyzer destructor catch exception: " << ex.what();
     }
+}
+
+std::vector<OOMMemRecord> HalAnalyzer::QueryUnfreedRecords(uint32_t clientId) const
+{
+    std::vector<OOMMemRecord> records;
+    auto it = memtables_.find(clientId);
+    if (it == memtables_.end())
+    {
+        return records;
+    }
+    for (const auto& pair : it->second)
+    {
+        if (pair.second.addrStatus == AddrStatus::FREE_WAIT)
+        {
+            OOMMemRecord rec;
+            rec.poolType = PoolType::HAL;
+            rec.ptr = pair.first;
+            rec.memSize = pair.second.size;
+            rec.allocTimestamp = pair.second.timestamp;
+            rec.clientId = clientId;
+            rec.cCallStack = pair.second.cCallStack;
+            rec.pyCallStack = pair.second.pyCallStack;
+            records.push_back(rec);
+        }
+    }
+    return records;
 }
 
 }

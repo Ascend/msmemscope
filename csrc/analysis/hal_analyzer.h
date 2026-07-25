@@ -25,6 +25,7 @@
 #include "comm_def.h"
 
 namespace MemScope {
+
 /*
  * HalAnalyzer类主要功能：
  * 1. 维护halmemalloc/halmemfree操作记录表
@@ -39,6 +40,10 @@ enum class AddrStatus : uint8_t {
 struct HalMemInfo {
     int32_t deviceId;
     AddrStatus addrStatus;
+    int64_t size = 0;
+    uint64_t timestamp = 0;
+    std::string cCallStack;
+    std::string pyCallStack;
 };
 
 using MemoryRecordTable = std::unordered_map<uint64_t, HalMemInfo>;
@@ -47,6 +52,7 @@ class HalAnalyzer {
 public:
     static HalAnalyzer& GetInstance(Config config);
     bool Record(const ClientId &clientId, std::shared_ptr<const EventBase> event);
+    std::vector<OOMMemRecord> QueryUnfreedRecords(uint32_t clientId) const;
 private:
     explicit HalAnalyzer(Config config);
     ~HalAnalyzer();

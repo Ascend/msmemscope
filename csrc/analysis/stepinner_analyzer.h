@@ -92,6 +92,8 @@ struct NpuMemInfo {
     uint64_t duration;      // 目前经历的duration
     uint64_t stepId;        // 来自哪个的step
     uint64_t kernelIndex;   // 处于哪个event中
+    std::string cCallStack;
+    std::string pyCallStack;
 };
 
 struct GapInfo  {
@@ -131,6 +133,7 @@ class StepInnerAnalyzer {
 public:
     static StepInnerAnalyzer &GetInstance(Config config);
     bool Record(const ClientId &clientId, std::shared_ptr<const EventBase> event);
+    std::vector<OOMMemRecord> QueryUnfreedRecords(int32_t deviceId) const;
 private:
     explicit StepInnerAnalyzer(Config config);
     ~StepInnerAnalyzer();
