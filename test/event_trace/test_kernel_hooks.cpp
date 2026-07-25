@@ -16,6 +16,7 @@
  */
 
 #include <gtest/gtest.h>
+#include <cstdlib>
 #include <unordered_map>
 #include <memory.h>
 #define private public
@@ -28,6 +29,11 @@
 
 using namespace testing;
 using namespace MemScope;
+
+#define EXPECT_RESERVED_EXIT(call) \
+    EXPECT_EXIT(std::_Exit((call) == RT_ERROR_RESERVED ? EXIT_SUCCESS : EXIT_FAILURE), \
+        ExitedWithCode(EXIT_SUCCESS), ".*")
+
 RTS_API rtError_t MockRtKernelLaunch(
     const void *stubFunc, uint32_t blockDim, void *args, uint32_t argsSize, rtSmDesc_t *smDesc, rtStream_t stm)
 {
@@ -304,7 +310,7 @@ TEST(RuntimeHooks, do_rtLaunchKernelByFuncHandleV2_expect_success)
     EXPECT_EQ(rtLaunchKernelByFuncHandleV2(funcHandle, blockDim, argsHandle, stm, cfgInfo), RT_ERROR_NONE);
 }
 
-TEST(RuntimeHooks, do_rtKernelLaunch_expect_error)
+TEST(RuntimeHooksDeathTest, do_rtKernelLaunch_expect_error)
 {
     g_isDlsymNullptr = true;
     const void *stubFunc = nullptr;
@@ -313,10 +319,10 @@ TEST(RuntimeHooks, do_rtKernelLaunch_expect_error)
     uint32_t argsSize = 1;
     rtSmDesc_t *smDesc = nullptr;
     rtStream_t stm = nullptr;
-    EXPECT_EQ(rtKernelLaunch(stubFunc, blockDim, args, argsSize, smDesc, stm), RT_ERROR_RESERVED);
+    EXPECT_RESERVED_EXIT(rtKernelLaunch(stubFunc, blockDim, args, argsSize, smDesc, stm));
 }
 
-TEST(RuntimeHooks, do_rtKernelLaunchWithHandleV2_expect_error)
+TEST(RuntimeHooksDeathTest, do_rtKernelLaunchWithHandleV2_expect_error)
 {
     g_isDlsymNullptr = true;
     void *hdl = nullptr;
@@ -326,10 +332,10 @@ TEST(RuntimeHooks, do_rtKernelLaunchWithHandleV2_expect_error)
     rtSmDesc_t *smDesc = nullptr;
     rtStream_t stm = nullptr;
     const rtTaskCfgInfo_t *cfgInfo = nullptr;
-    EXPECT_EQ(rtKernelLaunchWithHandleV2(hdl, tilingKey, blockDim, argsInfo, smDesc, stm, cfgInfo), RT_ERROR_RESERVED);
+    EXPECT_RESERVED_EXIT(rtKernelLaunchWithHandleV2(hdl, tilingKey, blockDim, argsInfo, smDesc, stm, cfgInfo));
 }
 
-TEST(RuntimeHooks, do_rtKernelLaunchWithFlagV2_expect_error)
+TEST(RuntimeHooksDeathTest, do_rtKernelLaunchWithFlagV2_expect_error)
 {
     g_isDlsymNullptr = true;
     const void *stubFunc = nullptr;
@@ -339,10 +345,10 @@ TEST(RuntimeHooks, do_rtKernelLaunchWithFlagV2_expect_error)
     rtStream_t stm = nullptr;
     uint32_t flags = 1;
     const rtTaskCfgInfo_t *cfgInfo = nullptr;
-    EXPECT_EQ(rtKernelLaunchWithFlagV2(stubFunc, blockDim, argsInfo, smDesc, stm, flags, cfgInfo), RT_ERROR_RESERVED);
+    EXPECT_RESERVED_EXIT(rtKernelLaunchWithFlagV2(stubFunc, blockDim, argsInfo, smDesc, stm, flags, cfgInfo));
 }
 
-TEST(RuntimeHooks, do_rtAicpuKernelLaunchExWithArgs_expect_error)
+TEST(RuntimeHooksDeathTest, do_rtAicpuKernelLaunchExWithArgs_expect_error)
 {
     g_isDlsymNullptr = true;
     uint32_t kernelType = 0;
@@ -352,22 +358,20 @@ TEST(RuntimeHooks, do_rtAicpuKernelLaunchExWithArgs_expect_error)
     RtSmDescT * const smDesc = nullptr;
     const RtStreamT stm = nullptr;
     uint32_t flags = 1;
-    const rtTaskCfgInfo_t *cfgInfo = nullptr;
-    EXPECT_EQ(rtAicpuKernelLaunchExWithArgs(kernelType, opName, blockDim, argsInfo, smDesc, stm, flags),
-        RT_ERROR_RESERVED);
+    EXPECT_RESERVED_EXIT(rtAicpuKernelLaunchExWithArgs(kernelType, opName, blockDim, argsInfo, smDesc, stm, flags));
 }
 
-TEST(RuntimeHooks, do_rtLaunchKernelByFuncHandle_expect_error)
+TEST(RuntimeHooksDeathTest, do_rtLaunchKernelByFuncHandle_expect_error)
 {
     g_isDlsymNullptr = true;
     rtFuncHandle funcHandle = nullptr;
     rtLaunchArgsHandle argsHandle = nullptr;
     uint32_t blockDim = 1;
     const RtStreamT stm = nullptr;
-    EXPECT_EQ(rtLaunchKernelByFuncHandle(funcHandle, blockDim, argsHandle, stm), RT_ERROR_RESERVED);
+    EXPECT_RESERVED_EXIT(rtLaunchKernelByFuncHandle(funcHandle, blockDim, argsHandle, stm));
 }
 
-TEST(RuntimeHooks, do_rtLaunchKernelByFuncHandleV2_expect_error)
+TEST(RuntimeHooksDeathTest, do_rtLaunchKernelByFuncHandleV2_expect_error)
 {
     g_isDlsymNullptr = true;
     rtFuncHandle funcHandle = nullptr;
@@ -375,5 +379,5 @@ TEST(RuntimeHooks, do_rtLaunchKernelByFuncHandleV2_expect_error)
     uint32_t blockDim = 1;
     const RtStreamT stm = nullptr;
     RtTaskCfgInfoT *cfgInfo = nullptr;
-    EXPECT_EQ(rtLaunchKernelByFuncHandleV2(funcHandle, blockDim, argsHandle, stm, cfgInfo), RT_ERROR_RESERVED);
+    EXPECT_RESERVED_EXIT(rtLaunchKernelByFuncHandleV2(funcHandle, blockDim, argsHandle, stm, cfgInfo));
 }

@@ -48,9 +48,13 @@ static void ResetSingleton()
     // 全局变量初始化
     DecomposeAnalyzer::GetInstance();
     Dump::GetInstance(config);
- 
+
     // 取消数据订阅与部分config参数
     EventDispatcher::GetInstance().UnSubscribe(SubscriberId::DECOMPOSE_ANALYZER);
+
+    // 启用全部落盘事件类型，确保 ShouldDumpEvent 不过滤测试事件
+    config.dumpEventType = 0x0F;  // 启用 ALLOC/FREE/LAUNCH/ACCESS 全部 4 个 bit
+    Dump::GetInstance(config).config_.dumpEventType = config.dumpEventType;
 }
 
 static bool RemoveDir(const std::string& dirPath)
