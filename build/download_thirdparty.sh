@@ -29,7 +29,7 @@ fi
 
 SQLITE_DIR="${TOP_DIR}/opensource/sqlite3"
 SQLITE_VERSION="3460100"  # corresponds to 3.46.1
-SQLITE_URL="https://www.sqlite.org/2024/sqlite-amalgamation-${SQLITE_VERSION}.zip"
+SQLITE_URL="https://inst.obs.cn-north-4.myhuaweicloud.com/env/mirror/sqlite-amalgamation-${SQLITE_VERSION}.zip"
 
 if [ ! -d "$SQLITE_DIR" ] || [ ! -f "${SQLITE_DIR}/sqlite3.c" ]; then
     echo "Downloading SQLite amalgamation v${SQLITE_VERSION}..."

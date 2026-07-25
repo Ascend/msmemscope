@@ -356,8 +356,8 @@ TEST(Path, check_read_permission_invalid_path_expect_return_false)
     std::string pathStr = "test.txt";
     FILE *fp = fopen(pathStr.c_str(), "w");
     fclose(fp);
-    ASSERT_TRUE(Utility::CheckIsValidInputPath(pathStr));
-    ASSERT_TRUE(Utility::CheckIsValidOutputPath(pathStr));
+    ASSERT_FALSE(Utility::CheckIsValidInputPath(pathStr));
+    ASSERT_FALSE(Utility::CheckIsValidOutputPath(pathStr));
     remove(pathStr.c_str());
 }
 
