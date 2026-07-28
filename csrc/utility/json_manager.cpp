@@ -18,6 +18,7 @@
 #include "json_manager.h"
 
 #include <fstream>
+#include <unistd.h>
 
 #include "client_parser.h"
 #include "path.h"
@@ -38,26 +39,33 @@ bool JsonManager::SaveToFile(const std::string& configOutputDir)
     {
         return false;
     }
-    std::ofstream ofs(jsonFilePath_);
-    if (!ofs.is_open())
+    if (fp_ == nullptr)
     {
-        std::cout << "[msmemscope] Error: Failed to save json file: " << jsonFilePath_ << std::endl;
+        std::cout << "[msmemscope] Error: Config file pointer is null." << std::endl;
         return false;
     }
-    else
+
+    try
     {
-        try
+        std::string dumpStr = jsonConfig_.dump(JSON_INDENT);
+        if (ftruncate(fileno(fp_), 0) != 0)
         {
-            ofs << jsonConfig_.dump(JSON_INDENT);
-        }
-        catch (const std::exception& e)
-        {
-            std::cout << "[msmemscope] Error: Exception during dump: " << e.what() << std::endl;
-            ofs.close();
+            std::cout << "[msmemscope] Error: Failed to truncate json file: " << jsonFilePath_ << std::endl;
             return false;
         }
+
+        if (fprintf(fp_, "%s", dumpStr.c_str()) < 0)
+        {
+            std::cout << "[msmemscope] Error: Failed to write json file: " << jsonFilePath_ << std::endl;
+            return false;
+        }
+        fflush(fp_);
     }
-    ofs.close();
+    catch (const std::exception& e)
+    {
+        std::cout << "[msmemscope] Error: Exception during dump: " << e.what() << std::endl;
+        return false;
+    }
     return true;
 }
 
