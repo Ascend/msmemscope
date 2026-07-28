@@ -352,6 +352,10 @@ TEST(Path, check_valid_path_expect_return_true)
 
 TEST(Path, check_read_permission_invalid_path_expect_return_false)
 {
+    if (geteuid() == 0)
+    {
+        GTEST_SKIP() << "root bypasses file permission checks";
+    }
     Utility::UmaskGuard umaskGuard(333);
     std::string pathStr = "test.txt";
     FILE *fp = fopen(pathStr.c_str(), "w");

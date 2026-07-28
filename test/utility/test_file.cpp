@@ -17,6 +17,7 @@
 
 #include <gtest/gtest.h>
 #include <dlfcn.h>
+#include <unistd.h>
 #define private public
 #include "utility/file.h"
 #undef private
@@ -116,6 +117,10 @@ TEST_F(FileTest, check_file_before_create_path_not_exist_expect_false)
 
 TEST_F(FileTest, check_file_before_create_path_unreadable_expect_false)
 {
+    if (geteuid() == 0)
+    {
+        GTEST_SKIP() << "root bypasses file permission checks";
+    }
     std::string unreadableDir = "./testmsmemscope/unreadable_dir";
     MakeDir(unreadableDir);
     chmod(unreadableDir.c_str(), 0000); // 移除所有权限
