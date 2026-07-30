@@ -20,9 +20,9 @@
 
 #include <unordered_map>
 
+#include "comm_def.h"
 #include "config_info.h"
 #include "constant.h"
-#include "comm_def.h"
 #include "event_dispatcher.h"
 #include "memory_state_manager.h"
 #include "record_info.h"

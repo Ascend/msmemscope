@@ -332,6 +332,7 @@ void Dump::DumpHistoricalState(MemoryState* state) { DumpMemoryState(state); }
 
 Dump::~Dump()
 {
+    EventDispatcher::GetInstance().UnSubscribe(SubscriberId::DUMP);
     WritePublicEventToFile();
     FflushEventToFile();
 }

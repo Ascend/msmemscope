@@ -20,15 +20,17 @@
 
 #include <cstddef>
 
-namespace MemScope {
+namespace MemScope
+{
 
 using ClientId = std::size_t;
 
-enum class MemScopeCommType {
+enum class MemScopeCommType
+{
     SHARED_MEMORY,
     MEMORY_DEBUG
 };
 
-}
+}  // namespace MemScope
 
 #endif
