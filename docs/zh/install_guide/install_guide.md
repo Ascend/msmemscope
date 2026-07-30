@@ -1,4 +1,6 @@
-# **msMemScope安装指南**
+# msMemScope 安装指南
+
+<br>
 
 ## 1. 安装说明
 
@@ -12,108 +14,92 @@
 
 ### 2.1 在线安装
 
-若您的设备具备互联网访问能力，可通过一条命令自动完成工具的下载与安装。请参见昇腾社区MindStudio[下载](https://www.hiascend.com/developer/software/mindstudio/download)页面，选择对应的CANN版本，并在安装方式中选择“在线安装”，系统将引导您完成后续操作。
+若您的设备具备互联网访问能力，可通过一条命令自动完成工具的下载与安装。请参见昇腾社区MindStudio[下载](https://www.hiascend.com/developer/software/mindstudio/download)页面，选择对应的CANN版本，并在安装方式中选择"在线安装"，系统将引导您完成后续操作。
 
 ### 2.2 离线安装
 
-对处于企业内网等无外网环境的设备，请先在可联网的机器上下载完整的离线安装包，再将其传输至目标设备进行安装。请参见昇腾社区MindStudio[下载](https://www.hiascend.com/developer/software/mindstudio/download)页面，选择对应的CANN版本，并在安装方式中选择“离线安装”，获取对应的安装包及操作指引。
+对处于企业内网等无外网环境的设备，请先在可联网的机器上下载完整的离线安装包，再将其传输至目标设备进行安装。请参见昇腾社区MindStudio[下载](https://www.hiascend.com/developer/software/mindstudio/download)页面，选择对应的CANN版本，并在安装方式中选择"离线安装"，获取对应的安装包及操作指引。
 
 ### 2.3 源码安装
 
-#### 2.3.1 安装依赖
+如需使用最新代码的功能，或对源码进行修改以增强功能，可下载本仓库代码，自行编译、打包工具并完成安装。
 
-安装前需确保Git、Python等环境可用，请满足[版本依赖](../development_guide/development_guide.md#1-开发环境配置)限制，若不满足可执行以下命令安装。
+#### 2.3.1 环境准备
 
-Debian系列：
+源码编译统一使用 MindStudio 标准构建环境。
+
+- 日常开发或使用已发布镜像，请参考《[MindStudio工具开发环境安装指导](https://gitcode.com/Ascend/msot/blob/master/docs/zh/common/dev_env_setup.md)》。
+- 需要从基础操作系统复现环境、执行源码构建验证或单元测试验证时，必须参考《[MindStudio统一构建镜像制作指南](https://gitcode.com/Ascend/msot/blob/master/docs/zh/common/docker_image_build_guide.md)》，从openEuler基础镜像现场构建环境镜像。
+
+本文档后续的源码编译和单元测试命令，均在上述指定镜像容器或现场构建的环境镜像的容器中执行，CANN 软件包版本、GCC 版本和 Python 版本以统一镜像制作指南为准，本仓库不重复维护。
+
+镜像构建完成后，必须使用统一镜像制作指南第 7 章给出的 `ctr_in.py` 命令，在交互式终端中启动并进入容器。不得使用普通 `docker run` 创建容器，也不得使用 `docker exec <容器名> bash -c '<命令>'` 替代交互式环境；否则可能跳过 Python、GCC 和 CANN 环境初始化。
+
+进入 `ctr_in.py` 打开的交互式容器 Shell 后，执行如下命令克隆本仓库：
 
 ```bash
-sudo apt-get install -y python3 git build-essential cmake
+cd ~
+git clone https://gitcode.com/Ascend/msmemscope.git
 ```
 
-openEuler系列：
+#### 2.3.2 执行编译
+
+保持在 `ctr_in.py` 打开的同一个交互式容器 Shell 中，在仓库根目录执行以下命令，自动完成依赖下载与构建：
 
 ```bash
-sudo yum install -y python3 git gcc gcc-c++ make cmake
+cd ~/msmemscope
+python3 build.py
 ```
 
-#### 2.3.2 编译构建run包
+构建成功后，安装包将生成在 `artifacts/` 目录下。
 
-1. 在终端执行以下git命令，克隆（clone）msMemScope源码。
+#### 2.3.3 执行单元测试（可选）
 
-   ```bash
-   git clone https://gitcode.com/Ascend/msmemscope.git
-   ```
+此步骤非安装必需。如需验证代码基本功能，可执行单元测试：
 
-2. 执行以下命令下载Python三方依赖。注：`sqlite3`为离线功能使用依赖，可选安装。
+```bash
+cd ~/msmemscope
+python3 build.py test
+```
 
-   ```bash
-   cd ./msmemscope
-   pip3 install -r ./requirements.txt
-   ```
+命令返回码为 0，且测试用例均无失败，表示单元测试通过。
 
-3. 下载构建依赖以及编译。
+#### 2.3.4 安装
 
-   ```bash
-   cd ./msmemscope/build
-   python3 build.py local test
-   ```
+##### 2.3.4.1 准备 run 包
 
-   其中参数说明如下：
+安装软件包前需给run包添加可执行权限。进入run包保存路径，执行如下命令，增加可执行权限。
 
-   - `local`：代表是否本地构建，添加会下载gtest、json等依赖库用于本地构建，一般只有第一次需要，除非依赖库有更新。
-   - `test`：代表是否要构建测试用例。
+```bash
+cd ~/msmemscope/artifacts
+chmod +x mindstudio-memscope_<version>_linux-<arch>.run
+```
 
-4. 在`./build`目录下执行以下命令，编译软件包。
+##### 2.3.4.2 安装
 
-   ```bash
-   bash make_run.sh
-   ```
+将run包拷贝到运行环境中，执行以下命令安装。
 
-   将工具的产物打包成一个run包，回显信息如下，表示打包成功，该包支持安装和升级的能力。
+```bash
+bash mindstudio-memscope_<version>_linux-<arch>.run --install --install-path=<path>
+```
 
-   ```bash
-   [INFO] Run file created successfully: xx/mindstudio-memscope_<version>_linux-<arch>.run
-   Usage instructions:
-     Install: bash mindstudio-memscope_<version>_linux-<arch>.run --install [--install-path=/path]
-     Upgrade: bash mindstudio-memscope_<version>_linux-<arch>.run --upgrade --install-path=/path
-     Version: bash mindstudio-memscope_<version>_linux-<arch>.run --version
-     Help:    bash mindstudio-memscope_<version>_linux-<arch>.run --help
-   ```
+注：其中`path`为安装目录。若未指定`--install-path`参数，工具将自动检测环境变量`ASCEND_TOOLKIT_HOME`或`ASCEND_HOME_PATH`：
 
-   注：其中`arch`表示CPU架构。
-   编译完成后，会在`./build`目录下生成软件包。
+- 若存在上述任一环境变量，将提示用户确认是否安装至`$ASCEND_TOOLKIT_HOME/tools`（优先）或`$ASCEND_HOME_PATH/tools`目录。若该目录下已存在msmemscope子目录，将自动启用升级模式。
+- 若不存在上述环境变量，或用户选择不安装至推荐路径，则默认安装至当前目录。
 
-#### 2.3.3 安装run包
+当回显包含以下信息时，表示软件包安装成功。
 
-1. 增加对run包的可执行权限。
+```text
+source <path>/msmemscope/set_env.sh
+[INFO] Installation completed successfully
+```
 
-    ```shell
-    chmod +x mindstudio-memscope_<version>_linux-<arch>.run
-    ```
-
-2. 执行以下命令，安装软件包。
-
-   ```bash
-   bash mindstudio-memscope_<version>_linux-<arch>.run --install --install-path=<path>
-   ```
-
-   注：其中`path`为安装目录。若未指定`--install-path`参数，工具将自动检测环境变量`ASCEND_TOOLKIT_HOME`或`ASCEND_HOME_PATH`：
-
-   - 若存在上述任一环境变量，将提示用户确认是否安装至`$ASCEND_TOOLKIT_HOME/tools`（优先）或`$ASCEND_HOME_PATH/tools`目录。若该目录下已存在msmemscope子目录，将自动启用升级模式。
-   - 若不存在上述环境变量，或用户选择不安装至推荐路径，则默认安装至当前目录。
-
-   将msMemScope安装在`path`目录下，安装成功后，打印以下信息。
-
-   ```bash
-   source <path>/msmemscope/set_env.sh
-   [INFO] Installation completed successfully
-   ```
-
-#### 2.3.4 安装后检查
+#### 2.3.5 安装后检查
 
 请检查并确认安装目录：`<path>/msmemscope`下已生成`set_env.sh`文件。
 
-#### 2.3.5 安装后配置
+#### 2.3.6 安装后配置
 
 在使用msMemScope工具前，需执行以下命令，配置PYTHONPATH和PATH环境变量。
 
@@ -123,7 +109,7 @@ source <path>/msmemscope/set_env.sh
 
 环境变量配置成功后，打印以下信息。
 
-```tex
+```text
 Setting up msmemscope environment...
 bash: local: can only be used in a function
 ✓ Added to PYTHONPATH (forced to front):<path>/msmemscope/python
@@ -136,8 +122,8 @@ msmemscope environment setup completed
 
 安装完成后，执行以下命令验证工具是否安装成功：
 
-```shell
-  msmemscope --help
+```bash
+msmemscope --help
 ```
 
 若输出不报错，且能显示帮助信息，则表明安装成功。
@@ -158,20 +144,20 @@ msmemscope environment setup completed
 
    > [!NOTE]
    >
-   > - 需要联网环境才能下载，若环境不允许联网或离线状态，请先在可联网的环境下载该脚本后拷贝到目标设备。
+   > - 需要联网环境才能下载，若环境不允许联网或处于离线状态，请先在可联网的环境下载该脚本后拷贝到目标设备。
    > - 若执行命令无响应或出现连接失败、SSL证书错误等问题，请参见[FAQ](https://www.hiascend.com/developer/blog/details/02176213671719317003)。
 
 2. 执行卸载。
 
    ```bash
-   python ms_install.py uninstall {tools_name}
+   python3 ms_install.py uninstall {tools_name}
    ```
 
-   其中{tools_name}配置为需要卸载的工具名称，可通过`python ms_install.py help`命令查询，在打印信息中的Available Tools字段下显示工具名称。
+   其中{tools_name}配置为需卸载的工具名称，可通过`python3 ms_install.py help`命令查询，在打印信息中的Available Tools字段下显示工具名称。
 
    卸载成功打印如下信息：
 
-   ```ColdFusion
+   ```text
    Successfully uninstalled 1 tool ({tools_name})
    ```
 
