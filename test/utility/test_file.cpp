@@ -17,6 +17,7 @@
 
 #include <gtest/gtest.h>
 #include <dlfcn.h>
+#include <unistd.h>
 #define private public
 #include "utility/file.h"
 #undef private
@@ -116,11 +117,15 @@ TEST_F(FileTest, check_file_before_create_path_not_exist_expect_false)
 
 TEST_F(FileTest, check_file_before_create_path_unreadable_expect_false)
 {
+    if (geteuid() == 0)
+    {
+        GTEST_SKIP() << "root bypasses file permission checks";
+    }
     std::string unreadableDir = "./testmsmemscope/unreadable_dir";
     MakeDir(unreadableDir);
     chmod(unreadableDir.c_str(), 0000); // 移除所有权限
     auto ret = Utility::CheckFileBeforeCreate(unreadableDir);
-    ASSERT_TRUE(ret);
+    ASSERT_FALSE(ret);
     chmod(unreadableDir.c_str(), 0755); // 恢复权限以便删除
     rmdir(unreadableDir.c_str());
 }
@@ -266,9 +271,9 @@ TEST_F(FileTest, is_file_size_safe_exceed_max_size_expect_false)
 {
     std::string overSizeFile = "./over_max_size_file.txt";
     FILE* fp = fopen(overSizeFile.c_str(), "w");
-    // 写入超过MAX_INPUT_FILE_SIZE的内容（多1字节）
-    std::string content(MAX_INPUT_FILE_SIZE + 1, 'a');
-    fwrite(content.c_str(), 1, content.size(), fp);
+    // ftruncate() 会把文件的逻辑大小设置为 8 GB + 1 字节，达到同样效果，避免 std::bad_alloc 可能资源不足和测试耗时过长
+    ASSERT_NE(fp, nullptr);
+    ASSERT_EQ(ftruncate(fileno(fp), static_cast<off_t>(MAX_INPUT_FILE_SIZE + 1)), 0);
     fclose(fp);
     
     auto ret = Utility::IsFileSizeSafe(overSizeFile);

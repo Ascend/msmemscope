@@ -16,6 +16,7 @@
  */
 
 #include <gtest/gtest.h>
+#include <cstdlib>
 #include <unordered_map>
 #include <memory.h>
 #define private public
@@ -28,6 +29,11 @@
 
 using namespace testing;
 using namespace MemScope;
+
+#define EXPECT_RESERVED_EXIT(call) \
+    EXPECT_EXIT(std::_Exit((call) == RT_ERROR_RESERVED ? EXIT_SUCCESS : EXIT_FAILURE), \
+        ExitedWithCode(EXIT_SUCCESS), ".*")
+
 RTS_API rtError_t MockRtKernelLaunch(
     const void *stubFunc, uint32_t blockDim, void *args, uint32_t argsSize, rtSmDesc_t *smDesc, rtStream_t stm)
 {
@@ -318,4 +324,5 @@ TEST(RuntimeHooks, do_vallina_get_nullptr_when_dlsym_fails)
     // so Get() will call dlsym(handle_, symbol), which returns nullptr when g_isDlsymNullptr is true.
     void *ptr = VallinaSymbol<RuntimeLibLoader>::Instance().Get("rtKernelLaunch");
     EXPECT_EQ(ptr, nullptr);
+
 }

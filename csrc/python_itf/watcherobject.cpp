@@ -181,18 +181,18 @@ static PyObject* PyMemScopeWatcherWatch(PyObject* self, PyObject* args, PyObject
         if (!nameObj)
         {
             PyErr_SetString(PyExc_TypeError, "The name parameter must be set.");
-            Py_RETURN_NONE;
+            return NULL;
         }
         name = PyUnicode_AsUTF8(nameObj);
         if (name == nullptr)
         {
             PyErr_SetString(PyExc_TypeError, "Parse name failed!");
-            Py_RETURN_NONE;
+            return NULL;
         }
         if (std::strlen(name) > MAX_WATCH_NAME_LENGTH)
         {
             PyErr_Format(PyExc_ValueError, "Input name exceeds maximum allowed length %zu.", MAX_WATCH_NAME_LENGTH);
-            Py_RETURN_NONE;
+            return NULL;
         }
         PyObject* dumpNumsObj = PyDict_GetItemString(kwds, "dump_nums");
         if (dumpNumsObj)
@@ -201,7 +201,7 @@ static PyObject* PyMemScopeWatcherWatch(PyObject* self, PyObject* args, PyObject
             if (PyErr_Occurred())
             {
                 PyErr_SetString(PyExc_TypeError, "Parse dump_nums failed!");
-                Py_RETURN_NONE;
+                return NULL;
             }
         }
         lengthObj = PyDict_GetItemString(kwds, "length");
@@ -209,12 +209,12 @@ static PyObject* PyMemScopeWatcherWatch(PyObject* self, PyObject* args, PyObject
     else
     {
         PyErr_SetString(PyExc_TypeError, "At least one name keyword parameter must be entered.");
-        Py_RETURN_NONE;
+        return NULL;
     }
     MonitoredTensor tensorInfo{};
     if (!ParseInputArgs(args, tensorInfo, lengthObj, length))
     {
-        Py_RETURN_NONE;
+        return NULL;
     }
     uint64_t ptr = static_cast<uint64_t>((std::uintptr_t)(tensorInfo.data));
     TensorDumper::GetInstance().SetDumpNums(ptr, dumpNums);

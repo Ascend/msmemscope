@@ -131,38 +131,18 @@ msMemScope 工具提供 API 接口，便于快速分析内存情况，请参见 
 
 ## ⚖️ 相关说明
 
-🔹 《[版本说明](./docs/zh/release_notes/release_note.md)》
-
-| 发布版本 | 发布时间 | 发布 Tag | 兼容性说明 |
-|---------|----------|----------|------------|
-| 26.0.0 | 2026/04/29 | tag_MindStudio_26.0.0.B120_001 | 兼容昇腾 CANN 8.5.0 及以前版本。请参考《[CANN 安装指南](https://www.hiascend.com/cann)》获取 CANN 安装包。 |
-| 26.0.beta.1 | 2026/04/08 | tag_MindStudio_26.0.T2.B100_001 | 兼容昇腾 CANN 8.5.0 及以前版本。请参考《[CANN 安装指南](https://www.hiascend.com/cann)》获取 CANN 安装包。 |
-| 26.0.0-alpha.1 | 2026/02/04 | tag_MindStudio_26.0.0-alpha.1 | 兼容昇腾 CANN 8.5.0 及以前版本。请参考《[CANN 安装指南](https://www.hiascend.com/cann)》获取 CANN 安装包。 |
-
-**新增特性**
-
-- 支持 PyTorch 框架下采集内存快照。
-- 支持识别显存页表属性并进行落盘。
-- 支持 vLLM、Verl、MindSpeed 场景下的显存拆解。
-
-<details>
-<summary>📖 查看历史版本</summary>
-
-更多历史版本信息请参见 [历史版本](./docs/zh/release_notes/release_note.md)。
-
-</details>
-
+🔹 《[版本说明](https://gitcode.com/Ascend/msmemscope/releases)》
 🔹 《[许可证声明](./docs/zh/legal/license_notice.md)》
 🔹 《[安全声明](./docs/zh/legal/security_statement.md)》
 🔹 《[免责声明](./docs/zh/legal/disclaimer.md)》
 
 ## 🤝 建议与交流
 
-欢迎大家为社区做贡献。如果有任何疑问或建议，请提交 [Issues](https://gitcode.com/Ascend/msmemscope/issues)，我们会尽快回复。也可参考《[交流指南](./docs/zh/communication_guide/communication.md)》获取详细的联系方式和支持渠道。感谢您的支持。
+欢迎大家为社区做贡献。如果有任何疑问或建议，请提交 [Issues](https://gitcode.com/Ascend/msmemscope/issues)，我们会尽快回复。感谢您的支持。
 
-|                                      📱 关注 MindStudio 公众号                                       | 💬 更多交流与支持                                                                                                                                                                                                                                                                                                                                                                                                                     |
-|:-----------------------------------------------------------------------------------------------:|:-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| <img src="https://raw.gitcode.com/Ascend/msprobe/raw/master/docs/zh/figures/readme/officialAccount.jpg" width="120"><br><sub>*扫码关注获取最新动态*</sub> | 💡 **加入微信交流群**：<br>关注公众号，回复"交流群"即可获取入群二维码。<br><br>🛠️ **其他渠道**：<br>👉 昇腾助手：[![WeChat](https://img.shields.io/badge/WeChat-07C160?style=flat-square&logo=wechat&logoColor=white)](https://gitcode.com/Ascend/msit/blob/master/docs/zh/figures/readme/xiaozhushou.png)<br>👉 昇腾论坛：[![Website](https://img.shields.io/badge/Website-%231e37ff?style=flat-square&logo=RSS&logoColor=white)](https://www.hiascend.com/forum/) |
+|                                                                         即时互动（微信群）                                                                          |                                                                               官方资讯（公众号）                                                                                | 深度支持（助手/论坛）                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+|:----------------------------------------------------------------------------------------------------------------------------------------------------------:|:----------------------------------------------------------------------------------------------------------------------------------------------------------------------:|:--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| <img src="https://raw.gitcode.com/Ascend/docs/files/master/common/Writing_Template/figures/qr_code_wechat_work.png" width="120"><br><sub>*扫码加入技术交流群*</sub> | <img src="https://raw.gitcode.com/Ascend/docs/files/master/common/Writing_Template/figures/qr_code_wechat_official_account.png" width="120"><br><sub>*扫码关注官方公众号*</sub> | 扫码入群并关注公众号，直达 MindStudio 用户与开发者最快捷的交流平台：<br> **快速提问：** 与社区小伙伴即时探讨技术问题<br>**掌握动态：** 第一时间获取版本发布与功能更新通知<br> **经验共享：** 与广大开发者交流最佳实践与实战心得  <br> <br> **更多支持渠道**：👉 昇腾助手：[![WeChat](https://img.shields.io/badge/WeChat-07C160?style=flat-square&logo=wechat&logoColor=white)](https://gitcode.com/Ascend/msit/blob/master/docs/zh/figures/readme/xiaozhushou.png) 👉 昇腾论坛：[![Website](https://img.shields.io/badge/Website-%231e37ff?style=flat-square&logo=RSS&logoColor=white)](https://www.hiascend.com/forum/) |
 
 ## 🙏 致谢
 
