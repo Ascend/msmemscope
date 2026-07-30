@@ -142,11 +142,6 @@ bool MstxTableMemCoreInject(MstxGetModuleFuncTableFunc getFuncTable)
 
 mstxDomainHandle_t MstxDomainCreateAFunc(char const *domainName)
 {
-    // 总开关控制domain的创建和数据的上报
-    if (!EventTraceManager::Instance().IsTracingEnabled())
-    {
-        return nullptr;
-    }
     return MstxManager::GetInstance().ReportDomainCreateA(domainName);
 }
 

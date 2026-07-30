@@ -34,6 +34,8 @@ Dump& Dump::GetInstance(Config config)
 
 Dump::Dump(Config config)
 {
+    // 确保 FileWriteManager 先于 Dump 构造，从而在 Dump 析构时 FileWriteManager 仍然存活
+    Utility::FileWriteManager::GetInstance();
     config_ = config;
     auto func = std::bind(&Dump::EventHandle, this, std::placeholders::_1, std::placeholders::_2);
     std::vector<EventBaseType> eventList{EventBaseType::FREE,          EventBaseType::MSTX,   EventBaseType::OP_LAUNCH,
@@ -109,7 +111,8 @@ void Dump::DumpMemoryEvent(std::shared_ptr<MemoryEvent>& event, MemoryState* sta
     attr += "allocation_id:" + std::to_string(state->allocationId) + ",";
     attr += "addr:" + Uint64ToHexString(event->addr) + ",";
     attr += "size:" + std::to_string(event->size) + ",";
-    if (event->eventType != EventBaseType::ACCESS && event->eventSubType != EventSubType::HAL)
+    // 合成事件（影子转正/虚拟释放）没有total/used信息，跳过
+    if (!event->isShadowEvent && event->eventType != EventBaseType::ACCESS && event->eventSubType != EventSubType::HAL)
     {
         if (event->eventSubType != EventSubType::HOST_PINNED)
         {
@@ -120,6 +123,11 @@ void Dump::DumpMemoryEvent(std::shared_ptr<MemoryEvent>& event, MemoryState* sta
             attr += "pinned:true,";
         }
         attr += "used:" + std::to_string(event->used) + ",";
+    }
+
+    if (event->isShadowEvent)
+    {
+        attr += "shadow:true,";
     }
 
     if (event->eventType == EventBaseType::ACCESS)
@@ -319,6 +327,8 @@ void Dump::FflushEventToFile() const
         handler.second->FflushFile();
     }
 }
+
+void Dump::DumpHistoricalState(MemoryState* state) { DumpMemoryState(state); }
 
 Dump::~Dump()
 {

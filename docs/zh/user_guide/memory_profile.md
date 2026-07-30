@@ -24,6 +24,7 @@ msMemScope工具的安装，请参见[《msMemScope工具安装指南》](../ins
 - 当设置events="traceback"，采集Python Trace事件，开启后，将落盘csv文件，名称为python_trace_{*TID*}_{*timestamp*}.csv，具体信息可参见[输出文件说明](./output_file_spec.md)。
 - 如果需要关闭采集项，可使用`none`关键字。例如，关闭事件采集则设置events="none"；关闭分析功能则设置analysis="none"。
 - 使用Python接口方式自定义采集范围，支持设置多段采集范围。
+- **历史显存感知**：Python API模式下，`msmemscope.start()` 调用时会自动将调用前已分配且尚未释放的显存块（存量显存）一并记录到输出文件中。该机制可保证 start~stop 区间内的显存总量统计准确。历史显存块仅做数据记录（落盘），不参与泄漏分析、显存拆解、低效识别等分析流程。此机制对用户透明，无需额外配置。
 
 ### 使用示例
 

@@ -23,8 +23,6 @@
 #include "file.h"
 #undef private
 #include "bit_field.h"
-#include "mstx_analyzer.h"
-#include "py_step_manager.h"
 #include "record_info.h"
 #include "config_info.h"
 
@@ -77,10 +75,10 @@ TEST(StepInnerAnalyzerTest, do_npu_free_record_expect_sucess) {
     analysisConfig.stepList.stepCount = 0;
     StepInnerAnalyzer::GetInstance(analysisConfig).config_.stepList.stepCount = 0;
     static StepInnerAnalyzer analyzer(analysisConfig);
-    ClientId clientId = 0;
 
     std::shared_ptr<MemoryEvent> event1 = std::make_shared<MemoryEvent>();
     event1->eventType = EventBaseType::MALLOC;
+    event1->poolType = PoolType::PTA_CACHING;
     event1->eventSubType = EventSubType::PTA_CACHING;
     event1->id = 1;
     event1->device = 0;
@@ -90,6 +88,7 @@ TEST(StepInnerAnalyzerTest, do_npu_free_record_expect_sucess) {
 
     std::shared_ptr<MemoryEvent> event2 = std::make_shared<MemoryEvent>();
     event2->eventType = EventBaseType::FREE;
+    event2->poolType = PoolType::PTA_CACHING;
     event2->eventSubType = EventSubType::PTA_CACHING;
     event2->id = 2;
     event2->device = 0;
@@ -97,13 +96,14 @@ TEST(StepInnerAnalyzerTest, do_npu_free_record_expect_sucess) {
     event2->addr = 12345;
     event2->used = 0;
 
-    EXPECT_TRUE(StepInnerAnalyzer::GetInstance(analysisConfig).Record(clientId, event1));
-    EXPECT_TRUE(StepInnerAnalyzer::GetInstance(analysisConfig).Record(clientId, event2));
+    std::shared_ptr<EventBase> baseEvent1 = event1;
+    StepInnerAnalyzer::GetInstance(analysisConfig).EventHandle(baseEvent1, nullptr);
+    std::shared_ptr<EventBase> baseEvent2 = event2;
+    StepInnerAnalyzer::GetInstance(analysisConfig).EventHandle(baseEvent2, nullptr);
 }
 
 TEST(StepInnerAnalyzerTest, do_reveive_mstxmsg_expect_memscope_warning)
 {
-    ClientId clientId = 0;
     std::shared_ptr<MstxEvent> eventStart1 = std::make_shared<MstxEvent>();
     eventStart1->eventType = EventBaseType::MSTX;
     eventStart1->eventSubType = EventSubType::MSTX_RANGE_START;
@@ -131,6 +131,7 @@ TEST(StepInnerAnalyzerTest, do_reveive_mstxmsg_expect_memscope_warning)
     // 经过两个step的内存
     std::shared_ptr<MemoryEvent> eventMem = std::make_shared<MemoryEvent>();
     eventMem->eventType = EventBaseType::MALLOC;
+    eventMem->poolType = PoolType::PTA_CACHING;
     eventMem->eventSubType = EventSubType::PTA_CACHING;
     eventMem->id = 1;
     eventMem->device = 0;
@@ -151,14 +152,14 @@ TEST(StepInnerAnalyzerTest, do_reveive_mstxmsg_expect_memscope_warning)
     StepInnerAnalyzer::GetInstance(analysisConfig).crtStepSource_.store(
         StepSource::None, std::memory_order_release);
     StepInnerAnalyzer::GetInstance(analysisConfig).ReceiveMstxMsg(eventStart1);
-    EXPECT_TRUE(StepInnerAnalyzer::GetInstance(analysisConfig).Record(clientId, eventMem));
+    std::shared_ptr<EventBase> baseEventMem = eventMem;
+    StepInnerAnalyzer::GetInstance(analysisConfig).EventHandle(baseEventMem, nullptr);
     StepInnerAnalyzer::GetInstance(analysisConfig).ReceiveMstxMsg(eventStart2);
     StepInnerAnalyzer::GetInstance(analysisConfig).ReceiveMstxMsg(eventEnd);
 }
 
 TEST(StepInnerAnalyzerTest, do_reveive_stepmsg_expect_memscope_warning)
 {
-    ClientId clientId = 0;
     std::shared_ptr<SystemEvent> eventStep1 = std::make_shared<SystemEvent>();
     eventStep1->device = 0;
     eventStep1->name = "2";
@@ -171,6 +172,7 @@ TEST(StepInnerAnalyzerTest, do_reveive_stepmsg_expect_memscope_warning)
     // 经过两个step的内存
     std::shared_ptr<MemoryEvent> eventMem = std::make_shared<MemoryEvent>();
     eventMem->eventType = EventBaseType::MALLOC;
+    eventMem->poolType = PoolType::PTA_CACHING;
     eventMem->eventSubType = EventSubType::PTA_CACHING;
     eventMem->id = 1;
     eventMem->device = 0;
@@ -191,7 +193,8 @@ TEST(StepInnerAnalyzerTest, do_reveive_stepmsg_expect_memscope_warning)
     StepInnerAnalyzer::GetInstance(analysisConfig).config_.stepList.stepCount = 0;
     static StepInnerAnalyzer analyzer(analysisConfig);
     StepInnerAnalyzer::GetInstance(analysisConfig).ReceiveStepMsg(eventStep1);
-    EXPECT_TRUE(StepInnerAnalyzer::GetInstance(analysisConfig).Record(clientId, eventMem));
+    std::shared_ptr<EventBase> baseEventMem = eventMem;
+    StepInnerAnalyzer::GetInstance(analysisConfig).EventHandle(baseEventMem, nullptr);
     StepInnerAnalyzer::GetInstance(analysisConfig).ReceiveStepMsg(eventStep2);
 }
 
@@ -205,10 +208,10 @@ TEST(StepInnerAnalyzerTest, do_npu_malloc_record_expect_sucess) {
     analysisConfig.stepList.stepCount = 0;
     StepInnerAnalyzer::GetInstance(analysisConfig).config_.stepList.stepCount = 0;
     static StepInnerAnalyzer analyzer(analysisConfig);
-    ClientId clientId = 0;
 
     std::shared_ptr<MemoryEvent> eventMem = std::make_shared<MemoryEvent>();
     eventMem->eventType = EventBaseType::MALLOC;
+    eventMem->poolType = PoolType::PTA_CACHING;
     eventMem->eventSubType = EventSubType::PTA_CACHING;
     eventMem->id = 1;
     eventMem->device = 0;
@@ -217,7 +220,8 @@ TEST(StepInnerAnalyzerTest, do_npu_malloc_record_expect_sucess) {
     eventMem->used = 512;
     eventMem->total = 512;
 
-    EXPECT_TRUE(StepInnerAnalyzer::GetInstance(analysisConfig).Record(clientId, eventMem));
+    std::shared_ptr<EventBase> baseEventMem = eventMem;
+    StepInnerAnalyzer::GetInstance(analysisConfig).EventHandle(baseEventMem, nullptr);
 }
 
 TEST(StepInnerAnalyzerTest, do_npu_malloc_record_expect_double_malloc) {
@@ -230,10 +234,10 @@ TEST(StepInnerAnalyzerTest, do_npu_malloc_record_expect_double_malloc) {
     analysisConfig.stepList.stepCount = 0;
     StepInnerAnalyzer::GetInstance(analysisConfig).config_.stepList.stepCount = 0;
     static StepInnerAnalyzer analyzer(analysisConfig);
-    ClientId clientId = 0;
 
     std::shared_ptr<MemoryEvent> eventMem = std::make_shared<MemoryEvent>();
     eventMem->eventType = EventBaseType::MALLOC;
+    eventMem->poolType = PoolType::PTA_CACHING;
     eventMem->eventSubType = EventSubType::PTA_CACHING;
     eventMem->id = 1;
     eventMem->device = 0;
@@ -243,14 +247,17 @@ TEST(StepInnerAnalyzerTest, do_npu_malloc_record_expect_double_malloc) {
     // 地址重复的申请
     std::shared_ptr<MemoryEvent> eventMem2 = std::make_shared<MemoryEvent>();
     eventMem2->eventType = EventBaseType::MALLOC;
+    eventMem2->poolType = PoolType::PTA_CACHING;
     eventMem2->eventSubType = EventSubType::PTA_CACHING;
     eventMem2->id = 1;
     eventMem2->device = 0;
     eventMem2->size = 512;
     eventMem2->addr = 12345;
 
-    EXPECT_TRUE(StepInnerAnalyzer::GetInstance(analysisConfig).Record(clientId, eventMem));
-    EXPECT_TRUE(StepInnerAnalyzer::GetInstance(analysisConfig).Record(clientId, eventMem2));
+    std::shared_ptr<EventBase> baseEventMem = eventMem;
+    StepInnerAnalyzer::GetInstance(analysisConfig).EventHandle(baseEventMem, nullptr);
+    std::shared_ptr<EventBase> baseEventMem2 = eventMem2;
+    StepInnerAnalyzer::GetInstance(analysisConfig).EventHandle(baseEventMem2, nullptr);
 }
 
 
@@ -264,10 +271,10 @@ TEST(StepInnerAnalyzerTest, do_npu_free_record_expect_free_error) {
     analysisConfig.stepList.stepCount = 0;
     StepInnerAnalyzer::GetInstance(analysisConfig).config_.stepList.stepCount = 0;
     static StepInnerAnalyzer analyzer(analysisConfig);
-    ClientId clientId = 0;
 
     std::shared_ptr<MemoryEvent> eventMem = std::make_shared<MemoryEvent>();
     eventMem->eventType = EventBaseType::FREE;
+    eventMem->poolType = PoolType::PTA_CACHING;
     eventMem->eventSubType = EventSubType::PTA_CACHING;
     eventMem->id = 1;
     eventMem->device = 0;
@@ -276,11 +283,11 @@ TEST(StepInnerAnalyzerTest, do_npu_free_record_expect_free_error) {
     eventMem->used = 0;
     eventMem->total = 1024;
 
-    EXPECT_TRUE(StepInnerAnalyzer::GetInstance(analysisConfig).Record(clientId, eventMem));
+    std::shared_ptr<EventBase> baseEventMem = eventMem;
+    StepInnerAnalyzer::GetInstance(analysisConfig).EventHandle(baseEventMem, nullptr);
 }
 
 TEST(StepInnerAnalyzerTest, do_reveive_mstxmsg_expect_torch_memscope) {
-    ClientId clientId = 0;
     MemScope::DeviceId deviceId = 0;
     // 先初始化注册
     Config analysisConfig;
@@ -311,6 +318,7 @@ TEST(StepInnerAnalyzerTest, do_reveive_mstxmsg_expect_torch_memscope) {
     // step前后allocated内存不一致
     std::shared_ptr<MemoryEvent> event = std::make_shared<MemoryEvent>();
     event->eventType = EventBaseType::MALLOC;
+    event->poolType = PoolType::PTA_CACHING;
     event->eventSubType = EventSubType::PTA_CACHING;
     event->id = 1;
     event->device = 0;
@@ -324,7 +332,8 @@ TEST(StepInnerAnalyzerTest, do_reveive_mstxmsg_expect_torch_memscope) {
     StepInnerAnalyzer::GetInstance(analysisConfig).ReceiveMstxMsg(mstxRecordStartFirstBuffer);
     StepInnerAnalyzer::GetInstance(analysisConfig).ReceiveMstxMsg(mstxRecordEndFirstBuffer);
     StepInnerAnalyzer::GetInstance(analysisConfig).ReceiveMstxMsg(mstxRecordStartSecondBuffer);
-    EXPECT_TRUE(StepInnerAnalyzer::GetInstance(analysisConfig).Record(clientId, event));
+    std::shared_ptr<EventBase> baseEvent = event;
+    StepInnerAnalyzer::GetInstance(analysisConfig).EventHandle(baseEvent, nullptr);
     StepInnerAnalyzer::GetInstance(analysisConfig).ReceiveMstxMsg(mstxRecordEndSecondBuffer);
     StepInnerAnalyzer::GetInstance(analysisConfig).ReceiveMstxMsg(mstxRecordStartThirdBuffer);
     StepInnerAnalyzer::GetInstance(analysisConfig).ReceiveMstxMsg(mstxRecordEndThirdBuffer);
@@ -334,7 +343,6 @@ TEST(StepInnerAnalyzerTest, do_reveive_mstxmsg_expect_torch_memscope) {
 
 
 TEST(StepInnerAnalyzerTest, do_reveive_mstxmsg_expect_mindspore_memscope) {
-    ClientId clientId = 0;
     MemScope::DeviceId deviceId = 0;
     // 先初始化注册
     Config analysisConfig;
@@ -358,6 +366,7 @@ TEST(StepInnerAnalyzerTest, do_reveive_mstxmsg_expect_mindspore_memscope) {
     // step前后allocated内存不一致
     std::shared_ptr<MemoryEvent> event = std::make_shared<MemoryEvent>();
     event->eventType = EventBaseType::MALLOC;
+    event->poolType = PoolType::MINDSPORE;
     event->eventSubType = EventSubType::MINDSPORE;
     event->id = 1;
     event->device = 0;
@@ -371,7 +380,8 @@ TEST(StepInnerAnalyzerTest, do_reveive_mstxmsg_expect_mindspore_memscope) {
     StepInnerAnalyzer::GetInstance(analysisConfig).ReceiveMstxMsg(mstxRecordStartFirstBuffer);
     StepInnerAnalyzer::GetInstance(analysisConfig).ReceiveMstxMsg(mstxRecordEndFirstBuffer);
     StepInnerAnalyzer::GetInstance(analysisConfig).ReceiveMstxMsg(mstxRecordStartSecondBuffer);
-    EXPECT_TRUE(StepInnerAnalyzer::GetInstance(analysisConfig).Record(clientId, event));
+    std::shared_ptr<EventBase> baseEvent = event;
+    StepInnerAnalyzer::GetInstance(analysisConfig).EventHandle(baseEvent, nullptr);
     StepInnerAnalyzer::GetInstance(analysisConfig).ReceiveMstxMsg(mstxRecordEndSecondBuffer);
     StepInnerAnalyzer::GetInstance(analysisConfig).ReceiveMstxMsg(mstxRecordStartThirdBuffer);
     StepInnerAnalyzer::GetInstance(analysisConfig).ReceiveMstxMsg(mstxRecordEndThirdBuffer);
@@ -380,7 +390,6 @@ TEST(StepInnerAnalyzerTest, do_reveive_mstxmsg_expect_mindspore_memscope) {
 }
 
 TEST(StepInnerAnalyzerTest, do_reveive_mstxmsg_expect_atb_memscope) {
-    ClientId clientId = 0;
     MemScope::DeviceId deviceId = 0;
     Config analysisConfig;
     BitField<decltype(analysisConfig.eventType)> eventBit;
@@ -403,6 +412,7 @@ TEST(StepInnerAnalyzerTest, do_reveive_mstxmsg_expect_atb_memscope) {
     // step前后allocated内存不一致
     std::shared_ptr<MemoryEvent> event = std::make_shared<MemoryEvent>();
     event->eventType = EventBaseType::MALLOC;
+    event->poolType = PoolType::ATB;
     event->eventSubType = EventSubType::ATB;
     event->id = 1;
     event->device = 0;
@@ -416,7 +426,8 @@ TEST(StepInnerAnalyzerTest, do_reveive_mstxmsg_expect_atb_memscope) {
     StepInnerAnalyzer::GetInstance(analysisConfig).ReceiveMstxMsg(mstxRecordStartFirstBuffer);
     StepInnerAnalyzer::GetInstance(analysisConfig).ReceiveMstxMsg(mstxRecordEndFirstBuffer);
     StepInnerAnalyzer::GetInstance(analysisConfig).ReceiveMstxMsg(mstxRecordStartSecondBuffer);
-    EXPECT_TRUE(StepInnerAnalyzer::GetInstance(analysisConfig).Record(clientId, event));
+    std::shared_ptr<EventBase> baseEvent = event;
+    StepInnerAnalyzer::GetInstance(analysisConfig).EventHandle(baseEvent, nullptr);
     StepInnerAnalyzer::GetInstance(analysisConfig).ReceiveMstxMsg(mstxRecordEndSecondBuffer);
     StepInnerAnalyzer::GetInstance(analysisConfig).ReceiveMstxMsg(mstxRecordStartThirdBuffer);
     StepInnerAnalyzer::GetInstance(analysisConfig).ReceiveMstxMsg(mstxRecordEndThirdBuffer);
@@ -650,10 +661,10 @@ TEST(StepInnerAnalyzerRecordFuncTest, Recordtest)
     config.inputCorrectPaths = true;
     config.outputCorrectPaths = false;
     config.stepList.stepCount = 0;
-    ClientId clientId = 1;
 
     std::shared_ptr<MemoryEvent> event = std::make_shared<MemoryEvent>();
-    EXPECT_TRUE(MemScope::StepInnerAnalyzer::GetInstance(config).Record(clientId, event));
+    std::shared_ptr<EventBase> baseEvent = event;
+    MemScope::StepInnerAnalyzer::GetInstance(config).EventHandle(baseEvent, nullptr);
 }
 
 TEST(StepInnerAnalyzerRecordFuncTest, recordMallocSuccess) {
@@ -667,10 +678,10 @@ TEST(StepInnerAnalyzerRecordFuncTest, recordMallocSuccess) {
     config.inputCorrectPaths = true;
     config.outputCorrectPaths = false;
     config.stepList.stepCount = 0;
-    ClientId clientId = 1;
 
     std::shared_ptr<MemoryEvent> event = std::make_shared<MemoryEvent>();
     event->eventType = EventBaseType::MALLOC;
+    event->poolType = PoolType::PTA_CACHING;
     event->eventSubType = EventSubType::PTA_CACHING;
     event->id = 1;
     event->device = 0;
@@ -678,7 +689,8 @@ TEST(StepInnerAnalyzerRecordFuncTest, recordMallocSuccess) {
     event->addr = 12345;
     event->used = 512;
 
-    EXPECT_TRUE(StepInnerAnalyzer::GetInstance(config).Record(clientId, event));
+    std::shared_ptr<EventBase> baseEvent = event;
+    StepInnerAnalyzer::GetInstance(config).EventHandle(baseEvent, nullptr);
 }
 
 TEST(StepInnerAnalyzerRecordFuncTest, recordFreeSuccess) {
@@ -692,10 +704,10 @@ TEST(StepInnerAnalyzerRecordFuncTest, recordFreeSuccess) {
     config.inputCorrectPaths = true;
     config.outputCorrectPaths = false;
     config.stepList.stepCount = 0;
-    ClientId clientId = 1;
 
     std::shared_ptr<MemoryEvent> event = std::make_shared<MemoryEvent>();
     event->eventType = EventBaseType::FREE;
+    event->poolType = PoolType::PTA_CACHING;
     event->eventSubType = EventSubType::PTA_CACHING;
     event->id = 1;
     event->device = 0;
@@ -703,7 +715,8 @@ TEST(StepInnerAnalyzerRecordFuncTest, recordFreeSuccess) {
     event->addr = 12345;
     event->used = 512;
 
-    EXPECT_TRUE(StepInnerAnalyzer::GetInstance(config).Record(clientId, event));
+    std::shared_ptr<EventBase> baseEvent = event;
+    StepInnerAnalyzer::GetInstance(config).EventHandle(baseEvent, nullptr);
 }
 
 TEST(StepInnerAnalyzerReceiveMstxMsgFuncTest, ReceiveMstxMsgIfRangeStartA) {
@@ -717,7 +730,6 @@ TEST(StepInnerAnalyzerReceiveMstxMsgFuncTest, ReceiveMstxMsgIfRangeStartA) {
     config.inputCorrectPaths = true;
     config.outputCorrectPaths = false;
     config.stepList.stepCount = 0;
-    ClientId clientId = 1;
 
     std::shared_ptr<MstxEvent> event = std::make_shared<MstxEvent>();
     event->eventType = EventBaseType::MSTX;
@@ -744,7 +756,6 @@ TEST(StepInnerAnalyzerReceiveMstxMsgFuncTest, ReceiveMstxMsgIfRangeEnd) {
     config.inputCorrectPaths = true;
     config.outputCorrectPaths = false;
     config.stepList.stepCount = 0;
-    ClientId clientId = 1;
 
     std::shared_ptr<MstxEvent> event = std::make_shared<MstxEvent>();
     event->eventType = EventBaseType::MSTX;

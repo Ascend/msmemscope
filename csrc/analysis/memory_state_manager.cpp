@@ -17,8 +17,10 @@
 
 #include "memory_state_manager.h"
 
+#include "analysis/event_dispatcher.h"
+#include "framework/event_router.h"
 #include "log.h"
-#include "process.h"
+#include "utility/file_write_manager.h"
 #include "utility/utils.h"
 
 namespace MemScope
@@ -29,6 +31,10 @@ std::mutex MemoryState::mtx;
 
 MemoryStateManager& MemoryStateManager::GetInstance()
 {
+    // 确保依赖的单例先于 MemoryStateManager 构造，从而在本对象析构时它们仍然存活。
+    // C++ 保证函数内静态变量按构造的相反顺序析构，因此先触发构造的单例会后析构。
+    EventDispatcher::GetInstance();
+    Utility::FileWriteManager::GetInstance();
     static MemoryStateManager manager{};
     return manager;
 }
@@ -72,6 +78,10 @@ bool MemoryStateManager::AddEvent(std::shared_ptr<MemoryEvent>& event)
         if (statesMap.find(key) == statesMap.end())
         {
             statesMap[key] = MemoryState{event};
+            if (event->isShadowEvent)
+            {
+                statesMap[key].shadowState = ShadowState::SHADOW_CREATED;
+            }
         }
         else
         {
@@ -182,6 +192,66 @@ std::vector<std::pair<PoolType, MemoryStateKey>> MemoryStateManager::GetAllState
         }
     }
     return result;
+}
+
+void MemoryStateManager::PromoteShadowStates(const PromoteCallback& dumpFunc)
+{
+    std::lock_guard<std::mutex> lock(mtx_);
+
+    uint64_t promotionTime = Utility::GetTimeNanoseconds();
+
+    for (auto& poolPair : poolsMap_)
+    {
+        PoolType poolType = poolPair.first;
+        auto& statesMap = poolPair.second.statesMap;
+
+        // 收集需要处理的key，避免在遍历中修改map
+        std::vector<MemoryStateKey> keysToProcess;
+        for (auto& statePair : statesMap)
+        {
+            auto& state = statePair.second;
+            if (state.shadowState == ShadowState::SHADOW_CREATED || state.shadowState == ShadowState::SHADOW_FREED)
+            {
+                keysToProcess.push_back(statePair.first);
+            }
+        }
+
+        for (auto& key : keysToProcess)
+        {
+            auto it = statesMap.find(key);
+            if (it == statesMap.end())
+            {
+                continue;
+            }
+            auto& state = it->second;
+
+            if (state.shadowState == ShadowState::SHADOW_CREATED)
+            {
+                // 影子期申请：更新MALLOC事件timestamp为start时间，标记已转正
+                // MALLOC事件保留在events中，等FREE到达时由DumpMemoryState自然落盘
+                state.shadowState = ShadowState::SHADOW_PROMOTED;
+                if (!state.events.empty())
+                {
+                    state.events[0]->timestamp = promotionTime;
+                }
+            }
+
+            if (state.shadowState == ShadowState::SHADOW_FREED)
+            {
+                // 正常申请+影子释放：更新size和时间戳后落盘
+                if (!state.events.empty() && state.events.back()->eventType == EventBaseType::FREE &&
+                    state.events.back()->isShadowEvent)
+                {
+                    auto freeEvent = state.events.back();
+                    freeEvent->size = static_cast<int64_t>(state.size);
+                    freeEvent->timestamp = promotionTime;
+                }
+
+                dumpFunc(&state);  // 落盘 [MALLOC, 合成FREE]
+                statesMap.erase(it);
+            }
+        }
+    }
 }
 
 MemoryStateManager::~MemoryStateManager()

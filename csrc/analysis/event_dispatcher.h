@@ -19,35 +19,42 @@
 #define EVENT_DISPATCHER_H
 
 #include <cstdint>
-#include <vector>
-#include <unordered_map>
 #include <functional>
 #include <memory>
+#include <unordered_map>
+#include <vector>
 
 #include "event.h"
 #include "memory_state_manager.h"
 
-namespace MemScope {
+namespace MemScope
+{
 
-enum class SubscriberId : uint8_t {
+enum class SubscriberId : uint8_t
+{
     DECOMPOSE_ANALYZER = 0,
     INEFFICIENT_ANALYZER,
     LEAKS_ANALYZER,
     DUMP,
+    HAL_ANALYZER,
+    STEP_INNER_ANALYZER,
 };
 
-class EventDispatcher {
-public:
-    enum class Priority : uint8_t {
-        High = 3,           // decompose, inefficient, memscope
+class EventDispatcher
+{
+   public:
+    enum class Priority : uint8_t
+    {
+        High = 3,  // decompose, inefficient, memscope
         Medium = 2,
         Low = 1,
-        Lowest = 0,         // dump
+        Lowest = 0,  // dump
     };
 
     using HandlerFunc = std::function<void(std::shared_ptr<EventBase>&, MemoryState*)>;
 
-    struct Subscriber {
+    struct Subscriber
+    {
         SubscriberId id;
         Priority priority;
         HandlerFunc handler;
@@ -59,18 +66,16 @@ public:
         }
 
         // 用于查找
-        bool operator==(SubscriberId otherId) const
-        {
-            return id == otherId;
-        }
+        bool operator==(SubscriberId otherId) const { return id == otherId; }
     };
 
     static EventDispatcher& GetInstance();
     void DispatchEvent(std::shared_ptr<EventBase>& event, MemoryState* state);
-    void Subscribe(const SubscriberId& id,
-        const std::vector<EventBaseType>& eventTypes, const Priority& priority, const HandlerFunc& func);
+    void Subscribe(const SubscriberId& id, const std::vector<EventBaseType>& eventTypes, const Priority& priority,
+                   const HandlerFunc& func);
     void UnSubscribe(const SubscriberId& id);
-private:
+
+   private:
     EventDispatcher() = default;
     ~EventDispatcher() = default;
 
@@ -82,6 +87,6 @@ private:
     std::unordered_map<EventBaseType, std::vector<Subscriber>> eventSubscribers_;
 };
 
-}
+}  // namespace MemScope
 
 #endif

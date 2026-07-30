@@ -23,6 +23,7 @@
 #include "dump.h"
 #include "event_report.h"
 #include "json_manager.h"
+#include "memory_state_manager.h"
 
 namespace MemScope
 {
@@ -169,6 +170,23 @@ bool IsNeedTraceKernelLaunch() { return IsNeedTraceKernel() && IsNeedTraceLaunch
 bool IsNeedTraceOpLaunch() { return IsNeedTraceOp() && IsNeedTraceLaunch(); }
 bool IsNeedTraceMemory() { return IsNeedTraceAlloc() && IsNeedTraceFree(); }
 
+TraceMode DetermineTraceMode()
+{
+    bool needNormalTrace = EventTraceManager::Instance().IsNeedTrace(EventBaseType::MALLOC) ||
+                           EventTraceManager::Instance().IsNeedTrace(EventBaseType::FREE);
+    bool needShadowTrace = EventTraceManager::Instance().ShouldCollectShadowEvents();
+
+    if (needNormalTrace)
+    {
+        return TraceMode::NORMAL;
+    }
+    if (needShadowTrace)
+    {
+        return TraceMode::SHADOW;
+    }
+    return TraceMode::SKIP;
+}
+
 void EventTraceManager::InitJudgeFuncTable()
 {
     judgeFuncTable_ = {
@@ -214,6 +232,27 @@ bool EventTraceManager::IsTracingEnabled()
     return true;
 }
 
+bool EventTraceManager::ShouldCollectShadowEvents()
+{
+    if (status_ != EventTraceStatus::NOT_IN_TRACING)
+    {
+        return false;
+    }
+    if (!IsNeedTraceAlloc() && !IsNeedTraceFree())
+    {
+        return false;
+    }
+    return true;
+}
+
+void EventTraceManager::PromoteHistoricalStates()
+{
+    auto &dump = Dump::GetInstance(GetConfig());
+    auto dumpFunc = [&dump](MemoryState *state) { dump.DumpHistoricalState(state); };
+    // 委托给MemoryStateManager内部加锁处理，避免多线程竞态
+    MemoryStateManager::GetInstance().PromoteShadowStates(dumpFunc);
+}
+
 void EventTraceManager::InitTraceStatus()
 {
     auto status = (GetConfig().collectMode == static_cast<uint8_t>(CollectMode::IMMEDIATE)) && GetConfig().isEffective
@@ -227,6 +266,8 @@ void EventTraceManager::SetTraceStatus(const EventTraceStatus status)
 {
     if (status == EventTraceStatus::IN_TRACING)
     {
+        // 先执行历史转正（在status_切换之前，确保转正过程使用当前正确的MemoryState快照）
+        PromoteHistoricalStates();
         std::cout << "[msmemscope] Info: Start tracing.\n";
     }
     else if (status == EventTraceStatus::NOT_IN_TRACING)
