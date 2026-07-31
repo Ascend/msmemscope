@@ -20,22 +20,22 @@
 #include <memory>
 
 #include "bit_field.h"
+#include "event_trace/trace_manager/event_trace_manager.h"
 #include "utility/log.h"
 
 namespace MemScope
 {
 
-HalAnalyzer& HalAnalyzer::GetInstance(Config config)
+HalAnalyzer& HalAnalyzer::GetInstance()
 {
-    static HalAnalyzer analyzer(config);
+    static HalAnalyzer analyzer;
     return analyzer;
 }
 
-HalAnalyzer::HalAnalyzer(Config config)
+HalAnalyzer::HalAnalyzer()
 {
     // 确保Utility::Log先于当前对象构造，利用C++静态对象析构逆序规则，使~HalAnalyzer中LOG宏安全
     Utility::Log::GetLog();
-    config_ = config;
     Subscribe();
     return;
 }
@@ -99,26 +99,28 @@ void HalAnalyzer::EventHandle(std::shared_ptr<EventBase>& event, MemoryState* st
 
 bool HalAnalyzer::IsHalAnalysisEnable()
 {
+    // 动态读取当前配置（每个事件只取一次锁），保证分析开关与运行中修改的配置保持一致
+    const Config& config = GetConfig();
     // 确认analysis设置中是否包含泄漏分析
-    BitField<decltype(config_.analysisType)> analysisType(config_.analysisType);
+    BitField<decltype(config.analysisType)> analysisType(config.analysisType);
     if (!(analysisType.checkBit(static_cast<size_t>(AnalysisType::LEAKS_ANALYSIS))))
     {
         return false;
     }
     // 当开启--steps时，关闭所有分析功能
-    if (config_.stepList.stepCount != 0)
+    if (config.stepList.stepCount != 0)
     {
         return false;
     }
 
     // 非默认采集模式，关闭分析功能
-    if (config_.collectMode == static_cast<uint8_t>(CollectMode::DEFERRED))
+    if (config.collectMode == static_cast<uint8_t>(CollectMode::DEFERRED))
     {
         return false;
     }
 
     // 当malloc和free采集并非都开启时，关闭分析功能
-    BitField<decltype(config_.eventType)> eventType(config_.eventType);
+    BitField<decltype(config.eventType)> eventType(config.eventType);
     if (!(eventType.checkBit(static_cast<size_t>(EventType::ALLOC_EVENT))) ||
         !(eventType.checkBit(static_cast<size_t>(EventType::FREE_EVENT))))
     {

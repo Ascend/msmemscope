@@ -24,19 +24,17 @@
 #include "record_info.h"
 #include "ustring.h"
 #include "bit_field.h"
+#include "event_trace/trace_manager/event_trace_manager.h"
 
 namespace MemScope {
 
-MemoryCompare& MemoryCompare::GetInstance(Config config)
+MemoryCompare& MemoryCompare::GetInstance()
 {
-    static MemoryCompare instance(config);
+    static MemoryCompare instance;
     return instance;
 }
 
-MemoryCompare::MemoryCompare(Config config)
-{
-    config_ = config;
-}
+MemoryCompare::MemoryCompare() = default;
 
 // 用此方式依次读取CSV的每一行，不会被单格数据的逗号干扰
 std::string MemoryCompare::ReadQuotedField(std::stringstream& ss)
@@ -201,7 +199,9 @@ void MemoryCompare::ReadNameIndexData(const ORIGINAL_FILE_DATA &originData, NAME
 {
     LOG_DEBUG("Read kernelLaunch/op data.");
     std::unordered_set<std::string> eventMap;
-    BitField<decltype(config_.levelType)> levelType(config_.levelType);
+    // 动态读取当前配置，保证分析级别与运行中修改的配置保持一致
+    const Config& config = GetConfig();
+    BitField<decltype(config.levelType)> levelType(config.levelType);
     if (levelType.checkBit(static_cast<size_t>(LevelType::LEVEL_OP))) {
         if (framework_ == "MINDSPORE") {
             LOG_ERROR("Comparison of the MindSpore framework under the op level is not supported.");
@@ -262,7 +262,7 @@ bool MemoryCompare::WriteCompareDataToCsv()
         return false;
     }
 
-    if (!Utility::FileCreateManager::GetInstance(config_.outputDir).CreateCsvFile(&compareFile_,
+    if (!Utility::FileCreateManager::GetInstance(GetConfig().outputDir).CreateCsvFile(&compareFile_,
         GD_INVALID_NUM, MEMORY_COMPARE_FILE_PREFIX, COMPARE_DIR, std::string(STEP_INTER_HEADERS))) {
         LOG_ERROR("Create comparison csv file failed!");
         return false;

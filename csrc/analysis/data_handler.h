@@ -45,8 +45,9 @@ public:
     virtual void FflushFile() = 0;
 
 protected:
-    explicit DataHandler(const Config config);
-    Config config_;
+    explicit DataHandler(const Config& config);
+    // 文件创建时固化的输出目录（仅用于 Init 创建文件，不持有 Config 副本）
+    std::string outputDir_;
 
 private:
     DataHandler(const DataHandler&) = delete;
@@ -58,7 +59,7 @@ private:
 class CsvHandler : public DataHandler {
 public:
     ~CsvHandler() override;
-    explicit CsvHandler(const Config config, DataType dataType, int32_t devId);
+    explicit CsvHandler(const Config& config, DataType dataType, int32_t devId);
     bool Init() override;
     bool Write(std::shared_ptr<DataBase> data) override;
     void FflushFile() override;
@@ -78,7 +79,7 @@ private:
 
 class DbHandler : public DataHandler {
 public:
-    explicit DbHandler(const Config config, DataType dataType, int32_t devId);
+    explicit DbHandler(const Config& config, DataType dataType, int32_t devId);
     ~DbHandler() override;
     bool Init() override;
     bool Write(std::shared_ptr<DataBase> data) override;
@@ -105,7 +106,7 @@ std::string BuildInsertStatement(const std::string& table, const std::vector<std
 std::string BuildCreateStatement(const std::string& table,
     const std::vector<std::pair<std::string, std::string>>& columns);
 
-std::unique_ptr<DataHandler> MakeDataHandler(Config config, DataType data, int32_t devId);
+std::unique_ptr<DataHandler> MakeDataHandler(const Config& config, DataType data, int32_t devId);
 std::string FixJson(const std::string& input);
 std::vector<std::string> ParserHeader(const std::vector<std::pair<std::string, std::string>>& header);
 }

@@ -53,13 +53,13 @@ using MemoryRecordTable = std::unordered_map<uint64_t, HalMemInfo>;
 class HalAnalyzer
 {
    public:
-    static HalAnalyzer& GetInstance(Config config);
+    static HalAnalyzer& GetInstance();
     void EventHandle(std::shared_ptr<EventBase>& event, MemoryState* state);
     void Subscribe();
     void UnSubscribe() const;
 
    private:
-    explicit HalAnalyzer(Config config);
+    explicit HalAnalyzer();
     ~HalAnalyzer();
     HalAnalyzer(const HalAnalyzer&) = delete;
     HalAnalyzer& operator=(const HalAnalyzer&) = delete;
@@ -73,7 +73,6 @@ class HalAnalyzer
     void RecordFree(const ClientId& clientId, std::shared_ptr<const MemoryEvent> memEvent);
     void LeakAnalyze();
     void CheckLeak(const size_t clientId);
-    Config config_;
 };
 
 }  // namespace MemScope

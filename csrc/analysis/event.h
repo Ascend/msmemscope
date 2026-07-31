@@ -90,7 +90,8 @@ enum class EventSubType : uint8_t
     MSTX_RANGE_START,
     MSTX_RANGE_END,
 
-    CLEAN_UP,
+    RESIDUAL_BLOCK,
+    PROC_EXIT,
 
     STEP,
 
@@ -195,10 +196,10 @@ class CleanUpEvent : public EventBase
    public:
     CleanUpEvent() {}
 
-    CleanUpEvent(PoolType type, uint64_t pidKey, uint64_t addrKey)
+    CleanUpEvent(EventSubType reason, PoolType type, uint64_t pidKey, uint64_t addrKey)
     {
         eventType = EventBaseType::CLEAN_UP;
-        eventSubType = EventSubType::CLEAN_UP;
+        eventSubType = reason;
         poolType = type;
         pid = pidKey;
         addr = addrKey;

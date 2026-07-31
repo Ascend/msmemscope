@@ -90,10 +90,10 @@ public:
 
 class MemoryCompare {
 public:
-    static MemoryCompare& GetInstance(Config config);
+    static MemoryCompare& GetInstance();
     void RunComparison(const std::vector<std::string> &paths);
 private:
-    explicit MemoryCompare(Config config);
+    explicit MemoryCompare();
     ~MemoryCompare();
     void SetDirPath();
     std::vector<std::string> SplitLineData(std::string line);
@@ -122,7 +122,6 @@ private:
     std::string fileNamePrefix_ = "memory_compare_";
     std::string framework_;
     std::mutex fileMutex_;
-    Config config_;
 };
 
 }

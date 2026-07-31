@@ -110,8 +110,6 @@ class EventReport
     MstxStepInfo stepInfo_;
     std::mutex mutex_;
 
-    Config initConfig_;
-
     std::unordered_set<uint64_t> halPtrs_;
     std::atomic<bool> destroyed_{false};
 };

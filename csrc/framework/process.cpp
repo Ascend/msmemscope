@@ -65,9 +65,9 @@ std::string const &ExecCmd::ExecPath(void) const { return path_; }
 
 char *const *ExecCmd::ExecArgv(void) const { return argv_.data(); }
 
-Process &Process::GetInstance(Config config)
+Process &Process::GetInstance()
 {
-    static Process process{config};
+    static Process process;
     return process;
 }
 

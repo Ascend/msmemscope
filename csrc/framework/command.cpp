@@ -34,11 +34,11 @@ void Command::Exec() const
     LOG_INFO("Msmemscope starts executing commands");
     
     if (userCommand_.config.enableCompare) {
-        MemoryCompare::GetInstance(userCommand_.config).RunComparison(userCommand_.inputPaths);
+        MemoryCompare::GetInstance().RunComparison(userCommand_.inputPaths);
         return;
     }
 
-    Process::GetInstance(userCommand_.config).Launch(userCommand_.cmd);
+    Process::GetInstance().Launch(userCommand_.cmd);
 
     return;
 }
