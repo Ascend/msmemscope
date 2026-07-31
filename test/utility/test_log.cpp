@@ -27,6 +27,9 @@ using namespace Utility;
 bool FindStr(const std::string &fileName, const char* str)
 {
     FILE *fp = fopen(fileName.c_str(), "r");
+    if (fp == nullptr) {
+        return false;
+    }
     char buffer[256];
     if (fgets(buffer, sizeof(buffer), fp) != nullptr && strstr(buffer, str) != nullptr) {
         fclose(fp);
@@ -40,6 +43,8 @@ TEST(Log, log_debug_with_default_log_level_warn_expect_not_output)
 {
     Log &logger = Log::GetLog();
     logger.fp_ = fopen("output.txt", "w");
+    // 显式设置日志级别为 WARN，清除其他测试可能通过 SetConfig 设置的污染
+    Utility::SetLogLevel(MemScope::LogLv::WARN);
     const char* testLog = "test log debug";
     LOG_DEBUG(testLog);
     logger.fp_ = nullptr;

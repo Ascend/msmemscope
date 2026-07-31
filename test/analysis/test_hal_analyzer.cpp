@@ -31,9 +31,10 @@ TEST(HalAnalyzerTest, do_hal_record_except_memscope) {
     eventBit.setBit(static_cast<size_t>(EventType::ALLOC_EVENT));
     eventBit.setBit(static_cast<size_t>(EventType::FREE_EVENT));
     analysisConfig.eventType = eventBit.getValue();
-    ClientId clientId = 0;
+
     std::shared_ptr<MemoryEvent> event1 = std::make_shared<MemoryEvent>();
     event1->eventType = EventBaseType::MALLOC;
+    event1->poolType = PoolType::HAL;
     event1->flag = 2377900603261207558;
     event1->id = 1;
     event1->space = MemOpSpace::DEVICE;
@@ -44,6 +45,7 @@ TEST(HalAnalyzerTest, do_hal_record_except_memscope) {
 
     std::shared_ptr<MemoryEvent> event2 = std::make_shared<MemoryEvent>();
     event2->eventType = EventBaseType::MALLOC;
+    event2->poolType = PoolType::HAL;
     event2->flag = 18374686480754951175;
     event2->id = 2;
     event2->space = MemOpSpace::INVALID;
@@ -51,9 +53,10 @@ TEST(HalAnalyzerTest, do_hal_record_except_memscope) {
     event2->addr = 0x7957;
     event2->size = 512;
     event2->timestamp = 1234568;
- 
+
     std::shared_ptr<MemoryEvent> event3 = std::make_shared<MemoryEvent>();
     event3->eventType = EventBaseType::MALLOC;
+    event3->poolType = PoolType::HAL;
     event3->flag = 504403158275081222;
     event3->id = 3;
     event3->space = MemOpSpace::DEVICE;
@@ -61,10 +64,13 @@ TEST(HalAnalyzerTest, do_hal_record_except_memscope) {
     event3->addr = 0x7960;
     event3->size = 1024;
     event3->timestamp = 1234557;
- 
-    EXPECT_TRUE(HalAnalyzer::GetInstance(analysisConfig).Record(clientId, event1));
-    EXPECT_TRUE(HalAnalyzer::GetInstance(analysisConfig).Record(clientId, event2));
-    EXPECT_TRUE(HalAnalyzer::GetInstance(analysisConfig).Record(clientId, event3));
+
+    std::shared_ptr<EventBase> baseEvent1 = event1;
+    HalAnalyzer::GetInstance(analysisConfig).EventHandle(baseEvent1, nullptr);
+    std::shared_ptr<EventBase> baseEvent2 = event2;
+    HalAnalyzer::GetInstance(analysisConfig).EventHandle(baseEvent2, nullptr);
+    std::shared_ptr<EventBase> baseEvent3 = event3;
+    HalAnalyzer::GetInstance(analysisConfig).EventHandle(baseEvent3, nullptr);
 }
 
 TEST(HalAnalyzerTest, do_record_except_no_memscope) {
@@ -73,10 +79,10 @@ TEST(HalAnalyzerTest, do_record_except_no_memscope) {
     eventBit.setBit(static_cast<size_t>(EventType::ALLOC_EVENT));
     eventBit.setBit(static_cast<size_t>(EventType::FREE_EVENT));
     analysisConfig.eventType = eventBit.getValue();
-    ClientId clientId = 0;
 
     std::shared_ptr<MemoryEvent> event1 = std::make_shared<MemoryEvent>();
     event1->eventType = EventBaseType::MALLOC;
+    event1->poolType = PoolType::HAL;
     event1->flag = 2377900603261207558;
     event1->id = 1;
     event1->space = MemOpSpace::DEVICE;
@@ -87,6 +93,7 @@ TEST(HalAnalyzerTest, do_record_except_no_memscope) {
 
     std::shared_ptr<MemoryEvent> event2 = std::make_shared<MemoryEvent>();
     event2->eventType = EventBaseType::FREE;
+    event2->poolType = PoolType::HAL;
     event2->flag = 18374686480754951175;
     event2->id = 2;
     event2->space = MemOpSpace::INVALID;
@@ -94,8 +101,10 @@ TEST(HalAnalyzerTest, do_record_except_no_memscope) {
     event2->addr = 0x7958;
     event2->size = 0;
 
-    EXPECT_TRUE(HalAnalyzer::GetInstance(analysisConfig).Record(clientId, event1));
-    EXPECT_TRUE(HalAnalyzer::GetInstance(analysisConfig).Record(clientId, event2));
+    std::shared_ptr<EventBase> baseEvent1 = event1;
+    HalAnalyzer::GetInstance(analysisConfig).EventHandle(baseEvent1, nullptr);
+    std::shared_ptr<EventBase> baseEvent2 = event2;
+    HalAnalyzer::GetInstance(analysisConfig).EventHandle(baseEvent2, nullptr);
 }
 
 TEST(HalAnalyzerTest, do_record_excpet_double_free) {
@@ -104,10 +113,10 @@ TEST(HalAnalyzerTest, do_record_excpet_double_free) {
     eventBit.setBit(static_cast<size_t>(EventType::ALLOC_EVENT));
     eventBit.setBit(static_cast<size_t>(EventType::FREE_EVENT));
     analysisConfig.eventType = eventBit.getValue();
-    ClientId clientId = 0;
 
     std::shared_ptr<MemoryEvent> event1 = std::make_shared<MemoryEvent>();
     event1->eventType = EventBaseType::MALLOC;
+    event1->poolType = PoolType::HAL;
     event1->flag = 2377900603261207558;
     event1->id = 1;
     event1->space = MemOpSpace::DEVICE;
@@ -118,6 +127,7 @@ TEST(HalAnalyzerTest, do_record_excpet_double_free) {
 
     std::shared_ptr<MemoryEvent> event2 = std::make_shared<MemoryEvent>();
     event2->eventType = EventBaseType::FREE;
+    event2->poolType = PoolType::HAL;
     event2->flag = 18374686480754951175;
     event2->id = 2;
     event2->space = MemOpSpace::INVALID;
@@ -127,6 +137,7 @@ TEST(HalAnalyzerTest, do_record_excpet_double_free) {
 
     std::shared_ptr<MemoryEvent> event3 = std::make_shared<MemoryEvent>();
     event3->eventType = EventBaseType::FREE;
+    event3->poolType = PoolType::HAL;
     event3->flag = 18374686480754951175;
     event3->id = 3;
     event3->space = MemOpSpace::INVALID;
@@ -134,9 +145,12 @@ TEST(HalAnalyzerTest, do_record_excpet_double_free) {
     event3->addr = 0x7958;
     event3->size = 0;
 
-    EXPECT_TRUE(HalAnalyzer::GetInstance(analysisConfig).Record(clientId, event1));
-    EXPECT_TRUE(HalAnalyzer::GetInstance(analysisConfig).Record(clientId, event2));
-    EXPECT_TRUE(HalAnalyzer::GetInstance(analysisConfig).Record(clientId, event3));
+    std::shared_ptr<EventBase> baseEvent1 = event1;
+    HalAnalyzer::GetInstance(analysisConfig).EventHandle(baseEvent1, nullptr);
+    std::shared_ptr<EventBase> baseEvent2 = event2;
+    HalAnalyzer::GetInstance(analysisConfig).EventHandle(baseEvent2, nullptr);
+    std::shared_ptr<EventBase> baseEvent3 = event3;
+    HalAnalyzer::GetInstance(analysisConfig).EventHandle(baseEvent3, nullptr);
 }
 
 TEST(HalAnalyzerTest, do_record_except_double_malloc) {
@@ -145,10 +159,10 @@ TEST(HalAnalyzerTest, do_record_except_double_malloc) {
     eventBit.setBit(static_cast<size_t>(EventType::ALLOC_EVENT));
     eventBit.setBit(static_cast<size_t>(EventType::FREE_EVENT));
     analysisConfig.eventType = eventBit.getValue();
-    ClientId clientId = 0;
 
     std::shared_ptr<MemoryEvent> event1 = std::make_shared<MemoryEvent>();
     event1->eventType = EventBaseType::MALLOC;
+    event1->poolType = PoolType::HAL;
     event1->flag = 2377900603261207558;
     event1->id = 1;
     event1->space = MemOpSpace::DEVICE;
@@ -159,6 +173,7 @@ TEST(HalAnalyzerTest, do_record_except_double_malloc) {
 
     std::shared_ptr<MemoryEvent> event2 = std::make_shared<MemoryEvent>();
     event2->eventType = EventBaseType::FREE;
+    event2->poolType = PoolType::HAL;
     event2->flag = 2377900603261207558;
     event2->id = 2;
     event2->space = MemOpSpace::INVALID;
@@ -166,8 +181,10 @@ TEST(HalAnalyzerTest, do_record_except_double_malloc) {
     event2->addr = 0x7958;
     event2->size = 0;
 
-    EXPECT_TRUE(HalAnalyzer::GetInstance(analysisConfig).Record(clientId, event1));
-    EXPECT_TRUE(HalAnalyzer::GetInstance(analysisConfig).Record(clientId, event2));
+    std::shared_ptr<EventBase> baseEvent1 = event1;
+    HalAnalyzer::GetInstance(analysisConfig).EventHandle(baseEvent1, nullptr);
+    std::shared_ptr<EventBase> baseEvent2 = event2;
+    HalAnalyzer::GetInstance(analysisConfig).EventHandle(baseEvent2, nullptr);
 }
 
 TEST(HalAnalyzerTest, do_record_except_free_null) {
@@ -176,17 +193,18 @@ TEST(HalAnalyzerTest, do_record_except_free_null) {
     eventBit.setBit(static_cast<size_t>(EventType::ALLOC_EVENT));
     eventBit.setBit(static_cast<size_t>(EventType::FREE_EVENT));
     analysisConfig.eventType = eventBit.getValue();
-    ClientId clientId = 0;
 
     std::shared_ptr<MemoryEvent> event1 = std::make_shared<MemoryEvent>();
     event1->eventType = EventBaseType::FREE;
+    event1->poolType = PoolType::HAL;
     event1->id = 2;
     event1->space = MemOpSpace::INVALID;
     event1->eventSubType = EventSubType::HAL;
     event1->addr = 0x7958;
     event1->size = 0;
 
-    EXPECT_TRUE(HalAnalyzer::GetInstance(analysisConfig).Record(clientId, event1));
+    std::shared_ptr<EventBase> baseEvent1 = event1;
+    HalAnalyzer::GetInstance(analysisConfig).EventHandle(baseEvent1, nullptr);
 }
 
 TEST(HalAnalyzerTest, do_record_fail) {
@@ -195,17 +213,18 @@ TEST(HalAnalyzerTest, do_record_fail) {
     eventBit.setBit(static_cast<size_t>(EventType::ALLOC_EVENT));
     eventBit.setBit(static_cast<size_t>(EventType::FREE_EVENT));
     analysisConfig.eventType = eventBit.getValue();
-    ClientId clientId = 0;
 
     std::shared_ptr<MemoryEvent> event1 = std::make_shared<MemoryEvent>();
     event1->eventType = EventBaseType::FREE;
+    event1->poolType = PoolType::HAL;
     event1->id = 1;
     event1->space = MemOpSpace::INVALID;
     event1->eventSubType = EventSubType::HAL;
     event1->addr = 0x7958;
     event1->size = 0;
 
-    EXPECT_TRUE(HalAnalyzer::GetInstance(analysisConfig).Record(clientId, event1));
+    std::shared_ptr<EventBase> baseEvent1 = event1;
+    HalAnalyzer::GetInstance(analysisConfig).EventHandle(baseEvent1, nullptr);
 }
 
 TEST(HalAnalyzerTest, do_memory_record_nulltable) {
@@ -217,12 +236,13 @@ TEST(HalAnalyzerTest, do_memory_record_nulltable) {
 
     std::shared_ptr<MemoryEvent> event1 = std::make_shared<MemoryEvent>();
     event1->eventType = EventBaseType::FREE;
+    event1->poolType = PoolType::HAL;
     event1->id = 123;
     event1->space = MemOpSpace::INVALID;
     event1->eventSubType = EventSubType::HAL;
     event1->addr = 0x7958;
     event1->size = 0;
-    ClientId clientId = 0;
 
-    EXPECT_TRUE(HalAnalyzer::GetInstance(analysisConfig).Record(clientId, event1));
+    std::shared_ptr<EventBase> baseEvent1 = event1;
+    HalAnalyzer::GetInstance(analysisConfig).EventHandle(baseEvent1, nullptr);
 }

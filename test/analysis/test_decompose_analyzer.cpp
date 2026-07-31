@@ -238,4 +238,25 @@ TEST_F(DecomposeAnalyzerTest, TestUpdateOwner_DescribeOwner_TorchOptimizer)
     delete state;
 }
 
+// 影子事件应被跳过，不修改state
+TEST_F(DecomposeAnalyzerTest, TestShadowEventIsSkipped)
+{
+    auto memoryEvent = std::make_shared<MemoryEvent>();
+    memoryEvent->eventType = EventBaseType::MALLOC;
+    memoryEvent->eventSubType = EventSubType::PTA_CACHING;
+    memoryEvent->describeOwner = "should_be_ignored";
+    memoryEvent->isShadowEvent = true;
+
+    std::shared_ptr<EventBase> eventBase = memoryEvent;
+    MemoryState* state = new MemoryState();
+
+    analyzer->EventHandle(eventBase, state);
+
+    // 影子事件被跳过，memscopeDefinedOwner不应被设置
+    EXPECT_TRUE(state->memscopeDefinedOwner.empty());
+    EXPECT_TRUE(state->userDefinedOwner.empty());
+
+    delete state;
+}
+
 } // namespace MemScope

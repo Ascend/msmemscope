@@ -20,17 +20,20 @@
 
 #include "analyzer_base.h"
 
-namespace MemScope {
+namespace MemScope
+{
 
-class DecomposeAnalyzer : public AnalyzerBase {
-public:
+class DecomposeAnalyzer : public AnalyzerBase
+{
+   public:
     static DecomposeAnalyzer& GetInstance();
     void EventHandle(std::shared_ptr<EventBase>& event, MemoryState* state) override;
     void Subscribe();
     void UnSubscribe() const;
-private:
+
+   private:
     explicit DecomposeAnalyzer();
-    ~DecomposeAnalyzer() override = default;
+    ~DecomposeAnalyzer() override;
     DecomposeAnalyzer(const DecomposeAnalyzer&) = delete;
     DecomposeAnalyzer& operator=(const DecomposeAnalyzer&) = delete;
     DecomposeAnalyzer(DecomposeAnalyzer&& other) = delete;
@@ -49,6 +52,6 @@ private:
     static const std::string atenStr;
 };
 
-}
+}  // namespace MemScope
 
 #endif

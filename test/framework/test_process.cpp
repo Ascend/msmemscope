@@ -21,7 +21,6 @@
 #define private public
 #include "process.h"
 #undef private
-#include "analysis/mstx_analyzer.h"
 #include "client_parser.h"
 #include "bit_field.h"
 using namespace MemScope;

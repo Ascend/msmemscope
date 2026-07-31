@@ -140,6 +140,7 @@ class MemoryEvent : public EventBase
     MemPageType pageType = MemPageType::MEM_MAX_PAGE_TYPE;
     std::string describeOwner;
     uint64_t kernelIndex;
+    bool isShadowEvent = false;  // Shadow event created during NOT_IN_TRACING mode
 
     MemoryEvent() {}
 };

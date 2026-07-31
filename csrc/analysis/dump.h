@@ -34,6 +34,7 @@ class Dump : public AnalyzerBase
    public:
     static Dump& GetInstance(Config config);
     void EventHandle(std::shared_ptr<EventBase>& event, MemoryState* state) override;
+    void DumpHistoricalState(MemoryState* state);  // 落盘完整MemoryState（用于影子FREE转正）
     void WritePublicEventToFile();
     void FflushEventToFile() const;
 

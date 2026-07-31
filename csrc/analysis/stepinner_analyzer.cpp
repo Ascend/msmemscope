@@ -24,8 +24,6 @@
 
 #include "bit_field.h"
 #include "config_info.h"
-#include "mstx_analyzer.h"
-#include "py_step_manager.h"
 #include "utility/log.h"
 #include "utility/utils.h"
 
@@ -42,14 +40,90 @@ StepInnerAnalyzer::StepInnerAnalyzer(Config config)
 {
     config_ = config;
 
-    // 注册mstx信息观察者
-    auto mstxFunc = std::bind(&StepInnerAnalyzer::ReceiveMstxMsg, this, std::placeholders::_1);
-    MstxAnalyzer::Instance().Subscribe(MstxEventSubscriber::STEP_INNER_ANALYZER, mstxFunc);
-    // 注册pyStep信息观察者
-    auto pyStepFunc = std::bind(&StepInnerAnalyzer::ReceiveStepMsg, this, std::placeholders::_1);
-    PyStepManager::Instance().Subscribe(PyStepEventSubscriber::STEP_INNER_ANALYZER, pyStepFunc);
+    // 通过EventDispatcher统一订阅，替代原有的MstxAnalyzer/PyStepManager回调
+    Subscribe();
 
     return;
+}
+
+void StepInnerAnalyzer::Subscribe()
+{
+    auto func = std::bind(&StepInnerAnalyzer::EventHandle, this, std::placeholders::_1, std::placeholders::_2);
+    std::vector<EventBaseType> eventList{EventBaseType::MALLOC, EventBaseType::FREE, EventBaseType::MSTX,
+                                         EventBaseType::SYSTEM};
+    EventDispatcher::GetInstance().Subscribe(SubscriberId::STEP_INNER_ANALYZER, eventList,
+                                             EventDispatcher::Priority::High, func);
+}
+
+void StepInnerAnalyzer::UnSubscribe() const
+{
+    EventDispatcher::GetInstance().UnSubscribe(SubscriberId::STEP_INNER_ANALYZER);
+}
+
+void StepInnerAnalyzer::EventHandle(std::shared_ptr<EventBase> &event, MemoryState *state)
+{
+    // Skip shadow/historical events for memory operations
+    if (auto memEvent = std::dynamic_pointer_cast<MemoryEvent>(event))
+    {
+        if (memEvent->isShadowEvent)
+        {
+            return;
+        }
+    }
+
+    if (!IsStepInnerAnalysisEnable())
+    {
+        return;
+    }
+
+    const DeviceId deviceId = event->device;
+    const ClientId clientId = event->pid;
+
+    if (event->eventType == EventBaseType::MALLOC || event->eventType == EventBaseType::FREE)
+    {
+        // 仅处理PTA_CACHING/ATB/MINDSPORE池的内存事件
+        if (event->poolType != PoolType::PTA_CACHING && event->poolType != PoolType::ATB &&
+            event->poolType != PoolType::MINDSPORE)
+        {
+            return;
+        }
+
+        if (!CreateTables(deviceId))
+        {
+            LOG_ERROR("[npu %d][client %u]: Create tables failed.", deviceId, clientId);
+            return;
+        }
+
+        auto memEvent = std::dynamic_pointer_cast<MemoryEvent>(event);
+        if (memEvent == nullptr)
+        {
+            LOG_WARN("[npu %d][client %u]: StepInnerAnalyzer receive invalid memory event.", deviceId, clientId);
+            return;
+        }
+
+        if (event->eventType == EventBaseType::MALLOC)
+        {
+            RecordNpuMalloc(clientId, deviceId, memEvent);
+        }
+        else
+        {
+            RecordNpuFree(clientId, deviceId, memEvent);
+        }
+    }
+    else if (event->eventType == EventBaseType::MSTX)
+    {
+        // 接收MSTX step边界事件（替代原有的MstxAnalyzer回调）
+        auto mstxEvent = std::dynamic_pointer_cast<MstxEvent>(event);
+        if (mstxEvent != nullptr)
+        {
+            ReceiveMstxMsg(mstxEvent);
+        }
+    }
+    else if (event->eventType == EventBaseType::SYSTEM && event->eventSubType == EventSubType::STEP)
+    {
+        // 接收Python step事件（替代原有的PyStepManager回调）
+        ReceiveStepMsg(event);
+    }
 }
 
 bool StepInnerAnalyzer::CreateTables(const DeviceId &deviceId)
@@ -366,38 +440,6 @@ void StepInnerAnalyzer::AddDuration(const DeviceId &deviceId)
     return;
 }
 
-bool StepInnerAnalyzer::Record(const ClientId &clientId, std::shared_ptr<const EventBase> event)
-{
-    // 当开启--steps时，关闭所有step内分析功能
-    if (!IsStepInnerAnalysisEnable())
-    {
-        return true;
-    }
-    std::shared_ptr<const MemoryEvent> memEvent = std::dynamic_pointer_cast<const MemoryEvent>(event);
-    if (memEvent == nullptr)
-    {
-        LOG_WARN("[client %u]: StepInnerAnalyzer receive invalid event.", clientId);
-        return false;
-    }
-    std::lock_guard<std::mutex> lock(mutex_);
-    DeviceId deviceId = memEvent->device;
-    if (!CreateTables(deviceId))
-    {
-        LOG_ERROR("[device %ld]: Create npu Memory table failed.", deviceId);
-        return false;
-    }
-    // 目前不处理BLOCK_FREE操作
-    if (memEvent->eventType == EventBaseType::MALLOC)
-    {
-        RecordNpuMalloc(clientId, deviceId, memEvent);
-    }
-    else if (memEvent->eventType == EventBaseType::FREE)
-    {
-        RecordNpuFree(clientId, deviceId, memEvent);
-    }
-    return true;
-}
-
 void StepInnerAnalyzer::UpdateStepInfoTable(const DeviceId &deviceId, const uint64_t &stepId, const PoolType &poolType,
                                             const int64_t &startAllocated)
 {
@@ -599,8 +641,7 @@ void StepInnerAnalyzer::ReportGap(const DeviceId &deviceId)
 
 StepInnerAnalyzer::~StepInnerAnalyzer()
 {
-    MstxAnalyzer::Instance().UnSubscribe(MstxEventSubscriber::STEP_INNER_ANALYZER);
-    PyStepManager::Instance().UnSubscribe(PyStepEventSubscriber::STEP_INNER_ANALYZER);
+    UnSubscribe();
 
     if (!IsStepInnerAnalysisEnable())
     {

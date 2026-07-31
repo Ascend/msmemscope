@@ -18,18 +18,19 @@
 #ifndef COMM_DEF_H
 #define COMM_DEF_H
 
-namespace MemScope {
+#include <cstddef>
+
+namespace MemScope
+{
 
 using ClientId = std::size_t;
 
-enum class MemScopeCommType {
+enum class MemScopeCommType
+{
     SHARED_MEMORY,
     MEMORY_DEBUG
 };
 
-constexpr size_t SHM_SIZE = 64 * 1024 * 1024;
-constexpr size_t SHM_S2C_SIZE = 4 * 1024 * 1024;
-
-}
+}  // namespace MemScope
 
 #endif
