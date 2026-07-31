@@ -22,7 +22,7 @@ Fork本仓库到个人私仓，并将个人私仓中的项目通过Clone下载�
 
 ```shell
 cd build
-python build.py local test
+python3 build.py local test
 ```
 
 其中参数说明如下：
