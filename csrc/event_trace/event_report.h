@@ -68,7 +68,9 @@ class EventReport
     bool ReportHalCreate(uint64_t addr, uint64_t size, const drv_mem_prop& prop, CallStackString&& stack);
     bool ReportHalRelease(uint64_t addr, CallStackString&& stack);
     bool ReportHalMalloc(uint64_t addr, uint64_t size, unsigned long long flag, CallStackString&& stack);
+    bool ReportHalMalloc(uint64_t addr, uint64_t size, unsigned long long flag);  // shadow mode (no callstack)
     bool ReportHalFree(uint64_t addr, CallStackString&& stack);
+    bool ReportHalFree(uint64_t addr);  // shadow mode (no callstack)
     bool ReportHostRegister(uint64_t addr, uint64_t size, CallStackString&& stack);
     bool ReportHostUnregister(uint64_t addr, CallStackString&& stack);
     bool ReportKernelLaunch(const AclnnKernelMapInfo& kernelLaunchInfo);

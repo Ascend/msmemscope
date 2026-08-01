@@ -19,41 +19,46 @@
 #define FRAMEWORK_PROCESS_H
 
 #include <memory>
+#include <mutex>
 #include <string>
 #include <vector>
-#include <mutex>
-#include "event.h"
-#include "comm_def.h"
 
-namespace MemScope {
-struct ExecCmd {
+#include "comm_def.h"
+#include "event.h"
+#include "event_router.h"  // EventRouter + EventHandler三阶段声明
+
+namespace MemScope
+{
+struct ExecCmd
+{
     explicit ExecCmd(std::vector<std::string> const &args);
     std::string const &ExecPath(void) const;
     char *const *ExecArgv(void) const;
 
-private:
+   private:
     std::string path_;
     int argc_;
-    std::vector<char*> argv_;
+    std::vector<char *> argv_;
     std::vector<std::string> args_;
 };
 
 /*
  * Process类主要功能：
- * 1. Launch用于拉起被检测程序进程，并对client传回的数据进行转发
- * 2. 注册分析回调函数
-*/
-class Process {
-public:
-    static Process& GetInstance(Config config);
+ * 1. Launch用于拉起被检测程序进程（fork+exec+LD_PRELOAD）
+ * 2. SendEvent作为事件入口，内部委托给EventRouter::Route
+ */
+class Process
+{
+   public:
+    static Process &GetInstance(Config config);
     void Launch(const std::vector<std::string> &execParams);
     bool SendEvent(std::shared_ptr<EventBase> event);
 
-private:
+   private:
     void SetPreloadEnv();
     void DoLaunch(const ExecCmd &cmd) const;
 
-private:
+   private:
     explicit Process(const Config &config) : config_(config) {}
     Config config_;
     std::mutex processMutex_;
@@ -61,8 +66,6 @@ private:
     static constexpr const size_t MAX_EVENT_QUEUE_LEN = 4096;
 };
 
-void EventHandler(std::shared_ptr<EventBase> event);
-
-}
+}  // namespace MemScope
 
 #endif

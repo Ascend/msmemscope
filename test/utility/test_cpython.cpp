@@ -35,7 +35,7 @@ public:
 };
 
 // 使用静态对象，构造/析构时初始化Python，防止多个套件重复初始化和释放导致core dump
-static PythonGlobalInit GlobalPythonInit;
+// static PythonGlobalInit GlobalPythonInit;
 
 TEST(TestCpython, BeforeInit)
 {

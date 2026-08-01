@@ -94,4 +94,26 @@ TEST_F(InefficientAnalyzerTest, TestACCESSEventTemporaryIdleness)
 
     analyzer->EventHandle(event2, &state);
 }
+
+// 影子事件应被跳过
+TEST_F(InefficientAnalyzerTest, TestShadowEventIsSkipped)
+{
+    auto shadowEvent = std::make_shared<MemoryEvent>();
+    shadowEvent->eventType = EventBaseType::MALLOC;
+    shadowEvent->poolType = PoolType::PTA_CACHING;
+    shadowEvent->eventSubType = EventSubType::PTA_CACHING;
+    shadowEvent->pid = 12345;
+    shadowEvent->addr = 0x9999;
+    shadowEvent->size = 512;
+    shadowEvent->isShadowEvent = true;
+
+    std::shared_ptr<EventBase> eventBase = shadowEvent;
+    MemoryState state;
+
+    // Should return immediately without modifying state or crashing
+    EXPECT_NO_THROW(analyzer->EventHandle(eventBase, &state));
+    // State should remain unmodified
+    EXPECT_TRUE(state.events.empty());
+}
+
 } // namespace

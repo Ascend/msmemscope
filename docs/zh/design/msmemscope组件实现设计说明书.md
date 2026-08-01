@@ -66,9 +66,9 @@
 
 | 软件单元 | 描述                  | 外部接口               | 内部接口      | 关系描述                                          |
 | ---------- | ----------------------- | ------------------------ | --------------- | --------------------------------------------------- |
-| 数据采集模块     | 通过hook等方式采集内存相关数据，并发送给框架模块 | Process::SendEvent |Report_xx_hooks   | 整个模块通过hook，注册回调方式等采集数据，经过一定处理后将数据发送给框架侧        |
-| 数据分析模块     | 向框架模块注册回调，对采集模块发来的数据进行接收和分析 | EventDispatcher::Subscribe  | xx_analyze  | 注册回调函数对采集到的数据进行分析，包括显存泄漏、比对 、监测等功能 |
-| 框架模块     | 作为系统的入口，负责解析命令行，串联数据采集和分析模块以及插桩 | CommandParser、MsgHandle     | DoLaunch、SetPreloadEnv   | 解析客户命令行配置，完成对数据采集和分析模块的配置，将采集模块的数据传送给分析模块  |
+| 数据采集模块     | 通过hook等方式采集内存相关数据，并发送给框架模块 | Process::SendEvent（内部委托给EventRouter::Route） |Report_xx_hooks   | 整个模块通过hook，注册回调方式等采集数据，经过一定处理后将数据发送给框架侧        |
+| 数据分析模块     | 向框架模块注册回调，对采集模块发来的数据进行接收和分析 | EventDispatcher::Subscribe  | EventHandle  | 所有分析器统一通过EventDispatcher订阅模式注册回调，包括HalAnalyzer、StepInnerAnalyzer、DecomposeAnalyzer、InefficientAnalyzer、Dump |
+| 框架模块     | 作为系统的入口，负责解析命令行，串联数据采集和分析模块以及插桩 | CommandParser、EventRouter     | DoLaunch、SetPreloadEnv   | 解析客户命令行配置，EventRouter::Route统一将事件路由至EventHandler三阶段处理（UpdateMemoryState→DispatchToAnalyzers→CleanupMemoryState）  |
 
 #### 4.1.4 软件实现单元设计
 
@@ -77,9 +77,9 @@
 ![image](./figures/96abcebd-f98d-4594-9856-17ea7aac212c.png)
 整个类图分为三大块：数据采集（绿色部分）、数据分析（红色部分）、框架（黄色部分）。
 
-* 数据采集：数据采集当前有LD_PRELOAD劫持（Hooks）、MSTX打点（MstxManager）、runtime和driver（Hooks中的kernel数据）上报等方式。通过EventTraceManager类来判断数据是否需要采集，如果需要上报，调用EventReport的接口上报到框架侧。可以通过msmemscope_python模块来设置采集的范围和采集项。
-* 数据分析：分析模块目前主要包括泄漏分析（LeakAnalyzer）、内存比对（StepInterAnalyzer）、显存块监测（OpExecuteWatch）、显存拆解（DecomposeAnalyzer）、低效模式识别（InefficientAnalyzer）。
-* 框架模块：负责解析linux通用命令行（ClientParser）、串联数据采集模块和分析模块（Process、EventDispatcher）以及通信模块（server和client）。
+* 数据采集：数据采集当前有LD_PRELOAD劫持（Hooks）、MSTX打点（MstxManager）、runtime和driver（Hooks中的kernel数据）上报等方式。通过EventTraceManager类来判断数据是否需要采集（含影子采集模式），如果需要上报，调用EventReport的接口上报到框架侧（Process::SendEvent→EventRouter::Route）。可以通过msmemscope_python模块来设置采集的范围和采集项。
+* 数据分析：分析模块目前主要包括泄漏分析（HalAnalyzer）、内存池分析（StepInnerAnalyzer）、显存块监测（OpExecuteWatch）、显存拆解（DecomposeAnalyzer）、低效模式识别（InefficientAnalyzer）以及数据落盘（Dump）。所有分析器统一通过EventDispatcher订阅模式接收事件，替代了原有的Process::SendEvent中switch-case硬编码分发和MstxAnalyzer/PyStepManager的自建订阅机制。
+* 框架模块：负责解析linux通用命令行（ClientParser）、串联数据采集模块和分析模块（Process、EventRouter、EventDispatcher）以及通信模块（server和client）。EventRouter为无状态事件路由单例，EventHandler拆分为UpdateMemoryState→DispatchToAnalyzers→CleanupMemoryState三阶段。
 * 工具模块：没有在图中展示，主要是一些LOG模块、字符串处理、数值计算、文件读写等。
 
 ### 4.2 接口
@@ -174,8 +174,31 @@ NA
    ```
 
    ```tex
+   接口名：bool EventRouter::Route(std::shared_ptr<EventBase> event)
+   接口功能：无状态事件路由入口，CLI和Python API模式共用。内部委托给EventHandler三阶段处理。
+   接口方向：框架模块内部
+   输入参数名：事件。
+   输出参数名：NA。
+   返回值：无。
+   注意事项：所有数据采集模块上报的事件统一通过此接口进入框架层，替代了原有的Process::SendEvent中switch-case硬编码分发。
+   ```
+
+   ```tex
+   接口名：void EventHandler(std::shared_ptr<EventBase> event)
+   接口功能：事件处理编排函数，内部按三阶段顺序执行：
+            UpdateMemoryState（更新内存块状态追踪，含影子事件处理）
+            → DispatchToAnalyzers（通过EventDispatcher分发给所有注册的分析器）
+            → CleanupMemoryState（清理已完成生命周期的内存块状态）。
+   接口方向：框架模块内部（由EventRouter::Route调用）
+   输入参数名：事件。
+   输出参数名：NA。
+   返回值：NA。
+   注意事项：影子事件在UpdateMemoryState阶段处理完毕后跳过后续分发和清理。
+   ```
+
+   ```tex
    接口名：void EventDispatcher::DispatchEvent(std::shared_ptr<EventBase>& event, MemoryState* state)
-   接口功能：对client传给server的数据包进行第二层分发，专门处理数据记录事件。
+   接口功能：对框架模块收到的数据事件进行统一分发，所有分析器（Dump、DecomposeAnalyzer、InefficientAnalyzer、HalAnalyzer、StepInnerAnalyzer）均通过此接口接收事件。
    接口方向：从框架模块到分析模块。
    输入参数名：数据记录事件、内存块缓存。
    输出参数名：NA。
@@ -286,6 +309,39 @@ NA
    输出参数名：NA
    返回值：布尔值。
    注意事项：NA。
+   ```
+
+   ```tex
+   接口名：bool EventTraceManager::ShouldCollectShadowEvents()
+   接口功能：判断当前是否应进入影子采集模式。仅取决于：
+           状态为NOT_IN_TRACING、且已配置alloc或free事件。
+   接口方向：采集模块内部
+   输入参数名：NA
+   输出参数名：NA
+   返回值：布尔值，true表示应采集影子事件。
+   注意事项：影子模式下Hook仅上报addr、size、poolType、device，不采集调用栈。
+   ```
+
+   ```tex
+   接口名：TraceMode DetermineTraceMode()
+   接口功能：统一判断当前追踪模式（NORMAL=正常采集含调用栈，SHADOW=影子采集最小数据集，SKIP=不采集）。
+            供各Hook入口统一调用，消除重复的三分支判断逻辑。
+   接口方向：采集模块内部
+   输入参数名：NA
+   输出参数名：NA
+   返回值：TraceMode枚举值。
+   注意事项：NORMAL模式下继续采集调用栈等完整信息；SHADOW模式下仅上报最小数据集。
+   ```
+
+   ```tex
+   接口名：void EventTraceManager::PromoteHistoricalStates()
+   接口功能：在msmemscope.start()调用时，遍历所有带影子标记的MemoryState，
+            对isShadowCreated的块合成MALLOC事件落盘，对isShadowFreed的块合成FREE事件落盘并清理state。
+   接口方向：采集模块内部（由SetTraceStatus(IN_TRACING)触发）
+   输入参数名：NA
+   输出参数名：NA
+   返回值：NA。
+   注意事项：必须在status_切换到IN_TRACING之前调用；历史转正事件仅落盘不触发分析器。
    ```
 
 ##### 4.2.5.3 数据分析模块

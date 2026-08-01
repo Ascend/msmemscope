@@ -74,6 +74,16 @@ enum class EventTraceStatus : uint8_t
     NOT_IN_TRACING,
 };
 
+// 追踪模式：用于Hooks层统一判断采集策略
+enum class TraceMode : uint8_t
+{
+    NORMAL = 0,  // 正常采集（含调用栈）
+    SHADOW,      // 影子采集（仅addr/size/device，无调用栈）
+    SKIP,        // 不采集
+};
+
+TraceMode DetermineTraceMode();
+
 class EventTraceManager
 {
    public:
@@ -88,6 +98,8 @@ class EventTraceManager
 
     bool IsNeedTrace(EventBaseType type);
     bool IsTracingEnabled();
+    bool ShouldCollectShadowEvents();
+    void PromoteHistoricalStates();
     void SetTraceStatus(const EventTraceStatus status);  // 通过python接口在运行时动态修改
     void InitJudgeFuncTable();
     void SetAclInitStatus(bool isInit);

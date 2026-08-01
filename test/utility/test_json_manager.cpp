@@ -18,7 +18,11 @@
 #include <gtest/gtest.h>
 #include <cstdlib>
 #include <cstring>
+// 先引入 nlohmann/json，避免后续 private public 宏污染第三方库
+#include "nlohmann/json.hpp"
+#define private public
 #include "json_manager.h"
+#undef private
 #include "file.h"
 #include "config_info.h"
 #include "securec.h"
@@ -45,9 +49,19 @@ protected:
         ResetJsonManager();
     }
 
-    // 辅助函数：重置 JsonManager（通过加载空 JSON 文件实现，不访问私有成员）
+    // 辅助函数：重置 JsonManager（重置内存中状态并清理文件句柄）
     void ResetJsonManager()
     {
+        auto& mgr = JsonManager::GetInstance();
+        // 关闭并重置文件句柄，避免后续 SaveToFile 的 CreateConfigFile 因 fp_ 非空而跳过文件创建
+        if (mgr.fp_ != nullptr) {
+            fclose(mgr.fp_);
+            mgr.fp_ = nullptr;
+        }
+        mgr.jsonFilePath_.clear();     // 清空历史文件路径
+        mgr.jsonConfig_.clear();       // 清空 JSON 内容
+        mgr.jsonConfig_ = nlohmann::json::object();
+
         std::string emptyJsonPath = "./testmsmemscope/config.json";
         CreateTestJsonFile(emptyJsonPath, "{}"); // 创建空 JSON 文件
         JsonManager::GetInstance().LoadFromFile(emptyJsonPath);

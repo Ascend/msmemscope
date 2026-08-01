@@ -34,28 +34,36 @@ JsonManager& JsonManager::GetInstance()
 
 bool JsonManager::SaveToFile(const std::string& configOutputDir)
 {
+    // 确保目录存在且 jsonFilePath_ 被正确设置
     if (!FileCreateManager::GetInstance(configOutputDir).CreateConfigFile(&fp_, MemScope::CONFIG_FILE, jsonFilePath_))
     {
         return false;
     }
+
+    // 关闭 CreateConfigFile 以 append 模式打开的 C FILE* 句柄，
+    // 避免后续 std::ofstream 对同一文件双重打开失败
+    if (fp_ != nullptr)
+    {
+        fclose(fp_);
+        fp_ = nullptr;
+    }
+
     std::ofstream ofs(jsonFilePath_);
     if (!ofs.is_open())
     {
         std::cout << "[msmemscope] Error: Failed to save json file: " << jsonFilePath_ << std::endl;
         return false;
     }
-    else
+
+    try
     {
-        try
-        {
-            ofs << jsonConfig_.dump(JSON_INDENT);
-        }
-        catch (const std::exception& e)
-        {
-            std::cout << "[msmemscope] Error: Exception during dump: " << e.what() << std::endl;
-            ofs.close();
-            return false;
-        }
+        ofs << jsonConfig_.dump(JSON_INDENT);
+    }
+    catch (const std::exception& e)
+    {
+        std::cout << "[msmemscope] Error: Exception during dump: " << e.what() << std::endl;
+        ofs.close();
+        return false;
     }
     ofs.close();
     return true;

@@ -27,11 +27,13 @@
 #include "cpython.h"
 #include "decompose_analyzer.h"
 #include "describe_trace.h"
+#include "hal_analyzer.h"
 #include "inefficient_analyzer.h"
 #include "json_manager.h"
 #include "kernel_hooks/runtime_prof_api.h"
 #include "log.h"
 #include "securec.h"
+#include "stepinner_analyzer.h"
 #include "umask_guard.h"
 #include "ustring.h"
 #include "utils.h"
@@ -223,6 +225,11 @@ EventReport::EventReport(MemScopeCommType type)
         InefficientAnalyzer::GetInstance();
     }
     Dump::GetInstance(initConfig_);
+
+    // 注册通过EventDispatcher订阅的分析器（替代Process::SendEvent中的switch-case分发）
+    HalAnalyzer::GetInstance(initConfig_);
+    StepInnerAnalyzer::GetInstance(initConfig_);
+
     LOG_INFO("LOG INIT");
     RegisterRtProfileCallback();
 
@@ -338,8 +345,8 @@ bool EventReport::ReportPyStepRecord()
 bool EventReport::ReportMemPoolRecord(EventSubType type, const MemoryUsage& info, const std::string& owner,
                                       CallStackString&& stack)
 {
-    if (!EventTraceManager::Instance().IsNeedTrace(EventBaseType::MALLOC) &&
-        !EventTraceManager::Instance().IsNeedTrace(EventBaseType::FREE))
+    TraceMode traceMode = DetermineTraceMode();
+    if (traceMode == TraceMode::SKIP)
     {
         return true;
     }
@@ -378,10 +385,20 @@ bool EventReport::ReportMemPoolRecord(EventSubType type, const MemoryUsage& info
     event->name = "N/A";
     event->device = realDevice;
     event->size = info.allocSize;
+    event->kernelIndex = kernelLaunchRecordIndex_;
+
+    if (traceMode == TraceMode::SHADOW)
+    {
+        // 影子模式：仅上报最小数据集，不上报调用栈和owner信息
+        event->isShadowEvent = true;
+        Process::GetInstance(initConfig_).SendEvent(event);
+        return true;
+    }
+
+    // 正常采集模式：上报完整数据
     event->total = info.totalReserved;
     event->used = info.totalAllocated;
     event->describeOwner = owner;
-    event->kernelIndex = kernelLaunchRecordIndex_;
     event->cCallStack = std::move(stack.cStack);
     event->pyCallStack = std::move(stack.pyStack);
 
@@ -511,6 +528,79 @@ bool EventReport::ReportHalMalloc(uint64_t addr, uint64_t size, unsigned long lo
             halPtrs_.insert(addr);
         }
     }
+
+    Process::GetInstance(initConfig_).SendEvent(event);
+
+    return true;
+}
+
+// Shadow overload (no callstack): minimal event for NOT_IN_TRACING mode
+bool EventReport::ReportHalMalloc(uint64_t addr, uint64_t size, unsigned long long flag)
+{
+    int32_t devId = (flag & 0x3FF);
+    MemOpSpace space = GetMemOpSpace(flag);
+    if (space == MemOpSpace::HOST)
+    {
+        devId = DEVICE_ID_CPU;
+    }
+    if (IsNeedSkip(devId))
+    {
+        return true;
+    }
+
+    auto event = std::make_shared<MemoryEvent>();
+    event->eventType = EventBaseType::MALLOC;
+    event->eventSubType = space == MemOpSpace::HOST ? EventSubType::HOST_PINNED : EventSubType::HAL;
+    event->poolType = PoolType::HAL;
+    event->addr = addr;
+    event->name = "N/A";
+    event->size = static_cast<int64_t>(size);
+    event->device = devId;
+    event->space = space;
+    event->isShadowEvent = true;
+    event->kernelIndex = kernelLaunchRecordIndex_;
+    // No callstack, no moduleId, no pageType, no owner for shadow events
+
+    {
+        if (!destroyed_.load())
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            halPtrs_.insert(addr);
+        }
+    }
+
+    Process::GetInstance(initConfig_).SendEvent(event);
+
+    return true;
+}
+
+// Shadow overload (no callstack): minimal event for NOT_IN_TRACING mode
+bool EventReport::ReportHalFree(uint64_t addr)
+{
+    {
+        if (destroyed_.load())
+        {
+            return true;
+        }
+        std::lock_guard<std::mutex> lock(mutex_);
+        auto it = halPtrs_.find(addr);
+        if (it == halPtrs_.end())
+        {
+            return true;  // 未在halMemAlloc中注册过的地址，过滤掉
+        }
+        halPtrs_.erase(it);
+    }
+
+    auto event = std::make_shared<MemoryEvent>();
+    event->eventType = EventBaseType::FREE;
+    event->eventSubType = EventSubType::HAL;
+    event->poolType = PoolType::HAL;
+    event->addr = addr;
+    event->name = "N/A";
+    event->device = GD_INVALID_NUM;  // 后续由MemoryStateManager::AddEvent根据addr匹配MALLOC回填
+    event->isShadowEvent = true;
+    event->kernelIndex = kernelLaunchRecordIndex_;
+    // No callstack for shadow events
 
     Process::GetInstance(initConfig_).SendEvent(event);
 

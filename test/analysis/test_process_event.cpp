@@ -23,6 +23,7 @@
 #include <unistd.h>
 #include <sys/stat.h>
 #include <iostream>
+#include "bit_field.h"
 #define private public
 #include "dump.h"
 #include "decompose_analyzer.h"
@@ -48,9 +49,13 @@ static void ResetSingleton()
     // 全局变量初始化
     DecomposeAnalyzer::GetInstance();
     Dump::GetInstance(config);
- 
+
     // 取消数据订阅与部分config参数
     EventDispatcher::GetInstance().UnSubscribe(SubscriberId::DECOMPOSE_ANALYZER);
+
+    // 启用全部落盘事件类型，确保 ShouldDumpEvent 不过滤测试事件
+    config.dumpEventType = 0x0F;  // 启用 ALLOC/FREE/LAUNCH/ACCESS 全部 4 个 bit
+    Dump::GetInstance(config).config_.dumpEventType = config.dumpEventType;
 }
 
 static bool RemoveDir(const std::string& dirPath)
@@ -107,8 +112,20 @@ protected:
         RemoveDir("./testmsmemscope");
         Utility::FileCreateManager::GetInstance("./testmsmemscope").SetProjectDir("./testmsmemscope");
         MemoryStateManager::GetInstance().poolsMap_.clear();
+        MemoryState::count = 0;  // 重置allocation_id计数器，确保每个测试用例从1开始
         // 初始化单例类的参数
         ResetSingleton();
+
+        // 设置dumpEventType包含所有事件类型，使ShouldDumpEvent允许所有事件落盘
+        {
+            BitField<uint8_t> eventBit;
+            eventBit.setBit(static_cast<size_t>(EventType::ALLOC_EVENT));
+            eventBit.setBit(static_cast<size_t>(EventType::FREE_EVENT));
+            eventBit.setBit(static_cast<size_t>(EventType::LAUNCH_EVENT));
+            eventBit.setBit(static_cast<size_t>(EventType::ACCESS_EVENT));
+            config.dumpEventType = eventBit.getValue();
+        }
+        Dump::GetInstance(config).config_.dumpEventType = config.dumpEventType;
  
         AddHalDeviceMemoryEvent();
         AddAccessEvent();
@@ -698,8 +715,7 @@ TEST_F(TestProcess, process_hal_device_memory_event)
     strncpy_s(config.outputDir, sizeof(config.outputDir), path.c_str(), sizeof(config.outputDir) - 1);
     Dump::GetInstance(config).handlerMap_[testdDevId] = MakeDataHandler(config, DataType::MEMORY_EVENT, testdDevId);    // 重置文件指针
     Dump::GetInstance(config).handlerMap_[testdDevId]->Init();
-    MemoryState::ResetCount();
- 
+     
     EventHandler(eventMap["HalDeviceMallocEvent"]);
     EventHandler(eventMap["HalDeviceFreeEvent"]);
  
@@ -723,8 +739,7 @@ TEST_F(TestProcess, process_pta_caching_memory_event)
     strncpy_s(config.outputDir, sizeof(config.outputDir), path.c_str(), sizeof(config.outputDir) - 1);
     Dump::GetInstance(config).handlerMap_[testdDevId] = MakeDataHandler(config, DataType::MEMORY_EVENT, testdDevId);    // 重置文件指针
     Dump::GetInstance(config).handlerMap_[testdDevId]->Init();
-    MemoryState::ResetCount();
- 
+     
     EventHandler(eventMap["PtaCachingMallocEvent"]);
     EventHandler(eventMap["PtaAccessEvent"]);
     EventHandler(eventMap["DescribeOwnerEvent"]);
@@ -753,15 +768,14 @@ TEST_F(TestProcess, process_pta_workspace_memory_event)
     strncpy_s(config.outputDir, sizeof(config.outputDir), path.c_str(), sizeof(config.outputDir) - 1);
     Dump::GetInstance(config).handlerMap_[testdDevId] = MakeDataHandler(config, DataType::MEMORY_EVENT, testdDevId);    // 重置文件指针
     Dump::GetInstance(config).handlerMap_[testdDevId]->Init();
-    MemoryState::ResetCount();
- 
+     
     EventHandler(eventMap["PtaWorkspaceMallocEvent"]);
     EventHandler(eventMap["PtaWorkspaceFreeEvent"]);
  
     std::string result = "ID,Event,Event Type,Name,Timestamp(ns),Process Id,Thread Id,Device Id,Ptr,Attr"
 ",Call Stack(Python),Call Stack(C)\n"
-"3,MALLOC,PTA_WORKSPACE,N/A,3,123,1234,0,0x0000000000003039,\"{allocation_id:1,addr:0x0000000000003039,size:10,total:10,used:10}\",,\n"
-"54,FREE,PTA_WORKSPACE,N/A,54,123,1234,0,0x0000000000003039,\"{allocation_id:1,addr:0x0000000000003039,size:10,total:0,used:0}\",,\n";
+"3,MALLOC,PTA,N/A,3,123,1234,0,0x0000000000003039,\"{allocation_id:1,addr:0x0000000000003039,size:10,total:10,used:10}\",,\n"
+"54,FREE,PTA,N/A,54,123,1234,0,0x0000000000003039,\"{allocation_id:1,addr:0x0000000000003039,size:10,total:0,used:0}\",,\n";
     std::string fileContent;
     Dump::GetInstance(config).handlerMap_[testdDevId].reset();
     bool hasReadFile = ReadFile(path, fileContent);
@@ -778,13 +792,16 @@ TEST_F(TestProcess, process_atb_memory_event)
     strncpy_s(config.outputDir, sizeof(config.outputDir), path.c_str(), sizeof(config.outputDir) - 1);
     Dump::GetInstance(config).handlerMap_[testdDevId] = MakeDataHandler(config, DataType::MEMORY_EVENT, testdDevId);    // 重置文件指针
     Dump::GetInstance(config).handlerMap_[testdDevId]->Init();
-    MemoryState::ResetCount();
- 
+     
     EventHandler(eventMap["AtbMallocEvent"]);
     EventHandler(eventMap["AtbAccessEvent"]);
     EventHandler(eventMap["AtbAccessEventInDifferentPid"]);
     EventHandler(eventMap["AtbFreeEvent"]);
+    // 临时清除FREE_EVENT位，防止CleanUpEventInMemoryStateManager产生的影子FREE事件污染输出
+    // 影子FREE事件的id/timestamp由EventBase构造时生成，在UT中不可预测
+    Dump::GetInstance(config).config_.dumpEventType &= ~(1u << static_cast<size_t>(EventType::FREE_EVENT));
     CleanUpEventInMemoryStateManager();
+    Dump::GetInstance(config).config_.dumpEventType |= (1u << static_cast<size_t>(EventType::FREE_EVENT));
  
     std::string result = "ID,Event,Event Type,Name,Timestamp(ns),Process Id,Thread Id,Device Id,Ptr,Attr"
 ",Call Stack(Python),Call Stack(C)\n"
@@ -810,8 +827,7 @@ TEST_F(TestProcess, process_mindspore_memory_event)
     strncpy_s(config.outputDir, sizeof(config.outputDir), path.c_str(), sizeof(config.outputDir) - 1);
     Dump::GetInstance(config).handlerMap_[testdDevId] = MakeDataHandler(config, DataType::MEMORY_EVENT, testdDevId);    // 重置文件指针
     Dump::GetInstance(config).handlerMap_[testdDevId]->Init();
-    MemoryState::ResetCount();
- 
+     
     EventHandler(eventMap["MindsporeMallocEvent"]);
     EventHandler(eventMap["MindsporeFreeEvent"]);
  
@@ -835,8 +851,7 @@ TEST_F(TestProcess, process_aten_op_event)
     strncpy_s(config.outputDir, sizeof(config.outputDir), path.c_str(), sizeof(config.outputDir) - 1);
     Dump::GetInstance(config).handlerMap_[testdDevId] = MakeDataHandler(config, DataType::MEMORY_EVENT, testdDevId);    // 重置文件指针
     Dump::GetInstance(config).handlerMap_[testdDevId]->Init();
-    MemoryState::ResetCount();
- 
+     
     EventHandler(eventMap["AtenOpStartEvent"]);
     EventHandler(eventMap["AtenOpEndEvent"]);
  
@@ -860,8 +875,7 @@ TEST_F(TestProcess, process_atb_op_event)
     strncpy_s(config.outputDir, sizeof(config.outputDir), path.c_str(), sizeof(config.outputDir) - 1);
     Dump::GetInstance(config).handlerMap_[testdDevId] = MakeDataHandler(config, DataType::MEMORY_EVENT, testdDevId);    // 重置文件指针
     Dump::GetInstance(config).handlerMap_[testdDevId]->Init();
-    MemoryState::ResetCount();
- 
+     
     EventHandler(eventMap["AtbOpStartEvent"]);
     EventHandler(eventMap["AtbOpEndEvent"]);
  
@@ -885,8 +899,7 @@ TEST_F(TestProcess, process_kernel_event)
     strncpy_s(config.outputDir, sizeof(config.outputDir), path.c_str(), sizeof(config.outputDir) - 1);
     Dump::GetInstance(config).handlerMap_[testdDevId] = MakeDataHandler(config, DataType::MEMORY_EVENT, testdDevId);    // 重置文件指针
     Dump::GetInstance(config).handlerMap_[testdDevId]->Init();
-    MemoryState::ResetCount();
- 
+     
     EventHandler(eventMap["KernelLaunchEvent"]);
     EventHandler(eventMap["KernelExecuteStartEvent"]);
     EventHandler(eventMap["KernelExecuteEndEvent"]);
@@ -917,8 +930,7 @@ TEST_F(TestProcess, process_mstx_event)
     strncpy_s(config.outputDir, sizeof(config.outputDir), path.c_str(), sizeof(config.outputDir) - 1);
     Dump::GetInstance(config).handlerMap_[testdDevId] = MakeDataHandler(config, DataType::MEMORY_EVENT, testdDevId);    // 重置文件指针
     Dump::GetInstance(config).handlerMap_[testdDevId]->Init();
-    MemoryState::ResetCount();
- 
+     
     EventHandler(eventMap["MstxMarkEvent"]);
     EventHandler(eventMap["MstxRangeStartEvent"]);
     EventHandler(eventMap["MstxRangeEndEvent"]);
@@ -944,8 +956,7 @@ TEST_F(TestProcess, process_system_event)
     strncpy_s(config.outputDir, sizeof(config.outputDir), path.c_str(), sizeof(config.outputDir) - 1);
     Dump::GetInstance(config).handlerMap_[testdDevId] = MakeDataHandler(config, DataType::MEMORY_EVENT, testdDevId);    // 重置文件指针
     Dump::GetInstance(config).handlerMap_[testdDevId]->Init();
-    MemoryState::ResetCount();
- 
+     
     EventHandler(eventMap["AclInitEvent"]);
     EventHandler(eventMap["AclFinalEvent"]);
  
@@ -971,11 +982,13 @@ TEST_F(TestProcess, process_clean_up_event)
     strncpy_s(config.outputDir, sizeof(config.outputDir), path.c_str(), sizeof(config.outputDir) - 1);
     Dump::GetInstance(config).handlerMap_[testdDevId] = MakeDataHandler(config, DataType::MEMORY_EVENT, testdDevId);    // 重置文件指针
     Dump::GetInstance(config).handlerMap_[testdDevId]->Init();
-    MemoryState::ResetCount();
- 
+     
     EventHandler(eventMap["PtaCachingMallocEvent"]);
     EventHandler(eventMap["PtaAccessEvent"]);
+    // 临时清除FREE_EVENT位，防止CleanUpEvent产生影子FREE事件污染输出
+    Dump::GetInstance(config).config_.dumpEventType &= ~(1u << static_cast<size_t>(EventType::FREE_EVENT));
     EventHandler(eventMap["PtaCleanUpEvent"]);
+    Dump::GetInstance(config).config_.dumpEventType |= (1u << static_cast<size_t>(EventType::FREE_EVENT));
  
     std::string result = "ID,Event,Event Type,Name,Timestamp(ns),Process Id,Thread Id,Device Id,Ptr,Attr"
 ",Call Stack(Python),Call Stack(C)\n"
@@ -998,8 +1011,10 @@ TEST_F(TestProcess, dump_event_before_malloc)
     strncpy_s(config.outputDir, sizeof(config.outputDir), path.c_str(), sizeof(config.outputDir) - 1);
     Dump::GetInstance(config).handlerMap_[testdDevId] = MakeDataHandler(config, DataType::MEMORY_EVENT, testdDevId);    // 重置文件指针
     Dump::GetInstance(config).handlerMap_[testdDevId]->Init();
-    MemoryState::ResetCount();
- 
+    // 只允许ALLOC事件落盘，避免CLEAN_UP产生的影子FREE事件污染输出
+    config.dumpEventType = (1u << static_cast<size_t>(EventType::ALLOC_EVENT));
+    Dump::GetInstance(config).config_.dumpEventType = config.dumpEventType;
+     
     EventHandler(eventMap["HalUnknownMallocEvent"]);
     EventHandler(eventMap["HalDeviceMallocEvent"]);
     CleanUpEventInMemoryStateManager();
@@ -1024,12 +1039,14 @@ TEST_F(TestProcess, dump_two_malloc_event)
     strncpy_s(config.outputDir, sizeof(config.outputDir), path.c_str(), sizeof(config.outputDir) - 1);
     Dump::GetInstance(config).handlerMap_[testdDevId] = MakeDataHandler(config, DataType::MEMORY_EVENT, testdDevId);    // 重置文件指针
     Dump::GetInstance(config).handlerMap_[testdDevId]->Init();
-    MemoryState::ResetCount();
- 
+     
     EventHandler(eventMap["HalDeviceMallocEvent"]);
     EventHandler(eventMap["HalDeviceFreeEvent"]);
     EventHandler(eventMap["HalUnknownMallocEvent"]);
+    // 临时清除FREE_EVENT位，防止CleanUpEvent产生影子FREE事件污染输出
+    Dump::GetInstance(config).config_.dumpEventType &= ~(1u << static_cast<size_t>(EventType::FREE_EVENT));
     EventHandler(eventMap["HalCleanUpEvent"]);
+    Dump::GetInstance(config).config_.dumpEventType |= (1u << static_cast<size_t>(EventType::FREE_EVENT));
  
     std::string result = "ID,Event,Event Type,Name,Timestamp(ns),Process Id,Thread Id,Device Id,Ptr,Attr"
 ",Call Stack(Python),Call Stack(C)\n"
@@ -1052,8 +1069,7 @@ TEST_F(TestProcess, clean_up_event_failed)
     strncpy_s(config.outputDir, sizeof(config.outputDir), path.c_str(), sizeof(config.outputDir) - 1);
     Dump::GetInstance(config).handlerMap_[testdDevId] = MakeDataHandler(config, DataType::MEMORY_EVENT, testdDevId);    // 重置文件指针
     Dump::GetInstance(config).handlerMap_[testdDevId]->Init();
-    MemoryState::ResetCount();
- 
+     
     EventHandler(eventMap["HalCleanUpEvent"]);
  
     std::string result = "ID,Event,Event Type,Name,Timestamp(ns),Process Id,Thread Id,Device Id,Ptr,Attr"
@@ -1074,8 +1090,7 @@ TEST_F(TestProcess, process_memory_owner_event)
     strncpy_s(config.outputDir, sizeof(config.outputDir), path.c_str(), sizeof(config.outputDir) - 1);
     Dump::GetInstance(config).handlerMap_[testdDevId] = MakeDataHandler(config, DataType::MEMORY_EVENT, testdDevId);    // 重置文件指针
     Dump::GetInstance(config).handlerMap_[testdDevId]->Init();
-    MemoryState::ResetCount();
- 
+     
     auto func = std::bind(&DecomposeAnalyzer::EventHandle, &DecomposeAnalyzer::GetInstance(),
         std::placeholders::_1, std::placeholders::_2);
     std::vector<EventBaseType> eventList{EventBaseType::MALLOC, EventBaseType::ACCESS, EventBaseType::MEMORY_OWNER};
@@ -1111,8 +1126,7 @@ TEST_F(TestProcess, process_memory_owner_event_in_torch_step)
     strncpy_s(config.outputDir, sizeof(config.outputDir), path.c_str(), sizeof(config.outputDir) - 1);
     Dump::GetInstance(config).handlerMap_[testdDevId] = MakeDataHandler(config, DataType::MEMORY_EVENT, testdDevId);    // 重置文件指针
     Dump::GetInstance(config).handlerMap_[testdDevId]->Init();
-    MemoryState::ResetCount();
- 
+     
     auto func = std::bind(&DecomposeAnalyzer::EventHandle, &DecomposeAnalyzer::GetInstance(),
         std::placeholders::_1, std::placeholders::_2);
     std::vector<EventBaseType> eventList{EventBaseType::MALLOC, EventBaseType::ACCESS, EventBaseType::MEMORY_OWNER};
@@ -1144,8 +1158,7 @@ TEST_F(TestProcess, process_memory_owner_event_without_malloc)
     strncpy_s(config.outputDir, sizeof(config.outputDir), path.c_str(), sizeof(config.outputDir) - 1);
     Dump::GetInstance(config).handlerMap_[testdDevId] = MakeDataHandler(config, DataType::MEMORY_EVENT, testdDevId);    // 重置文件指针
     Dump::GetInstance(config).handlerMap_[testdDevId]->Init();
-    MemoryState::ResetCount();
- 
+     
     auto func = std::bind(&DecomposeAnalyzer::EventHandle, &DecomposeAnalyzer::GetInstance(),
         std::placeholders::_1, std::placeholders::_2);
     std::vector<EventBaseType> eventList{EventBaseType::MALLOC, EventBaseType::ACCESS, EventBaseType::MEMORY_OWNER};
@@ -1178,8 +1191,7 @@ TEST_F(TestProcess, init_memory_owner)
     strncpy_s(config.outputDir, sizeof(config.outputDir), path.c_str(), sizeof(config.outputDir) - 1);
     Dump::GetInstance(config).handlerMap_[testdDevId] = MakeDataHandler(config, DataType::MEMORY_EVENT, testdDevId);    // 重置文件指针
     Dump::GetInstance(config).handlerMap_[testdDevId]->Init();
-    MemoryState::ResetCount();
- 
+     
     auto func = std::bind(&DecomposeAnalyzer::EventHandle, &DecomposeAnalyzer::GetInstance(),
         std::placeholders::_1, std::placeholders::_2);
     std::vector<EventBaseType> eventList{EventBaseType::MALLOC, EventBaseType::ACCESS, EventBaseType::MEMORY_OWNER};
@@ -1201,9 +1213,9 @@ TEST_F(TestProcess, init_memory_owner)
 ",Call Stack(Python),Call Stack(C)\n"
 "3,MALLOC,PTA,N/A,3,123,1234,0,0x0000000000003039,\"{allocation_id:1,addr:0x0000000000003039,size:10,total:10,used:10,owner:PTA}\",,\n"
 "54,FREE,PTA,N/A,54,123,1234,0,0x0000000000003039,\"{allocation_id:1,addr:0x0000000000003039,size:10,total:0,used:0}\",,\n"
-"3,MALLOC,PTA_WORKSPACE,N/A,3,123,1234,0,0x0000000000003039,\"{allocation_id:2,addr:0x0000000000003039,size:10,total:10,used:10,"
+"3,MALLOC,PTA,N/A,3,123,1234,0,0x0000000000003039,\"{allocation_id:2,addr:0x0000000000003039,size:10,total:10,used:10,"
 "owner:PTA_WORKSPACE}\",,\n"
-"54,FREE,PTA_WORKSPACE,N/A,54,123,1234,0,0x0000000000003039,\"{allocation_id:2,addr:0x0000000000003039,size:10,total:0,used:0}\",,\n"
+"54,FREE,PTA,N/A,54,123,1234,0,0x0000000000003039,\"{allocation_id:2,addr:0x0000000000003039,size:10,total:0,used:0}\",,\n"
 "3,MALLOC,ATB,N/A,3,123,1234,0,0x0000000000003039,\"{allocation_id:3,addr:0x0000000000003039,size:10,total:10,used:10,owner:ATB}\",,\n"
 "54,FREE,ATB,N/A,54,123,1234,0,0x0000000000003039,\"{allocation_id:3,addr:0x0000000000003039,size:10,total:0,used:0}\",,\n"
 "3,MALLOC,MINDSPORE,N/A,3,123,1234,0,0x0000000000003039,\"{allocation_id:4,addr:0x0000000000003039,size:10,total:10,used:10,owner:MINDSPORE}\",,\n"
@@ -1226,8 +1238,7 @@ TEST_F(TestProcess, updata_owner_by_access_event)
     strncpy_s(config.outputDir, sizeof(config.outputDir), path.c_str(), sizeof(config.outputDir) - 1);
     Dump::GetInstance(config).handlerMap_[testdDevId] = MakeDataHandler(config, DataType::MEMORY_EVENT, testdDevId);    // 重置文件指针
     Dump::GetInstance(config).handlerMap_[testdDevId]->Init();
-    MemoryState::ResetCount();
- 
+     
     auto func = std::bind(&DecomposeAnalyzer::EventHandle, &DecomposeAnalyzer::GetInstance(),
         std::placeholders::_1, std::placeholders::_2);
     std::vector<EventBaseType> eventList{EventBaseType::MALLOC, EventBaseType::ACCESS, EventBaseType::MEMORY_OWNER};
@@ -1260,8 +1271,7 @@ TEST_F(TestProcess, updata_owner_failed_by_atb_access_event)
     strncpy_s(config.outputDir, sizeof(config.outputDir), path.c_str(), sizeof(config.outputDir) - 1);
     Dump::GetInstance(config).handlerMap_[testdDevId] = MakeDataHandler(config, DataType::MEMORY_EVENT, testdDevId);    // 重置文件指针
     Dump::GetInstance(config).handlerMap_[testdDevId]->Init();
-    MemoryState::ResetCount();
- 
+     
     auto func = std::bind(&DecomposeAnalyzer::EventHandle, &DecomposeAnalyzer::GetInstance(),
         std::placeholders::_1, std::placeholders::_2);
     std::vector<EventBaseType> eventList{EventBaseType::MALLOC, EventBaseType::ACCESS, EventBaseType::MEMORY_OWNER};
@@ -1294,8 +1304,7 @@ TEST_F(TestProcess, get_different_allocation_id_with_trace_start_and_stop_event)
     strncpy_s(config.outputDir, sizeof(config.outputDir), path.c_str(), sizeof(config.outputDir) - 1);
     Dump::GetInstance(config).handlerMap_[testdDevId] = MakeDataHandler(config, DataType::MEMORY_EVENT, testdDevId);    // 重置文件指针
     Dump::GetInstance(config).handlerMap_[testdDevId]->Init();
-    MemoryState::ResetCount();
- 
+     
     EventHandler(eventMap["PtaCachingMallocEvent"]);
     EventHandler(eventMap["TraceStartEvent"]);
     EventHandler(eventMap["PtaAccessEvent"]);
@@ -1307,9 +1316,9 @@ TEST_F(TestProcess, get_different_allocation_id_with_trace_start_and_stop_event)
     std::string result = "ID,Event,Event Type,Name,Timestamp(ns),Process Id,Thread Id,Device Id,Ptr,Attr"
 ",Call Stack(Python),Call Stack(C)\n"
 "3,MALLOC,PTA,N/A,3,123,1234,0,0x0000000000003039,\"{allocation_id:1,addr:0x0000000000003039,size:10,total:10,used:10}\",,\n"
-"13,ACCESS,UNKNOWN,aten.add,13,123,1234,0,0x0000000000003039,\"{allocation_id:2,addr:0x0000000000003039,size:10,type:PTA,"
+"13,ACCESS,UNKNOWN,aten.add,13,123,1234,0,0x0000000000003039,\"{allocation_id:1,addr:0x0000000000003039,size:10,type:PTA,"
 "dtype:torch.float16,shape:torch.Size([1,5])}\",,\n"
-"54,FREE,PTA,N/A,54,123,1234,0,0x0000000000003039,\"{allocation_id:3,addr:0x0000000000003039,size:10,total:0,used:0}\",,\n"
+"54,FREE,PTA,N/A,54,123,1234,0,0x0000000000003039,\"{allocation_id:1,addr:0x0000000000003039,size:10,total:0,used:0}\",,\n"
 "1,SYSTEM,START_TRACE,N/A,12,123,1234,N/A,N/A,,,\n"
 "2,SYSTEM,STOP_TRACE,N/A,13,123,1234,N/A,N/A,,,\n";
     std::string fileContent;
@@ -1328,8 +1337,7 @@ TEST_F(TestProcess, get_the_same_allocation_id_with_trace_start_and_stop_event)
     strncpy_s(config.outputDir, sizeof(config.outputDir), path.c_str(), sizeof(config.outputDir) - 1);
     Dump::GetInstance(config).handlerMap_[testdDevId] = MakeDataHandler(config, DataType::MEMORY_EVENT, testdDevId);    // 重置文件指针
     Dump::GetInstance(config).handlerMap_[testdDevId]->Init();
-    MemoryState::ResetCount();
- 
+     
     EventHandler(eventMap["TraceStartEvent"]);
     EventHandler(eventMap["PtaCachingMallocEvent"]);
     EventHandler(eventMap["PtaAccessEvent"]);
@@ -1362,8 +1370,7 @@ TEST_F(TestProcess, add_memory_event_into_state)
     strncpy_s(config.outputDir, sizeof(config.outputDir), path.c_str(), sizeof(config.outputDir) - 1);
     Dump::GetInstance(config).handlerMap_[testdDevId] = MakeDataHandler(config, DataType::MEMORY_EVENT, testdDevId);    // 重置文件指针
     Dump::GetInstance(config).handlerMap_[testdDevId]->Init();
-    MemoryState::ResetCount();
- 
+     
     EventHandler(eventMap["TraceStartEvent"]);
     EventHandler(eventMap["PtaCachingMallocEvent"]);
     EventHandler(eventMap["PtaAccessEvent"]);

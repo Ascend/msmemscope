@@ -15,12 +15,15 @@
  * -------------------------------------------------------------------------
  */
 
-#include <memory>
-#include "utility/log.h"
-#include "bit_field.h"
 #include "hal_analyzer.h"
 
-namespace MemScope {
+#include <memory>
+
+#include "bit_field.h"
+#include "utility/log.h"
+
+namespace MemScope
+{
 
 HalAnalyzer& HalAnalyzer::GetInstance(Config config)
 {
@@ -30,8 +33,68 @@ HalAnalyzer& HalAnalyzer::GetInstance(Config config)
 
 HalAnalyzer::HalAnalyzer(Config config)
 {
+    // 确保Utility::Log先于当前对象构造，利用C++静态对象析构逆序规则，使~HalAnalyzer中LOG宏安全
+    Utility::Log::GetLog();
     config_ = config;
+    Subscribe();
     return;
+}
+
+void HalAnalyzer::Subscribe()
+{
+    auto func = std::bind(&HalAnalyzer::EventHandle, this, std::placeholders::_1, std::placeholders::_2);
+    std::vector<EventBaseType> eventList{EventBaseType::MALLOC, EventBaseType::FREE};
+    EventDispatcher::GetInstance().Subscribe(SubscriberId::HAL_ANALYZER, eventList, EventDispatcher::Priority::High,
+                                             func);
+}
+
+void HalAnalyzer::UnSubscribe() const { EventDispatcher::GetInstance().UnSubscribe(SubscriberId::HAL_ANALYZER); }
+
+void HalAnalyzer::EventHandle(std::shared_ptr<EventBase>& event, MemoryState* state)
+{
+    // 仅处理HAL池的内存事件
+    if (event->poolType != PoolType::HAL)
+    {
+        return;
+    }
+
+    // Skip shadow/historical events
+    if (auto memEvent = std::dynamic_pointer_cast<MemoryEvent>(event))
+    {
+        if (memEvent->isShadowEvent)
+        {
+            return;
+        }
+    }
+
+    // 判断是否满足功能开启条件
+    if (!IsHalAnalysisEnable())
+    {
+        return;
+    }
+
+    ClientId clientId = event->pid;
+    if (!CreateMemTables(clientId))
+    {
+        LOG_ERROR("[client %u]: Create hal Memory table failed.", clientId);
+        return;
+    }
+
+    auto memEvent = std::dynamic_pointer_cast<MemoryEvent>(event);
+    if (memEvent == nullptr)
+    {
+        LOG_WARN("[client %u]: HalAnalyzer receive invalid event.", clientId);
+        return;
+    }
+
+    if (event->eventType == EventBaseType::MALLOC)
+    {
+        RecordMalloc(clientId, memEvent);
+    }
+    else if (event->eventType == EventBaseType::FREE)
+    {
+        RecordFree(clientId, memEvent);
+    }
 }
 
 bool HalAnalyzer::IsHalAnalysisEnable()
@@ -39,46 +102,52 @@ bool HalAnalyzer::IsHalAnalysisEnable()
     // 确认analysis设置中是否包含泄漏分析或OOM详细分析
     BitField<decltype(config_.analysisType)> analysisType(config_.analysisType);
     if (!(analysisType.checkBit(static_cast<size_t>(AnalysisType::LEAKS_ANALYSIS))) &&
-        !(analysisType.checkBit(static_cast<size_t>(AnalysisType::OOM_ANALYSIS)))) {
+        !(analysisType.checkBit(static_cast<size_t>(AnalysisType::OOM_ANALYSIS))))
+    {
         return false;
     }
     // 当开启--steps时，关闭所有分析功能
-    if (config_.stepList.stepCount!=0) {
+    if (config_.stepList.stepCount != 0)
+    {
         return false;
     }
 
     // 非默认采集模式，关闭分析功能
-    if (config_.collectMode == static_cast<uint8_t>(CollectMode::DEFERRED)) {
+    if (config_.collectMode == static_cast<uint8_t>(CollectMode::DEFERRED))
+    {
         return false;
     }
-    
+
     // 当malloc和free采集并非都开启时，关闭分析功能
     BitField<decltype(config_.eventType)> eventType(config_.eventType);
     if (!(eventType.checkBit(static_cast<size_t>(EventType::ALLOC_EVENT))) ||
-        !(eventType.checkBit(static_cast<size_t>(EventType::FREE_EVENT)))) {
+        !(eventType.checkBit(static_cast<size_t>(EventType::FREE_EVENT))))
+    {
         return false;
     }
     return true;
 }
 
-bool HalAnalyzer::CreateMemTables(const ClientId &clientId)
+bool HalAnalyzer::CreateMemTables(const ClientId& clientId)
 {
-    if (memtables_.find(clientId) != memtables_.end()) {
+    if (memtables_.find(clientId) != memtables_.end())
+    {
         return true;
     }
     LOG_INFO("[client %u]: Start Record hal Memory.", clientId);
     MemoryRecordTable memrecordtable{};
     auto result = memtables_.emplace(clientId, memrecordtable);
-    if (result.second) {
+    if (result.second)
+    {
         return true;
     }
     return false;
 }
 
-void HalAnalyzer::RecordMalloc(const ClientId &clientId, std::shared_ptr<const EventBase> event)
+void HalAnalyzer::RecordMalloc(const ClientId& clientId, std::shared_ptr<const MemoryEvent> memEvent)
 {
-    std::shared_ptr<const MemoryEvent> memEvent = std::dynamic_pointer_cast<const MemoryEvent>(event);
-    if (memEvent == nullptr) {
+    if (memEvent == nullptr)
+    {
         LOG_WARN("[client %u]: HalAnalyzer receive invalid event.", clientId);
         return;
     }
@@ -86,23 +155,28 @@ void HalAnalyzer::RecordMalloc(const ClientId &clientId, std::shared_ptr<const E
     // malloc操作需解析当前moduleId
     bool foundModule = false;
     std::string modulename = "INVLID_MOUDLE_ID";
-    if (MODULE_HASH_TABLE.find(memEvent->moduleId) != MODULE_HASH_TABLE.end()) {
+    if (MODULE_HASH_TABLE.find(memEvent->moduleId) != MODULE_HASH_TABLE.end())
+    {
         modulename = MODULE_HASH_TABLE.find(memEvent->moduleId)->second;
         foundModule = true;
     }
-    if (!foundModule) {
-        LOG_WARN("[client %u][device: %d]: Malloc operator did not find %d Module in index %u malloc record.",
-            clientId, memEvent->device, memEvent->moduleId, memEvent->id);
+    if (!foundModule)
+    {
+        LOG_WARN("[client %u][device: %d]: Malloc operator did not find %d Module in index %u malloc record.", clientId,
+                 memEvent->device, memEvent->moduleId, memEvent->id);
     }
 
-    if (memtables_[clientId].find(memkey) != memtables_[clientId].end()) {
-        if ((memtables_[clientId].find(memkey)->second.addrStatus == AddrStatus::FREE_WAIT)) {
-            LOG_WARN(
-                "[client %u]: server already has malloc record in addr: 0x%lx ,", clientId, memEvent->addr);
-            LOG_WARN("[client %u]: but now malloc again in index: %u, addr: 0x%lx, size: %u, space: %u",
-                clientId, memEvent->id, memEvent->addr, memEvent->size, memEvent->space);
+    if (memtables_[clientId].find(memkey) != memtables_[clientId].end())
+    {
+        if ((memtables_[clientId].find(memkey)->second.addrStatus == AddrStatus::FREE_WAIT))
+        {
+            LOG_WARN("[client %u]: server already has malloc record in addr: 0x%lx ,", clientId, memEvent->addr);
+            LOG_WARN("[client %u]: but now malloc again in index: %u, addr: 0x%lx, size: %u, space: %u", clientId,
+                     memEvent->id, memEvent->addr, memEvent->size, memEvent->space);
         }
-    } else {
+    }
+    else
+    {
         HalMemInfo halMemInfo{};
         memtables_[clientId].emplace(memkey, halMemInfo);
     }
@@ -120,70 +194,64 @@ void HalAnalyzer::RecordMalloc(const ClientId &clientId, std::shared_ptr<const E
     }
 }
 
-void HalAnalyzer::RecordFree(const ClientId &clientId, std::shared_ptr<const EventBase> event)
+void HalAnalyzer::RecordFree(const ClientId& clientId, std::shared_ptr<const MemoryEvent> memEvent)
 {
-    uint64_t memkey = event->addr;
+    uint64_t memkey = memEvent->addr;
     auto it = memtables_[clientId].find(memkey);
-    if (it != memtables_[clientId].end()) {
-        if (it->second.addrStatus == AddrStatus::FREE_WAIT) {
+    if (it != memtables_[clientId].end())
+    {
+        if (it->second.addrStatus == AddrStatus::FREE_WAIT)
+        {
             memtables_[clientId][memkey].addrStatus = AddrStatus::FREE_ALREADY;
-        } else {
-            LOG_WARN("[client %u]: Double free operator found for malloc operation : addr: 0x%lx",
-                clientId, event->addr);
         }
-    } else {
-            LOG_WARN("[client %u]: No matching malloc operation found for free operator: addr: 0x%lx",
-                clientId, event->addr);
+        else
+        {
+            LOG_WARN("[client %u]: Double free operator found for malloc operation : addr: 0x%lx", clientId,
+                     memEvent->addr);
+        }
     }
-}
-
-bool HalAnalyzer::Record(const ClientId &clientId, std::shared_ptr<const EventBase> event)
-{
-    // 判断是否满足功能开启条件
-    if (!IsHalAnalysisEnable()) {
-        return true;
+    else
+    {
+        LOG_WARN("[client %u]: No matching malloc operation found for free operator: addr: 0x%lx", clientId,
+                 memEvent->addr);
     }
-
-    if (!CreateMemTables(clientId)) {
-        LOG_ERROR("[client %u]: Create hal Memory table failed.", clientId);
-        return false;
-    }
-    if (event->eventType == EventBaseType::MALLOC) {
-        RecordMalloc(clientId, event);
-        return true;
-    } else if (event->eventType == EventBaseType::FREE) {
-        RecordFree(clientId, event);
-        return true;
-    }
-    return false;
 }
 
 void HalAnalyzer::CheckLeak(const size_t clientId)
 {
     bool foundLeaks = false;
-    if (memtables_.find(clientId) != memtables_.end()) {
-        for (const auto& pair :memtables_[clientId]) {
-            if (pair.second.addrStatus != AddrStatus::FREE_ALREADY) {
+    if (memtables_.find(clientId) != memtables_.end())
+    {
+        for (const auto& pair : memtables_[clientId])
+        {
+            if (pair.second.addrStatus != AddrStatus::FREE_ALREADY)
+            {
                 foundLeaks = true;
                 LOG_WARN("[client %u]: Leak memory in Malloc operator, addr: 0x%lx", clientId, pair.first);
             }
         }
     }
-    if (!foundLeaks) {
+    if (!foundLeaks)
+    {
         LOG_INFO("[client %u]: There is no hal leak memory.", clientId);
     }
 }
 
 void HalAnalyzer::LeakAnalyze()
 {
-    if (!IsHalAnalysisEnable()) {
+    if (!IsHalAnalysisEnable())
+    {
         return;
     }
 
-    if (memtables_.empty()) {
+    if (memtables_.empty())
+    {
         LOG_ERROR("No memory records available.");
-    } else {
-        for (const auto& pair :memtables_) {
+    }
+    else
+    {
+        for (const auto& pair : memtables_)
+        {
             CheckLeak(pair.first);
         }
     }
@@ -193,11 +261,10 @@ void HalAnalyzer::LeakAnalyze()
 
 HalAnalyzer::~HalAnalyzer()
 {
-    try {
-        LeakAnalyze();
-    } catch (const std::exception &ex) {
-        std::cerr << "HalAnalyzer destructor catch exception: " << ex.what();
-    }
+    // 构造函数中已保证Utility::Log先于HalAnalyzer构造，根据C++静态对象析构规则（逆序），
+    // Log将在HalAnalyzer之后析构，因此此处调用LeakAnalyze使用LOG宏是安全的
+    LeakAnalyze();
+    UnSubscribe();
 }
 
 std::vector<OOMMemRecord> HalAnalyzer::QueryUnfreedRecords(uint32_t clientId) const
@@ -226,4 +293,4 @@ std::vector<OOMMemRecord> HalAnalyzer::QueryUnfreedRecords(uint32_t clientId) co
     return records;
 }
 
-}
+}  // namespace MemScope

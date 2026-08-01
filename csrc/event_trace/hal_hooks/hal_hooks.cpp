@@ -103,17 +103,30 @@ drvError_t halMemAlloc(void **pp, unsigned long long size, unsigned long long fl
         }
         return ret;
     }
-    if (!EventTraceManager::Instance().IsNeedTrace(EventBaseType::MALLOC) &&
-        !EventTraceManager::Instance().IsNeedTrace(EventBaseType::FREE))
+
+    TraceMode traceMode = DetermineTraceMode();
+    if (traceMode == TraceMode::SKIP)
     {
         return ret;
     }
 
+    uintptr_t addr = reinterpret_cast<uintptr_t>(*pp);
+
+    if (traceMode == TraceMode::SHADOW)
+    {
+        if (!EventReport::Instance(MemScopeCommType::SHARED_MEMORY)
+                 .ReportHalMalloc(reinterpret_cast<uint64_t>(addr), size, flag))
+        {
+            LOG_ERROR("halMemAlloc shadow report failed");
+        }
+        return ret;
+    }
+
+    // Normal trace mode: full data with callstack
     CallStackString stack;
     Utility::GetCallstack(stack);
 
     // report to memscope here
-    uintptr_t addr = reinterpret_cast<uintptr_t>(*pp);
     if (!EventReport::Instance(MemScopeCommType::SHARED_MEMORY)
              .ReportHalMalloc(reinterpret_cast<uint64_t>(addr), size, flag, std::move(stack)))
     {
@@ -137,16 +150,27 @@ drvError_t halMemFree(void *pp)
         return ret;
     }
 
-    if (!EventTraceManager::Instance().IsNeedTrace(EventBaseType::MALLOC) &&
-        !EventTraceManager::Instance().IsNeedTrace(EventBaseType::FREE))
+    TraceMode traceMode = DetermineTraceMode();
+    if (traceMode == TraceMode::SKIP)
     {
         return ret;
     }
 
+    uintptr_t addr = reinterpret_cast<uintptr_t>(pp);
+
+    if (traceMode == TraceMode::SHADOW)
+    {
+        if (!EventReport::Instance(MemScopeCommType::SHARED_MEMORY).ReportHalFree(reinterpret_cast<uint64_t>(addr)))
+        {
+            LOG_ERROR("halMemFree shadow report failed");
+        }
+        return ret;
+    }
+
+    // Normal trace mode: full data with callstack
     CallStackString stack;
     Utility::GetCallstack(stack);
 
-    uintptr_t addr = reinterpret_cast<uintptr_t>(pp);
     if (!EventReport::Instance(MemScopeCommType::SHARED_MEMORY)
              .ReportHalFree(reinterpret_cast<uint64_t>(addr), std::move(stack)))
     {
@@ -205,12 +229,30 @@ drvError_t halMemCreate(drv_mem_handle_t **handle, size_t size, const struct drv
         return ret;
     }
 
+    TraceMode traceMode = DetermineTraceMode();
+    if (traceMode == TraceMode::SKIP)
+    {
+        return ret;
+    }
+
     if (prop == nullptr)
     {
         LOG_ERROR("Driver memory property pointer is null");
         return ret;
     }
 
+    if (traceMode == TraceMode::SHADOW)
+    {
+        uintptr_t addr = reinterpret_cast<uintptr_t>(*handle);
+        if (!EventReport::Instance(MemScopeCommType::SHARED_MEMORY)
+                 .ReportHalMalloc(reinterpret_cast<uint64_t>(addr), size, flag))
+        {
+            LOG_ERROR("halMemCreate shadow report failed");
+        }
+        return ret;
+    }
+
+    // Normal trace mode: full data with callstack
     CallStackString stack;
     Utility::GetCallstack(stack);
 
@@ -263,6 +305,23 @@ drvError_t halMemRelease(drv_mem_handle_t *handle)
         return ret;
     }
 
+    TraceMode traceMode = DetermineTraceMode();
+    if (traceMode == TraceMode::SKIP)
+    {
+        return ret;
+    }
+
+    if (traceMode == TraceMode::SHADOW)
+    {
+        uintptr_t addr = reinterpret_cast<uintptr_t>(handle);
+        if (!EventReport::Instance(MemScopeCommType::SHARED_MEMORY).ReportHalFree(reinterpret_cast<uint64_t>(addr)))
+        {
+            LOG_ERROR("halMemRelease shadow report failed");
+        }
+        return ret;
+    }
+
+    // Normal trace mode: full data with callstack
     CallStackString stack;
     Utility::GetCallstack(stack);
 
@@ -293,8 +352,8 @@ aclError aclrtHostRegisterV2(void *ptr, uint64_t size, uint32_t flag)
         return ret;
     }
 
-    if (!EventTraceManager::Instance().IsNeedTrace(EventBaseType::MALLOC) &&
-        !EventTraceManager::Instance().IsNeedTrace(EventBaseType::FREE))
+    TraceMode traceMode = DetermineTraceMode();
+    if (traceMode == TraceMode::SKIP)
     {
         return ret;
     }
@@ -304,6 +363,18 @@ aclError aclrtHostRegisterV2(void *ptr, uint64_t size, uint32_t flag)
         return ret;
     }
 
+    if (traceMode == TraceMode::SHADOW)
+    {
+        uintptr_t addr = reinterpret_cast<uintptr_t>(ptr);
+        if (!EventReport::Instance(MemScopeCommType::SHARED_MEMORY)
+                 .ReportHalMalloc(reinterpret_cast<uint64_t>(addr), size, flag))
+        {
+            LOG_ERROR("aclrtHostRegisterV2 shadow report failed");
+        }
+        return ret;
+    }
+
+    // Normal trace mode: full data with callstack
     CallStackString stack;
     Utility::GetCallstack(stack);
     uintptr_t addr = reinterpret_cast<uintptr_t>(ptr);
@@ -330,12 +401,23 @@ aclError aclrtHostUnregister(void *ptr)
         return ret;
     }
 
-    if (!EventTraceManager::Instance().IsNeedTrace(EventBaseType::MALLOC) &&
-        !EventTraceManager::Instance().IsNeedTrace(EventBaseType::FREE))
+    TraceMode traceMode = DetermineTraceMode();
+    if (traceMode == TraceMode::SKIP)
     {
         return ret;
     }
 
+    if (traceMode == TraceMode::SHADOW)
+    {
+        uintptr_t addr = reinterpret_cast<uintptr_t>(ptr);
+        if (!EventReport::Instance(MemScopeCommType::SHARED_MEMORY).ReportHalFree(reinterpret_cast<uint64_t>(addr)))
+        {
+            LOG_ERROR("aclrtHostUnregister shadow report failed");
+        }
+        return ret;
+    }
+
+    // Normal trace mode: full data with callstack
     CallStackString stack;
     Utility::GetCallstack(stack);
     uintptr_t addr = reinterpret_cast<uintptr_t>(ptr);
