@@ -26,8 +26,8 @@
 #include "config_info.h"
 #include "event.h"
 #include "event_dispatcher.h"
-#include "framework/record_info.h"
 #include "memory_state_manager.h"
+#include "record_info.h"
 
 namespace MemScope
 {
