@@ -37,6 +37,7 @@
 #include "file.h"
 #include "event.h"
 #include "event_dispatcher.h"
+#include "event_trace/trace_manager/event_trace_manager.h"
  
 using namespace MemScope;
  
@@ -48,14 +49,10 @@ static void ResetSingleton()
 {
     // 全局变量初始化
     DecomposeAnalyzer::GetInstance();
-    Dump::GetInstance(config);
+    Dump::GetInstance();
 
     // 取消数据订阅与部分config参数
     EventDispatcher::GetInstance().UnSubscribe(SubscriberId::DECOMPOSE_ANALYZER);
-
-    // 启用全部落盘事件类型，确保 ShouldDumpEvent 不过滤测试事件
-    config.dumpEventType = 0x0F;  // 启用 ALLOC/FREE/LAUNCH/ACCESS 全部 4 个 bit
-    Dump::GetInstance(config).config_.dumpEventType = config.dumpEventType;
 }
 
 static bool RemoveDir(const std::string& dirPath)
@@ -125,7 +122,8 @@ protected:
             eventBit.setBit(static_cast<size_t>(EventType::ACCESS_EVENT));
             config.dumpEventType = eventBit.getValue();
         }
-        Dump::GetInstance(config).config_.dumpEventType = config.dumpEventType;
+        // 通过全局配置注入，Dump 运行中直接读取
+        ConfigManager::Instance().SetConfig(config);
  
         AddHalDeviceMemoryEvent();
         AddAccessEvent();
@@ -154,9 +152,9 @@ protected:
     {
         // 清空设置
         config = Config{};
-        Dump::GetInstance(config).config_ = Config{};
-        Dump::GetInstance(config).handlerMap_.clear();
-        Dump::GetInstance(config).sharedEventLists_.clear();
+        ConfigManager::Instance().SetConfig(Config{});
+        Dump::GetInstance().handlerMap_.clear();
+        Dump::GetInstance().sharedEventLists_.clear();
         std::unordered_map<std::string, std::shared_ptr<EventBase>>().swap(eventMap);
         Utility::FileCreateManager::GetInstance("./testmsmemscope").SetProjectDir("");
         MemoryStateManager::GetInstance().poolsMap_.clear();
@@ -643,9 +641,9 @@ private:
  
     void AddCleanUpEvent()
     {
-        auto event1 = std::make_shared<CleanUpEvent>(PoolType::HAL, 123, 0x0000000000003039);
+        auto event1 = std::make_shared<CleanUpEvent>(EventSubType::RESIDUAL_BLOCK, PoolType::HAL, 123, 0x0000000000003039);
         eventMap["HalCleanUpEvent"] = event1;
-        auto event2 = std::make_shared<CleanUpEvent>(PoolType::PTA_CACHING, 123, 0x0000000000003039);
+        auto event2 = std::make_shared<CleanUpEvent>(EventSubType::RESIDUAL_BLOCK, PoolType::PTA_CACHING, 123, 0x0000000000003039);
         eventMap["PtaCleanUpEvent"] = event2;
     }
 };
@@ -692,15 +690,15 @@ static bool ReadFile(std::string filePath, std::string &content)
 static void CleanUpEventInMemoryStateManager()
 {
     for (auto& state : MemoryStateManager::GetInstance().GetAllStateKeys()) {
-        std::shared_ptr<EventBase> event = std::make_shared<CleanUpEvent>(state.first, state.second.pid, state.second.addr);
+        std::shared_ptr<EventBase> event = std::make_shared<CleanUpEvent>(EventSubType::RESIDUAL_BLOCK, state.first, state.second.pid, state.second.addr);
         EventHandler(event);
     }
 }
 
 static void CleanUpDumpSharedEvents()
 {
-    for (auto& event : Dump::GetInstance(config).sharedEventLists_) {
-        for (auto& handler : Dump::GetInstance(config).handlerMap_) {
+    for (auto& event : Dump::GetInstance().sharedEventLists_) {
+        for (auto& handler : Dump::GetInstance().handlerMap_) {
             handler.second->Write(event);
         }
     }
@@ -713,8 +711,8 @@ TEST_F(TestProcess, process_hal_device_memory_event)
     config.dataFormat = 0;
     std::string path = "./testmsmemscope";
     strncpy_s(config.outputDir, sizeof(config.outputDir), path.c_str(), sizeof(config.outputDir) - 1);
-    Dump::GetInstance(config).handlerMap_[testdDevId] = MakeDataHandler(config, DataType::MEMORY_EVENT, testdDevId);    // 重置文件指针
-    Dump::GetInstance(config).handlerMap_[testdDevId]->Init();
+    Dump::GetInstance().handlerMap_[testdDevId] = MakeDataHandler(config, DataType::MEMORY_EVENT, testdDevId);    // 重置文件指针
+    Dump::GetInstance().handlerMap_[testdDevId]->Init();
      
     EventHandler(eventMap["HalDeviceMallocEvent"]);
     EventHandler(eventMap["HalDeviceFreeEvent"]);
@@ -724,7 +722,7 @@ TEST_F(TestProcess, process_hal_device_memory_event)
 "3,MALLOC,HAL,N/A,3,123,1234,0,0x0000000000003039,\"{allocation_id:1,addr:0x0000000000003039,size:10,page_type:normal,alloc_type:create}\",,\n"
 "54,FREE,HAL,N/A,54,123,1234,0,0x0000000000003039,\"{allocation_id:1,addr:0x0000000000003039,size:10}\",,\n";
     std::string fileContent;
-    Dump::GetInstance(config).handlerMap_[testdDevId].reset();
+    Dump::GetInstance().handlerMap_[testdDevId].reset();
     bool hasReadFile = ReadFile(path, fileContent);
     EXPECT_EQ(result, fileContent);
     EXPECT_TRUE(hasReadFile);
@@ -737,8 +735,8 @@ TEST_F(TestProcess, process_pta_caching_memory_event)
     config.dataFormat = 0;
     std::string path = "./testmsmemscope";
     strncpy_s(config.outputDir, sizeof(config.outputDir), path.c_str(), sizeof(config.outputDir) - 1);
-    Dump::GetInstance(config).handlerMap_[testdDevId] = MakeDataHandler(config, DataType::MEMORY_EVENT, testdDevId);    // 重置文件指针
-    Dump::GetInstance(config).handlerMap_[testdDevId]->Init();
+    Dump::GetInstance().handlerMap_[testdDevId] = MakeDataHandler(config, DataType::MEMORY_EVENT, testdDevId);    // 重置文件指针
+    Dump::GetInstance().handlerMap_[testdDevId]->Init();
      
     EventHandler(eventMap["PtaCachingMallocEvent"]);
     EventHandler(eventMap["PtaAccessEvent"]);
@@ -753,7 +751,7 @@ TEST_F(TestProcess, process_pta_caching_memory_event)
 "dtype:torch.float16,shape:torch.Size([1,5])}\",,\n"
 "54,FREE,PTA,N/A,54,123,1234,0,0x0000000000003039,\"{allocation_id:1,addr:0x0000000000003039,size:10,total:0,used:0}\",,\n";
     std::string fileContent;
-    Dump::GetInstance(config).handlerMap_[testdDevId].reset();
+    Dump::GetInstance().handlerMap_[testdDevId].reset();
     bool hasReadFile = ReadFile(path, fileContent);
     EXPECT_EQ(result, fileContent);
     EXPECT_TRUE(hasReadFile);
@@ -766,8 +764,8 @@ TEST_F(TestProcess, process_pta_workspace_memory_event)
     config.dataFormat = 0;
     std::string path = "./testmsmemscope";
     strncpy_s(config.outputDir, sizeof(config.outputDir), path.c_str(), sizeof(config.outputDir) - 1);
-    Dump::GetInstance(config).handlerMap_[testdDevId] = MakeDataHandler(config, DataType::MEMORY_EVENT, testdDevId);    // 重置文件指针
-    Dump::GetInstance(config).handlerMap_[testdDevId]->Init();
+    Dump::GetInstance().handlerMap_[testdDevId] = MakeDataHandler(config, DataType::MEMORY_EVENT, testdDevId);    // 重置文件指针
+    Dump::GetInstance().handlerMap_[testdDevId]->Init();
      
     EventHandler(eventMap["PtaWorkspaceMallocEvent"]);
     EventHandler(eventMap["PtaWorkspaceFreeEvent"]);
@@ -777,7 +775,7 @@ TEST_F(TestProcess, process_pta_workspace_memory_event)
 "3,MALLOC,PTA,N/A,3,123,1234,0,0x0000000000003039,\"{allocation_id:1,addr:0x0000000000003039,size:10,total:10,used:10}\",,\n"
 "54,FREE,PTA,N/A,54,123,1234,0,0x0000000000003039,\"{allocation_id:1,addr:0x0000000000003039,size:10,total:0,used:0}\",,\n";
     std::string fileContent;
-    Dump::GetInstance(config).handlerMap_[testdDevId].reset();
+    Dump::GetInstance().handlerMap_[testdDevId].reset();
     bool hasReadFile = ReadFile(path, fileContent);
     EXPECT_EQ(result, fileContent);
     EXPECT_TRUE(hasReadFile);
@@ -790,8 +788,8 @@ TEST_F(TestProcess, process_atb_memory_event)
     config.dataFormat = 0;
     std::string path = "./testmsmemscope";
     strncpy_s(config.outputDir, sizeof(config.outputDir), path.c_str(), sizeof(config.outputDir) - 1);
-    Dump::GetInstance(config).handlerMap_[testdDevId] = MakeDataHandler(config, DataType::MEMORY_EVENT, testdDevId);    // 重置文件指针
-    Dump::GetInstance(config).handlerMap_[testdDevId]->Init();
+    Dump::GetInstance().handlerMap_[testdDevId] = MakeDataHandler(config, DataType::MEMORY_EVENT, testdDevId);    // 重置文件指针
+    Dump::GetInstance().handlerMap_[testdDevId]->Init();
      
     EventHandler(eventMap["AtbMallocEvent"]);
     EventHandler(eventMap["AtbAccessEvent"]);
@@ -799,9 +797,11 @@ TEST_F(TestProcess, process_atb_memory_event)
     EventHandler(eventMap["AtbFreeEvent"]);
     // 临时清除FREE_EVENT位，防止CleanUpEventInMemoryStateManager产生的影子FREE事件污染输出
     // 影子FREE事件的id/timestamp由EventBase构造时生成，在UT中不可预测
-    Dump::GetInstance(config).config_.dumpEventType &= ~(1u << static_cast<size_t>(EventType::FREE_EVENT));
+    config.dumpEventType &= ~(1u << static_cast<size_t>(EventType::FREE_EVENT));
+    ConfigManager::Instance().SetConfig(config);
     CleanUpEventInMemoryStateManager();
-    Dump::GetInstance(config).config_.dumpEventType |= (1u << static_cast<size_t>(EventType::FREE_EVENT));
+    config.dumpEventType |= (1u << static_cast<size_t>(EventType::FREE_EVENT));
+    ConfigManager::Instance().SetConfig(config);
  
     std::string result = "ID,Event,Event Type,Name,Timestamp(ns),Process Id,Thread Id,Device Id,Ptr,Attr"
 ",Call Stack(Python),Call Stack(C)\n"
@@ -812,7 +812,7 @@ TEST_F(TestProcess, process_atb_memory_event)
 "15,ACCESS,UNKNOWN,addOperation,14,1234,1234,0,0x000000000000303e,\"{allocation_id:2,addr:0x000000000000303e,size:5,type:ATB,"
 "dtype:FLOAT,format:NZD,shape:[1,5,]}\",,\n";
     std::string fileContent;
-    Dump::GetInstance(config).handlerMap_[testdDevId].reset();
+    Dump::GetInstance().handlerMap_[testdDevId].reset();
     bool hasReadFile = ReadFile(path, fileContent);
     EXPECT_EQ(result, fileContent);
     EXPECT_TRUE(hasReadFile);
@@ -825,8 +825,8 @@ TEST_F(TestProcess, process_mindspore_memory_event)
     config.dataFormat = 0;
     std::string path = "./testmsmemscope";
     strncpy_s(config.outputDir, sizeof(config.outputDir), path.c_str(), sizeof(config.outputDir) - 1);
-    Dump::GetInstance(config).handlerMap_[testdDevId] = MakeDataHandler(config, DataType::MEMORY_EVENT, testdDevId);    // 重置文件指针
-    Dump::GetInstance(config).handlerMap_[testdDevId]->Init();
+    Dump::GetInstance().handlerMap_[testdDevId] = MakeDataHandler(config, DataType::MEMORY_EVENT, testdDevId);    // 重置文件指针
+    Dump::GetInstance().handlerMap_[testdDevId]->Init();
      
     EventHandler(eventMap["MindsporeMallocEvent"]);
     EventHandler(eventMap["MindsporeFreeEvent"]);
@@ -836,7 +836,7 @@ TEST_F(TestProcess, process_mindspore_memory_event)
 "3,MALLOC,MINDSPORE,N/A,3,123,1234,0,0x0000000000003039,\"{allocation_id:1,addr:0x0000000000003039,size:10,total:10,used:10}\",,\n"
 "54,FREE,MINDSPORE,N/A,54,123,1234,0,0x0000000000003039,\"{allocation_id:1,addr:0x0000000000003039,size:10,total:0,used:0}\",,\n";
     std::string fileContent;
-    Dump::GetInstance(config).handlerMap_[testdDevId].reset();
+    Dump::GetInstance().handlerMap_[testdDevId].reset();
     bool hasReadFile = ReadFile(path, fileContent);
     EXPECT_EQ(result, fileContent);
     EXPECT_TRUE(hasReadFile);
@@ -849,8 +849,8 @@ TEST_F(TestProcess, process_aten_op_event)
     config.dataFormat = 0;
     std::string path = "./testmsmemscope";
     strncpy_s(config.outputDir, sizeof(config.outputDir), path.c_str(), sizeof(config.outputDir) - 1);
-    Dump::GetInstance(config).handlerMap_[testdDevId] = MakeDataHandler(config, DataType::MEMORY_EVENT, testdDevId);    // 重置文件指针
-    Dump::GetInstance(config).handlerMap_[testdDevId]->Init();
+    Dump::GetInstance().handlerMap_[testdDevId] = MakeDataHandler(config, DataType::MEMORY_EVENT, testdDevId);    // 重置文件指针
+    Dump::GetInstance().handlerMap_[testdDevId]->Init();
      
     EventHandler(eventMap["AtenOpStartEvent"]);
     EventHandler(eventMap["AtenOpEndEvent"]);
@@ -860,7 +860,7 @@ TEST_F(TestProcess, process_aten_op_event)
 "1,OP_LAUNCH,ATEN_START,aten.add,12,123,1234,0,N/A,,,\n"
 "2,OP_LAUNCH,ATEN_END,aten.add,13,123,1234,0,N/A,,,\n";
     std::string fileContent;
-    Dump::GetInstance(config).handlerMap_[testdDevId].reset();
+    Dump::GetInstance().handlerMap_[testdDevId].reset();
     bool hasReadFile = ReadFile(path, fileContent);
     EXPECT_EQ(result, fileContent);
     EXPECT_TRUE(hasReadFile);
@@ -873,8 +873,8 @@ TEST_F(TestProcess, process_atb_op_event)
     config.dataFormat = 0;
     std::string path = "./testmsmemscope";
     strncpy_s(config.outputDir, sizeof(config.outputDir), path.c_str(), sizeof(config.outputDir) - 1);
-    Dump::GetInstance(config).handlerMap_[testdDevId] = MakeDataHandler(config, DataType::MEMORY_EVENT, testdDevId);    // 重置文件指针
-    Dump::GetInstance(config).handlerMap_[testdDevId]->Init();
+    Dump::GetInstance().handlerMap_[testdDevId] = MakeDataHandler(config, DataType::MEMORY_EVENT, testdDevId);    // 重置文件指针
+    Dump::GetInstance().handlerMap_[testdDevId]->Init();
      
     EventHandler(eventMap["AtbOpStartEvent"]);
     EventHandler(eventMap["AtbOpEndEvent"]);
@@ -884,7 +884,7 @@ TEST_F(TestProcess, process_atb_op_event)
 "1,OP_LAUNCH,ATB_START,operation,12,123,1234,0,N/A,\"{path:0/0_123/operation,workspace_ptr:0x12313,workspace_size:12}\",,\n"
 "2,OP_LAUNCH,ATB_END,operation,13,123,1234,0,N/A,\"{path:0/0_123/operation,workspace_ptr:0x12313,workspace_size:12}\",,\n";
     std::string fileContent;
-    Dump::GetInstance(config).handlerMap_[testdDevId].reset();
+    Dump::GetInstance().handlerMap_[testdDevId].reset();
     bool hasReadFile = ReadFile(path, fileContent);
     EXPECT_EQ(result, fileContent);
     EXPECT_TRUE(hasReadFile);
@@ -897,8 +897,8 @@ TEST_F(TestProcess, process_kernel_event)
     config.dataFormat = 0;
     std::string path = "./testmsmemscope";
     strncpy_s(config.outputDir, sizeof(config.outputDir), path.c_str(), sizeof(config.outputDir) - 1);
-    Dump::GetInstance(config).handlerMap_[testdDevId] = MakeDataHandler(config, DataType::MEMORY_EVENT, testdDevId);    // 重置文件指针
-    Dump::GetInstance(config).handlerMap_[testdDevId]->Init();
+    Dump::GetInstance().handlerMap_[testdDevId] = MakeDataHandler(config, DataType::MEMORY_EVENT, testdDevId);    // 重置文件指针
+    Dump::GetInstance().handlerMap_[testdDevId]->Init();
      
     EventHandler(eventMap["KernelLaunchEvent"]);
     EventHandler(eventMap["KernelExecuteStartEvent"]);
@@ -915,7 +915,7 @@ TEST_F(TestProcess, process_kernel_event)
 "1,KERNEL_LAUNCH,KERNEL_START,add01,12,123,1234,0,N/A,\"{path:0/0_123/add}\",,\n"
 "2,KERNEL_LAUNCH,KERNEL_END,add01,13,123,1234,0,N/A,\"{path:0/0_123/add}\",,\n";
     std::string fileContent;
-    Dump::GetInstance(config).handlerMap_[testdDevId].reset();
+    Dump::GetInstance().handlerMap_[testdDevId].reset();
     bool hasReadFile = ReadFile(path, fileContent);
     EXPECT_EQ(result, fileContent);
     EXPECT_TRUE(hasReadFile);
@@ -928,8 +928,8 @@ TEST_F(TestProcess, process_mstx_event)
     config.dataFormat = 0;
     std::string path = "./testmsmemscope";
     strncpy_s(config.outputDir, sizeof(config.outputDir), path.c_str(), sizeof(config.outputDir) - 1);
-    Dump::GetInstance(config).handlerMap_[testdDevId] = MakeDataHandler(config, DataType::MEMORY_EVENT, testdDevId);    // 重置文件指针
-    Dump::GetInstance(config).handlerMap_[testdDevId]->Init();
+    Dump::GetInstance().handlerMap_[testdDevId] = MakeDataHandler(config, DataType::MEMORY_EVENT, testdDevId);    // 重置文件指针
+    Dump::GetInstance().handlerMap_[testdDevId]->Init();
      
     EventHandler(eventMap["MstxMarkEvent"]);
     EventHandler(eventMap["MstxRangeStartEvent"]);
@@ -941,7 +941,7 @@ TEST_F(TestProcess, process_mstx_event)
 "2,MSTX,Range_start,\"step start\",13,123,1234,0,N/A,,,\n"
 "3,MSTX,Range_end,\"\",14,123,1234,0,N/A,,,\n";
     std::string fileContent;
-    Dump::GetInstance(config).handlerMap_[testdDevId].reset();
+    Dump::GetInstance().handlerMap_[testdDevId].reset();
     bool hasReadFile = ReadFile(path, fileContent);
     EXPECT_EQ(result, fileContent);
     EXPECT_TRUE(hasReadFile);
@@ -954,8 +954,8 @@ TEST_F(TestProcess, process_system_event)
     config.dataFormat = 0;
     std::string path = "./testmsmemscope";
     strncpy_s(config.outputDir, sizeof(config.outputDir), path.c_str(), sizeof(config.outputDir) - 1);
-    Dump::GetInstance(config).handlerMap_[testdDevId] = MakeDataHandler(config, DataType::MEMORY_EVENT, testdDevId);    // 重置文件指针
-    Dump::GetInstance(config).handlerMap_[testdDevId]->Init();
+    Dump::GetInstance().handlerMap_[testdDevId] = MakeDataHandler(config, DataType::MEMORY_EVENT, testdDevId);    // 重置文件指针
+    Dump::GetInstance().handlerMap_[testdDevId]->Init();
      
     EventHandler(eventMap["AclInitEvent"]);
     EventHandler(eventMap["AclFinalEvent"]);
@@ -967,7 +967,7 @@ TEST_F(TestProcess, process_system_event)
 
     CleanUpDumpSharedEvents();
     std::string fileContent;
-    Dump::GetInstance(config).handlerMap_[testdDevId].reset();
+    Dump::GetInstance().handlerMap_[testdDevId].reset();
     bool hasReadFile = ReadFile(path, fileContent);
     EXPECT_EQ(result, fileContent);
     EXPECT_TRUE(hasReadFile);
@@ -980,15 +980,17 @@ TEST_F(TestProcess, process_clean_up_event)
     config.dataFormat = 0;
     std::string path = "./testmsmemscope";
     strncpy_s(config.outputDir, sizeof(config.outputDir), path.c_str(), sizeof(config.outputDir) - 1);
-    Dump::GetInstance(config).handlerMap_[testdDevId] = MakeDataHandler(config, DataType::MEMORY_EVENT, testdDevId);    // 重置文件指针
-    Dump::GetInstance(config).handlerMap_[testdDevId]->Init();
+    Dump::GetInstance().handlerMap_[testdDevId] = MakeDataHandler(config, DataType::MEMORY_EVENT, testdDevId);    // 重置文件指针
+    Dump::GetInstance().handlerMap_[testdDevId]->Init();
      
     EventHandler(eventMap["PtaCachingMallocEvent"]);
     EventHandler(eventMap["PtaAccessEvent"]);
     // 临时清除FREE_EVENT位，防止CleanUpEvent产生影子FREE事件污染输出
-    Dump::GetInstance(config).config_.dumpEventType &= ~(1u << static_cast<size_t>(EventType::FREE_EVENT));
+    config.dumpEventType &= ~(1u << static_cast<size_t>(EventType::FREE_EVENT));
+    ConfigManager::Instance().SetConfig(config);
     EventHandler(eventMap["PtaCleanUpEvent"]);
-    Dump::GetInstance(config).config_.dumpEventType |= (1u << static_cast<size_t>(EventType::FREE_EVENT));
+    config.dumpEventType |= (1u << static_cast<size_t>(EventType::FREE_EVENT));
+    ConfigManager::Instance().SetConfig(config);
  
     std::string result = "ID,Event,Event Type,Name,Timestamp(ns),Process Id,Thread Id,Device Id,Ptr,Attr"
 ",Call Stack(Python),Call Stack(C)\n"
@@ -996,7 +998,7 @@ TEST_F(TestProcess, process_clean_up_event)
 "13,ACCESS,UNKNOWN,aten.add,13,123,1234,0,0x0000000000003039,\"{allocation_id:1,addr:0x0000000000003039,size:10,type:PTA,"
 "dtype:torch.float16,shape:torch.Size([1,5])}\",,\n";
     std::string fileContent;
-    Dump::GetInstance(config).handlerMap_[testdDevId].reset();
+    Dump::GetInstance().handlerMap_[testdDevId].reset();
     bool hasReadFile = ReadFile(path, fileContent);
     EXPECT_EQ(result, fileContent);
     EXPECT_TRUE(hasReadFile);
@@ -1009,11 +1011,11 @@ TEST_F(TestProcess, dump_event_before_malloc)
     config.dataFormat = 0;
     std::string path = "./testmsmemscope";
     strncpy_s(config.outputDir, sizeof(config.outputDir), path.c_str(), sizeof(config.outputDir) - 1);
-    Dump::GetInstance(config).handlerMap_[testdDevId] = MakeDataHandler(config, DataType::MEMORY_EVENT, testdDevId);    // 重置文件指针
-    Dump::GetInstance(config).handlerMap_[testdDevId]->Init();
+    Dump::GetInstance().handlerMap_[testdDevId] = MakeDataHandler(config, DataType::MEMORY_EVENT, testdDevId);    // 重置文件指针
+    Dump::GetInstance().handlerMap_[testdDevId]->Init();
     // 只允许ALLOC事件落盘，避免CLEAN_UP产生的影子FREE事件污染输出
     config.dumpEventType = (1u << static_cast<size_t>(EventType::ALLOC_EVENT));
-    Dump::GetInstance(config).config_.dumpEventType = config.dumpEventType;
+    ConfigManager::Instance().SetConfig(config);
      
     EventHandler(eventMap["HalUnknownMallocEvent"]);
     EventHandler(eventMap["HalDeviceMallocEvent"]);
@@ -1024,7 +1026,7 @@ TEST_F(TestProcess, dump_event_before_malloc)
 "0,MALLOC,HAL,N/A,0,123,1234,0,0x0000000000003039,\"{allocation_id:1,addr:0x0000000000003039,size:10,page_type:normal,alloc_type:create}\",,\n"
 "3,MALLOC,HAL,N/A,3,123,1234,0,0x0000000000003039,\"{allocation_id:2,addr:0x0000000000003039,size:10,page_type:normal,alloc_type:create}\",,\n";
     std::string fileContent;
-    Dump::GetInstance(config).handlerMap_[testdDevId].reset();
+    Dump::GetInstance().handlerMap_[testdDevId].reset();
     bool hasReadFile = ReadFile(path, fileContent);
     EXPECT_EQ(result, fileContent);
     EXPECT_TRUE(hasReadFile);
@@ -1037,16 +1039,18 @@ TEST_F(TestProcess, dump_two_malloc_event)
     config.dataFormat = 0;
     std::string path = "./testmsmemscope";
     strncpy_s(config.outputDir, sizeof(config.outputDir), path.c_str(), sizeof(config.outputDir) - 1);
-    Dump::GetInstance(config).handlerMap_[testdDevId] = MakeDataHandler(config, DataType::MEMORY_EVENT, testdDevId);    // 重置文件指针
-    Dump::GetInstance(config).handlerMap_[testdDevId]->Init();
+    Dump::GetInstance().handlerMap_[testdDevId] = MakeDataHandler(config, DataType::MEMORY_EVENT, testdDevId);    // 重置文件指针
+    Dump::GetInstance().handlerMap_[testdDevId]->Init();
      
     EventHandler(eventMap["HalDeviceMallocEvent"]);
     EventHandler(eventMap["HalDeviceFreeEvent"]);
     EventHandler(eventMap["HalUnknownMallocEvent"]);
     // 临时清除FREE_EVENT位，防止CleanUpEvent产生影子FREE事件污染输出
-    Dump::GetInstance(config).config_.dumpEventType &= ~(1u << static_cast<size_t>(EventType::FREE_EVENT));
+    config.dumpEventType &= ~(1u << static_cast<size_t>(EventType::FREE_EVENT));
+    ConfigManager::Instance().SetConfig(config);
     EventHandler(eventMap["HalCleanUpEvent"]);
-    Dump::GetInstance(config).config_.dumpEventType |= (1u << static_cast<size_t>(EventType::FREE_EVENT));
+    config.dumpEventType |= (1u << static_cast<size_t>(EventType::FREE_EVENT));
+    ConfigManager::Instance().SetConfig(config);
  
     std::string result = "ID,Event,Event Type,Name,Timestamp(ns),Process Id,Thread Id,Device Id,Ptr,Attr"
 ",Call Stack(Python),Call Stack(C)\n"
@@ -1054,7 +1058,7 @@ TEST_F(TestProcess, dump_two_malloc_event)
 "54,FREE,HAL,N/A,54,123,1234,0,0x0000000000003039,\"{allocation_id:1,addr:0x0000000000003039,size:10}\",,\n"
 "0,MALLOC,HAL,N/A,0,123,1234,0,0x0000000000003039,\"{allocation_id:2,addr:0x0000000000003039,size:10,page_type:normal,alloc_type:create}\",,\n";
     std::string fileContent;
-    Dump::GetInstance(config).handlerMap_[testdDevId].reset();
+    Dump::GetInstance().handlerMap_[testdDevId].reset();
     bool hasReadFile = ReadFile(path, fileContent);
     EXPECT_EQ(result, fileContent);
     EXPECT_TRUE(hasReadFile);
@@ -1067,15 +1071,15 @@ TEST_F(TestProcess, clean_up_event_failed)
     config.dataFormat = 0;
     std::string path = "./testmsmemscope";
     strncpy_s(config.outputDir, sizeof(config.outputDir), path.c_str(), sizeof(config.outputDir) - 1);
-    Dump::GetInstance(config).handlerMap_[testdDevId] = MakeDataHandler(config, DataType::MEMORY_EVENT, testdDevId);    // 重置文件指针
-    Dump::GetInstance(config).handlerMap_[testdDevId]->Init();
+    Dump::GetInstance().handlerMap_[testdDevId] = MakeDataHandler(config, DataType::MEMORY_EVENT, testdDevId);    // 重置文件指针
+    Dump::GetInstance().handlerMap_[testdDevId]->Init();
      
     EventHandler(eventMap["HalCleanUpEvent"]);
  
     std::string result = "ID,Event,Event Type,Name,Timestamp(ns),Process Id,Thread Id,Device Id,Ptr,Attr"
 ",Call Stack(Python),Call Stack(C)\n";
     std::string fileContent;
-    Dump::GetInstance(config).handlerMap_[testdDevId].reset();
+    Dump::GetInstance().handlerMap_[testdDevId].reset();
     bool hasReadFile = ReadFile(path, fileContent);
     EXPECT_EQ(result, fileContent);
     EXPECT_TRUE(hasReadFile);
@@ -1088,8 +1092,8 @@ TEST_F(TestProcess, process_memory_owner_event)
     config.dataFormat = 0;
     std::string path = "./testmsmemscope";
     strncpy_s(config.outputDir, sizeof(config.outputDir), path.c_str(), sizeof(config.outputDir) - 1);
-    Dump::GetInstance(config).handlerMap_[testdDevId] = MakeDataHandler(config, DataType::MEMORY_EVENT, testdDevId);    // 重置文件指针
-    Dump::GetInstance(config).handlerMap_[testdDevId]->Init();
+    Dump::GetInstance().handlerMap_[testdDevId] = MakeDataHandler(config, DataType::MEMORY_EVENT, testdDevId);    // 重置文件指针
+    Dump::GetInstance().handlerMap_[testdDevId]->Init();
      
     auto func = std::bind(&DecomposeAnalyzer::EventHandle, &DecomposeAnalyzer::GetInstance(),
         std::placeholders::_1, std::placeholders::_2);
@@ -1111,7 +1115,7 @@ TEST_F(TestProcess, process_memory_owner_event)
 "dtype:torch.float16,shape:torch.Size([1,5])}\",,\n"
 "54,FREE,PTA,N/A,54,123,1234,0,0x0000000000003039,\"{allocation_id:1,addr:0x0000000000003039,size:10,total:0,used:0}\",,\n";
     std::string fileContent;
-    Dump::GetInstance(config).handlerMap_[testdDevId].reset();
+    Dump::GetInstance().handlerMap_[testdDevId].reset();
     bool hasReadFile = ReadFile(path, fileContent);
     EXPECT_EQ(result, fileContent);
     EXPECT_TRUE(hasReadFile);
@@ -1124,8 +1128,8 @@ TEST_F(TestProcess, process_memory_owner_event_in_torch_step)
     config.dataFormat = 0;
     std::string path = "./testmsmemscope";
     strncpy_s(config.outputDir, sizeof(config.outputDir), path.c_str(), sizeof(config.outputDir) - 1);
-    Dump::GetInstance(config).handlerMap_[testdDevId] = MakeDataHandler(config, DataType::MEMORY_EVENT, testdDevId);    // 重置文件指针
-    Dump::GetInstance(config).handlerMap_[testdDevId]->Init();
+    Dump::GetInstance().handlerMap_[testdDevId] = MakeDataHandler(config, DataType::MEMORY_EVENT, testdDevId);    // 重置文件指针
+    Dump::GetInstance().handlerMap_[testdDevId]->Init();
      
     auto func = std::bind(&DecomposeAnalyzer::EventHandle, &DecomposeAnalyzer::GetInstance(),
         std::placeholders::_1, std::placeholders::_2);
@@ -1143,7 +1147,7 @@ TEST_F(TestProcess, process_memory_owner_event_in_torch_step)
 "owner:PTA@model@gradient}\",,\n"
 "54,FREE,PTA,N/A,54,123,1234,0,0x0000000000003039,\"{allocation_id:1,addr:0x0000000000003039,size:10,total:0,used:0}\",,\n";
     std::string fileContent;
-    Dump::GetInstance(config).handlerMap_[testdDevId].reset();
+    Dump::GetInstance().handlerMap_[testdDevId].reset();
     bool hasReadFile = ReadFile(path, fileContent);
     EXPECT_EQ(result, fileContent);
     EXPECT_TRUE(hasReadFile);
@@ -1156,8 +1160,8 @@ TEST_F(TestProcess, process_memory_owner_event_without_malloc)
     config.dataFormat = 0;
     std::string path = "./testmsmemscope";
     strncpy_s(config.outputDir, sizeof(config.outputDir), path.c_str(), sizeof(config.outputDir) - 1);
-    Dump::GetInstance(config).handlerMap_[testdDevId] = MakeDataHandler(config, DataType::MEMORY_EVENT, testdDevId);    // 重置文件指针
-    Dump::GetInstance(config).handlerMap_[testdDevId]->Init();
+    Dump::GetInstance().handlerMap_[testdDevId] = MakeDataHandler(config, DataType::MEMORY_EVENT, testdDevId);    // 重置文件指针
+    Dump::GetInstance().handlerMap_[testdDevId]->Init();
      
     auto func = std::bind(&DecomposeAnalyzer::EventHandle, &DecomposeAnalyzer::GetInstance(),
         std::placeholders::_1, std::placeholders::_2);
@@ -1176,7 +1180,7 @@ TEST_F(TestProcess, process_memory_owner_event_without_malloc)
 "dtype:torch.float16,shape:torch.Size([1,5])}\",,\n"
 "54,FREE,PTA,N/A,54,123,1234,0,0x0000000000003039,\"{allocation_id:1,addr:0x0000000000003039,size:10,total:0,used:0}\",,\n";
     std::string fileContent;
-    Dump::GetInstance(config).handlerMap_[testdDevId].reset();
+    Dump::GetInstance().handlerMap_[testdDevId].reset();
     bool hasReadFile = ReadFile(path, fileContent);
     EXPECT_EQ(result, fileContent);
     EXPECT_TRUE(hasReadFile);
@@ -1189,8 +1193,8 @@ TEST_F(TestProcess, init_memory_owner)
     config.dataFormat = 0;
     std::string path = "./testmsmemscope";
     strncpy_s(config.outputDir, sizeof(config.outputDir), path.c_str(), sizeof(config.outputDir) - 1);
-    Dump::GetInstance(config).handlerMap_[testdDevId] = MakeDataHandler(config, DataType::MEMORY_EVENT, testdDevId);    // 重置文件指针
-    Dump::GetInstance(config).handlerMap_[testdDevId]->Init();
+    Dump::GetInstance().handlerMap_[testdDevId] = MakeDataHandler(config, DataType::MEMORY_EVENT, testdDevId);    // 重置文件指针
+    Dump::GetInstance().handlerMap_[testdDevId]->Init();
      
     auto func = std::bind(&DecomposeAnalyzer::EventHandle, &DecomposeAnalyzer::GetInstance(),
         std::placeholders::_1, std::placeholders::_2);
@@ -1223,7 +1227,7 @@ TEST_F(TestProcess, init_memory_owner)
 "3,MALLOC,HAL,N/A,3,123,1234,0,0x0000000000003039,\"{allocation_id:5,addr:0x0000000000003039,size:10,owner:CANN@IDEDD,page_type:normal,alloc_type:create}\",,\n"
 "54,FREE,HAL,N/A,54,123,1234,0,0x0000000000003039,\"{allocation_id:5,addr:0x0000000000003039,size:10}\",,\n";
     std::string fileContent;
-    Dump::GetInstance(config).handlerMap_[testdDevId].reset();
+    Dump::GetInstance().handlerMap_[testdDevId].reset();
     bool hasReadFile = ReadFile(path, fileContent);
     EXPECT_EQ(result, fileContent);
     EXPECT_TRUE(hasReadFile);
@@ -1236,8 +1240,8 @@ TEST_F(TestProcess, updata_owner_by_access_event)
     config.dataFormat = 0;
     std::string path = "./testmsmemscope";
     strncpy_s(config.outputDir, sizeof(config.outputDir), path.c_str(), sizeof(config.outputDir) - 1);
-    Dump::GetInstance(config).handlerMap_[testdDevId] = MakeDataHandler(config, DataType::MEMORY_EVENT, testdDevId);    // 重置文件指针
-    Dump::GetInstance(config).handlerMap_[testdDevId]->Init();
+    Dump::GetInstance().handlerMap_[testdDevId] = MakeDataHandler(config, DataType::MEMORY_EVENT, testdDevId);    // 重置文件指针
+    Dump::GetInstance().handlerMap_[testdDevId]->Init();
      
     auto func = std::bind(&DecomposeAnalyzer::EventHandle, &DecomposeAnalyzer::GetInstance(),
         std::placeholders::_1, std::placeholders::_2);
@@ -1256,7 +1260,7 @@ TEST_F(TestProcess, updata_owner_by_access_event)
 "shape:torch.Size([1,5])}\",,\n"
 "54,FREE,PTA,N/A,54,123,1234,0,0x0000000000003039,\"{allocation_id:1,addr:0x0000000000003039,size:10,total:0,used:0}\",,\n";
     std::string fileContent;
-    Dump::GetInstance(config).handlerMap_[testdDevId].reset();
+    Dump::GetInstance().handlerMap_[testdDevId].reset();
     bool hasReadFile = ReadFile(path, fileContent);
     EXPECT_EQ(result, fileContent);
     EXPECT_TRUE(hasReadFile);
@@ -1269,8 +1273,8 @@ TEST_F(TestProcess, updata_owner_failed_by_atb_access_event)
     config.dataFormat = 0;
     std::string path = "./testmsmemscope";
     strncpy_s(config.outputDir, sizeof(config.outputDir), path.c_str(), sizeof(config.outputDir) - 1);
-    Dump::GetInstance(config).handlerMap_[testdDevId] = MakeDataHandler(config, DataType::MEMORY_EVENT, testdDevId);    // 重置文件指针
-    Dump::GetInstance(config).handlerMap_[testdDevId]->Init();
+    Dump::GetInstance().handlerMap_[testdDevId] = MakeDataHandler(config, DataType::MEMORY_EVENT, testdDevId);    // 重置文件指针
+    Dump::GetInstance().handlerMap_[testdDevId]->Init();
      
     auto func = std::bind(&DecomposeAnalyzer::EventHandle, &DecomposeAnalyzer::GetInstance(),
         std::placeholders::_1, std::placeholders::_2);
@@ -1289,7 +1293,7 @@ TEST_F(TestProcess, updata_owner_failed_by_atb_access_event)
 "dtype:FLOAT,format:NZD,shape:[1,5,]}\",,\n"
 "54,FREE,ATB,N/A,54,123,1234,0,0x0000000000003039,\"{allocation_id:1,addr:0x0000000000003039,size:10,total:0,used:0}\",,\n";
     std::string fileContent;
-    Dump::GetInstance(config).handlerMap_[testdDevId].reset();
+    Dump::GetInstance().handlerMap_[testdDevId].reset();
     bool hasReadFile = ReadFile(path, fileContent);
     EXPECT_EQ(result, fileContent);
     EXPECT_TRUE(hasReadFile);
@@ -1302,8 +1306,8 @@ TEST_F(TestProcess, get_different_allocation_id_with_trace_start_and_stop_event)
     config.dataFormat = 0;
     std::string path = "./testmsmemscope";
     strncpy_s(config.outputDir, sizeof(config.outputDir), path.c_str(), sizeof(config.outputDir) - 1);
-    Dump::GetInstance(config).handlerMap_[testdDevId] = MakeDataHandler(config, DataType::MEMORY_EVENT, testdDevId);    // 重置文件指针
-    Dump::GetInstance(config).handlerMap_[testdDevId]->Init();
+    Dump::GetInstance().handlerMap_[testdDevId] = MakeDataHandler(config, DataType::MEMORY_EVENT, testdDevId);    // 重置文件指针
+    Dump::GetInstance().handlerMap_[testdDevId]->Init();
      
     EventHandler(eventMap["PtaCachingMallocEvent"]);
     EventHandler(eventMap["TraceStartEvent"]);
@@ -1322,7 +1326,7 @@ TEST_F(TestProcess, get_different_allocation_id_with_trace_start_and_stop_event)
 "1,SYSTEM,START_TRACE,N/A,12,123,1234,N/A,N/A,,,\n"
 "2,SYSTEM,STOP_TRACE,N/A,13,123,1234,N/A,N/A,,,\n";
     std::string fileContent;
-    Dump::GetInstance(config).handlerMap_[testdDevId].reset();
+    Dump::GetInstance().handlerMap_[testdDevId].reset();
     bool hasReadFile = ReadFile(path, fileContent);
     EXPECT_EQ(result, fileContent);
     EXPECT_TRUE(hasReadFile);
@@ -1335,8 +1339,8 @@ TEST_F(TestProcess, get_the_same_allocation_id_with_trace_start_and_stop_event)
     config.dataFormat = 0;
     std::string path = "./testmsmemscope";
     strncpy_s(config.outputDir, sizeof(config.outputDir), path.c_str(), sizeof(config.outputDir) - 1);
-    Dump::GetInstance(config).handlerMap_[testdDevId] = MakeDataHandler(config, DataType::MEMORY_EVENT, testdDevId);    // 重置文件指针
-    Dump::GetInstance(config).handlerMap_[testdDevId]->Init();
+    Dump::GetInstance().handlerMap_[testdDevId] = MakeDataHandler(config, DataType::MEMORY_EVENT, testdDevId);    // 重置文件指针
+    Dump::GetInstance().handlerMap_[testdDevId]->Init();
      
     EventHandler(eventMap["TraceStartEvent"]);
     EventHandler(eventMap["PtaCachingMallocEvent"]);
@@ -1355,7 +1359,7 @@ TEST_F(TestProcess, get_the_same_allocation_id_with_trace_start_and_stop_event)
 "1,SYSTEM,START_TRACE,N/A,12,123,1234,N/A,N/A,,,\n"
 "2,SYSTEM,STOP_TRACE,N/A,13,123,1234,N/A,N/A,,,\n";
     std::string fileContent;
-    Dump::GetInstance(config).handlerMap_[testdDevId].reset();
+    Dump::GetInstance().handlerMap_[testdDevId].reset();
     bool hasReadFile = ReadFile(path, fileContent);
     EXPECT_EQ(result, fileContent);
     EXPECT_TRUE(hasReadFile);
@@ -1368,8 +1372,8 @@ TEST_F(TestProcess, add_memory_event_into_state)
     config.dataFormat = 0;
     std::string path = "./testmsmemscope";
     strncpy_s(config.outputDir, sizeof(config.outputDir), path.c_str(), sizeof(config.outputDir) - 1);
-    Dump::GetInstance(config).handlerMap_[testdDevId] = MakeDataHandler(config, DataType::MEMORY_EVENT, testdDevId);    // 重置文件指针
-    Dump::GetInstance(config).handlerMap_[testdDevId]->Init();
+    Dump::GetInstance().handlerMap_[testdDevId] = MakeDataHandler(config, DataType::MEMORY_EVENT, testdDevId);    // 重置文件指针
+    Dump::GetInstance().handlerMap_[testdDevId]->Init();
      
     EventHandler(eventMap["TraceStartEvent"]);
     EventHandler(eventMap["PtaCachingMallocEvent"]);
@@ -1388,7 +1392,7 @@ TEST_F(TestProcess, add_memory_event_into_state)
 "1,SYSTEM,START_TRACE,N/A,12,123,1234,N/A,N/A,,,\n"
 "2,SYSTEM,STOP_TRACE,N/A,13,123,1234,N/A,N/A,,,\n";
     std::string fileContent;
-    Dump::GetInstance(config).handlerMap_[testdDevId].reset();
+    Dump::GetInstance().handlerMap_[testdDevId].reset();
     bool hasReadFile = ReadFile(path, fileContent);
     EXPECT_EQ(result, fileContent);
     EXPECT_TRUE(hasReadFile);

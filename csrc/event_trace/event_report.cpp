@@ -212,10 +212,11 @@ void EventReport::Init()
 EventReport::EventReport(MemScopeCommType type)
 {
     Init();
-    initConfig_ = GetConfig();
+    // 动态读取当前配置（不持有副本），保证后续行为与运行中修改的配置保持一致
+    const Config& config = GetConfig();
 
     // subscribe订阅
-    BitField<decltype(initConfig_.analysisType)> analysisType(initConfig_.analysisType);
+    BitField<decltype(config.analysisType)> analysisType(config.analysisType);
     if (analysisType.checkBit(static_cast<size_t>(AnalysisType::DECOMPOSE_ANALYSIS)))
     {
         DecomposeAnalyzer::GetInstance();
@@ -224,11 +225,11 @@ EventReport::EventReport(MemScopeCommType type)
     {
         InefficientAnalyzer::GetInstance();
     }
-    Dump::GetInstance(initConfig_);
+    Dump::GetInstance();
 
     // 注册通过EventDispatcher订阅的分析器（替代Process::SendEvent中的switch-case分发）
-    HalAnalyzer::GetInstance(initConfig_);
-    StepInnerAnalyzer::GetInstance(initConfig_);
+    HalAnalyzer::GetInstance();
+    StepInnerAnalyzer::GetInstance();
 
     LOG_INFO("LOG INIT");
     RegisterRtProfileCallback();
@@ -238,8 +239,8 @@ EventReport::EventReport(MemScopeCommType type)
 
 void EventReport::UpdateAnalysisType()
 {
-    initConfig_ = GetConfig();
-    BitField<decltype(initConfig_.analysisType)> analysisType(initConfig_.analysisType);
+    const Config& config = GetConfig();
+    BitField<decltype(config.analysisType)> analysisType(config.analysisType);
 
     // 根据config确认是否订阅或者取消订阅
     if (analysisType.checkBit(static_cast<size_t>(AnalysisType::DECOMPOSE_ANALYSIS)))
@@ -318,7 +319,7 @@ bool EventReport::ReportAddrInfo(EventSubType type, uint64_t addr, std::string o
     event->addr = addr;
     event->device = devId;
 
-    Process::GetInstance(initConfig_).SendEvent(event);
+    Process::GetInstance().SendEvent(event);
     return true;
 }
 
@@ -337,7 +338,7 @@ bool EventReport::ReportPyStepRecord()
     event->device = devId;
     event->name = std::to_string(++pyStepId_);
 
-    Process::GetInstance(initConfig_).SendEvent(event);
+    Process::GetInstance().SendEvent(event);
 
     return true;
 }
@@ -391,7 +392,7 @@ bool EventReport::ReportMemPoolRecord(EventSubType type, const MemoryUsage& info
     {
         // 影子模式：仅上报最小数据集，不上报调用栈和owner信息
         event->isShadowEvent = true;
-        Process::GetInstance(initConfig_).SendEvent(event);
+        Process::GetInstance().SendEvent(event);
         return true;
     }
 
@@ -402,7 +403,7 @@ bool EventReport::ReportMemPoolRecord(EventSubType type, const MemoryUsage& info
     event->cCallStack = std::move(stack.cStack);
     event->pyCallStack = std::move(stack.pyStack);
 
-    Process::GetInstance(initConfig_).SendEvent(event);
+    Process::GetInstance().SendEvent(event);
 
     return true;
 }
@@ -439,7 +440,7 @@ bool EventReport::ReportHalCreate(uint64_t addr, uint64_t size, const drv_mem_pr
         }
     }
 
-    Process::GetInstance(initConfig_).SendEvent(event);
+    Process::GetInstance().SendEvent(event);
     return true;
 }
 
@@ -480,7 +481,7 @@ bool EventReport::ReportHalRelease(uint64_t addr, CallStackString&& stack)
     event->flag = FLAG_INVALID;
     event->kernelIndex = kernelLaunchRecordIndex_;
 
-    Process::GetInstance(initConfig_).SendEvent(event);
+    Process::GetInstance().SendEvent(event);
 
     return true;
 }
@@ -529,7 +530,7 @@ bool EventReport::ReportHalMalloc(uint64_t addr, uint64_t size, unsigned long lo
         }
     }
 
-    Process::GetInstance(initConfig_).SendEvent(event);
+    Process::GetInstance().SendEvent(event);
 
     return true;
 }
@@ -569,7 +570,7 @@ bool EventReport::ReportHalMalloc(uint64_t addr, uint64_t size, unsigned long lo
         }
     }
 
-    Process::GetInstance(initConfig_).SendEvent(event);
+    Process::GetInstance().SendEvent(event);
 
     return true;
 }
@@ -602,7 +603,7 @@ bool EventReport::ReportHalFree(uint64_t addr)
     event->kernelIndex = kernelLaunchRecordIndex_;
     // No callstack for shadow events
 
-    Process::GetInstance(initConfig_).SendEvent(event);
+    Process::GetInstance().SendEvent(event);
 
     return true;
 }
@@ -644,7 +645,7 @@ bool EventReport::ReportHalFree(uint64_t addr, CallStackString&& stack)
     event->flag = FLAG_INVALID;
     event->kernelIndex = kernelLaunchRecordIndex_;
 
-    Process::GetInstance(initConfig_).SendEvent(event);
+    Process::GetInstance().SendEvent(event);
 
     return true;
 }
@@ -679,7 +680,7 @@ bool EventReport::ReportHostRegister(uint64_t addr, uint64_t size, CallStackStri
         }
     }
 
-    Process::GetInstance(initConfig_).SendEvent(event);
+    Process::GetInstance().SendEvent(event);
 
     return true;
 }
@@ -721,7 +722,7 @@ bool EventReport::ReportHostUnregister(uint64_t addr, CallStackString&& stack)
     event->flag = FLAG_INVALID;
     event->kernelIndex = kernelLaunchRecordIndex_;
 
-    Process::GetInstance(initConfig_).SendEvent(event);
+    Process::GetInstance().SendEvent(event);
 
     return true;
 }
@@ -792,7 +793,7 @@ bool EventReport::ReportMark(MarkType type, std::string& msg, uint32_t streamId,
     event->stepId = stepInfo_.currentStepId;
     event->kernelIndex = kernelLaunchRecordIndex_;
 
-    Process::GetInstance(initConfig_).SendEvent(event);
+    Process::GetInstance().SendEvent(event);
 
     return true;
 }
@@ -817,7 +818,7 @@ bool EventReport::ReportAtenLaunch(const std::string& name, bool isStart, std::s
     event->name = name;
     event->pyCallStack = std::move(pystack);
 
-    Process::GetInstance(initConfig_).SendEvent(event);
+    Process::GetInstance().SendEvent(event);
 
     return true;
 }
@@ -849,7 +850,7 @@ bool EventReport::ReportAtenAccess(const std::string& name, const std::string& a
     event->attr = attr;
     event->pyCallStack = std::move(pystack);
 
-    Process::GetInstance(initConfig_).SendEvent(event);
+    Process::GetInstance().SendEvent(event);
 
     return true;
 }
@@ -884,7 +885,7 @@ bool EventReport::ReportKernelLaunch(const AclnnKernelMapInfo& kernelLaunchInfo)
     event->name = kernelLaunchInfo.kernelName;
     event->kernelIndex = ++kernelLaunchRecordIndex_;
 
-    Process::GetInstance(initConfig_).SendEvent(event);
+    Process::GetInstance().SendEvent(event);
 
     return true;
 }
@@ -910,7 +911,7 @@ bool EventReport::ReportKernelExcute(const TaskKey& key, std::string& name, uint
     event->taskId = std::to_string(std::get<2>(key));
     event->name = name;
 
-    Process::GetInstance(initConfig_).SendEvent(event);
+    Process::GetInstance().SendEvent(event);
 
     return true;
 }
@@ -932,7 +933,7 @@ bool EventReport::ReportAclItf(RecordSubType subtype)
     event->device = GD_INVALID_NUM;
     event->name = "N/A";
 
-    Process::GetInstance(initConfig_).SendEvent(event);
+    Process::GetInstance().SendEvent(event);
 
     return true;
 }
@@ -951,7 +952,7 @@ bool EventReport::ReportTraceStatus(const EventTraceStatus status)
     event->device = GD_INVALID_NUM;
     event->name = "N/A";
 
-    Process::GetInstance(initConfig_).SendEvent(event);
+    Process::GetInstance().SendEvent(event);
 
     return true;
 }
@@ -977,7 +978,7 @@ bool EventReport::ReportAtbOpExecute(const char* name, size_t nameSize, const ch
     event->name = name;
     event->attr = attr;
 
-    Process::GetInstance(initConfig_).SendEvent(event);
+    Process::GetInstance().SendEvent(event);
 
     return true;
 }
@@ -1004,7 +1005,7 @@ bool EventReport::ReportAtbKernel(const char* name, size_t nameSize, const char*
     event->name = name;
     event->attr = attr;
 
-    Process::GetInstance(initConfig_).SendEvent(event);
+    Process::GetInstance().SendEvent(event);
 
     return true;
 }
@@ -1035,7 +1036,7 @@ bool EventReport::ReportAtbAccessMemory(const char* name, size_t nameSize, const
     event->name = name;
     event->attr = attr;
 
-    Process::GetInstance(initConfig_).SendEvent(event);
+    Process::GetInstance().SendEvent(event);
 
     return true;
 }
@@ -1067,7 +1068,7 @@ bool EventReport::ReportMemorySnapshot(const MemorySnapshotInfo& memory_info, Ca
     event->cCallStack = std::move(stack.cStack);
     event->pyCallStack = std::move(stack.pyStack);
 
-    Process::GetInstance(initConfig_).SendEvent(event);
+    Process::GetInstance().SendEvent(event);
 
     return true;
 }

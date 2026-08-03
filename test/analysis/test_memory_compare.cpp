@@ -19,6 +19,7 @@
 #include "config_info.h"
 #include "file.h"
 #include "bit_field.h"
+#include "event_trace/trace_manager/event_trace_manager.h"
 
 #define private public
 #include "memory_compare.h"
@@ -93,7 +94,7 @@ TEST_F(MemoryCompareTest, do_read_csv_file_expect_read_correct_data)
     Config config;
     config.enableCStack = false;
     config.enablePyStack = false;
-    MemoryCompare memCompare{config};
+    MemoryCompare memCompare;
     std::unordered_map<DEVICEID, ORIGINAL_FILE_DATA> data;
     std::string str = "test_memscope.csv";
     memCompare.ReadCsvFile(str, data);
@@ -112,7 +113,7 @@ TEST_F(MemoryCompareTest, do_read_invalid_csv_file_expect_empty_data)
     fprintf(fp, headers.c_str());
 
     fclose(fp);
-    MemoryCompare memCompare{config};
+    MemoryCompare memCompare;
     std::unordered_map<DEVICEID, ORIGINAL_FILE_DATA> data;
     std::string str = "test_memscope.csv";
     memCompare.ReadCsvFile(str, data);
@@ -138,9 +139,10 @@ TEST_F(MemoryCompareTest, do_read_kernelLaunch_data_expect_return_true_and_corre
     BitField<decltype(config.levelType)> levelBit;
     levelBit.setBit(static_cast<size_t>(LevelType::LEVEL_KERNEL));
     config.levelType = levelBit.getValue();
+    ConfigManager::Instance().SetConfig(config);
     ORIGINAL_FILE_DATA data;
     CreateCsvData(data);
-    MemoryCompare memCompare{config};
+    MemoryCompare memCompare;
     NAME_WITH_INDEX result;
     memCompare.ReadNameIndexData(data, result);
     ASSERT_EQ(result.size(), 2);
@@ -154,7 +156,7 @@ TEST_F(MemoryCompareTest, do_read_no_kernelLaunch_data_expect_return_false_and_e
 {
     Config config;
     ORIGINAL_FILE_DATA data;
-    MemoryCompare memCompare{config};
+    MemoryCompare memCompare;
     NAME_WITH_INDEX result;
     memCompare.ReadNameIndexData(data, result);
     ASSERT_EQ(result.size(), 0);
@@ -166,7 +168,7 @@ TEST_F(MemoryCompareTest, do_read_invalid_kernelLaunch_data_expect_falseand_empt
     ORIGINAL_FILE_DATA data;
     CreateCsvData(data);
     data[1]["Name"] = "+test";
-    MemoryCompare memCompare{config};
+    MemoryCompare memCompare;
     NAME_WITH_INDEX result;
     memCompare.ReadNameIndexData(data, result);
     ASSERT_EQ(result.size(), 0);
@@ -177,7 +179,7 @@ TEST_F(MemoryCompareTest, do_get_kernel_memory_diff_expect_correct_data)
     Config config;
     ORIGINAL_FILE_DATA data;
     CreateCsvData(data);
-    MemoryCompare memCompare{config};
+    MemoryCompare memCompare;
     int64_t result;
     memCompare.framework_ = "PTA";
     memCompare.GetMemoryUsage(1, data, result);
@@ -197,7 +199,7 @@ TEST_F(MemoryCompareTest, do_get_kernel_memory_diff_expect_correct_data)
 TEST_F(MemoryCompareTest, do_write_compare_data_to_csv_expect_true)
 {
     Config config;
-    MemoryCompare memCompare{config};
+    MemoryCompare memCompare;
     std::string temp;
     temp = "matmul,0,10,0,11,20,0,21,10,0,10\n";
     memCompare.result_[0].emplace_back(temp);
@@ -212,7 +214,7 @@ TEST_F(MemoryCompareTest, do_empty_compare_data_to_csv_expect_false)
 {
     Config config;
     Utility::UmaskGuard umaskGuard(Utility::DEFAULT_UMASK_FOR_CSV_FILE);
-    MemoryCompare memCompare{config};
+    MemoryCompare memCompare;
     FILE *fp = fopen("test_memscope.csv", "w");
     memCompare.compareFile_ = fp;
     ASSERT_FALSE(memCompare.WriteCompareDataToCsv());
@@ -224,7 +226,7 @@ TEST_F(MemoryCompareTest, do_save_compare_kernel_memory_expect_correct_data)
     Config config;
     ORIGINAL_FILE_DATA data;
     CreateCsvData(data);
-    MemoryCompare memCompare{config};
+    MemoryCompare memCompare;
     memCompare.framework_ = "PTA";
     memCompare.baseFileOriginData_[0] = data;
     data[3]["Attr"] = "{addr:20623378087936,size:130,owner:,total:0,used:2822144}";
@@ -256,7 +258,7 @@ TEST_F(MemoryCompareTest, do_build_path_expect_coorrect_data)
     std::shared_ptr<PathNode> pathNode4 = std::make_shared<Snake>(2, 2, pathNode3);
 
     Config config;
-    MemoryCompare memCompare{config};
+    MemoryCompare memCompare;
     auto pathNode = memCompare.BuildPath(kernelIndexMap, kernelIndexCompareMap);
     ASSERT_EQ(pathNode->i, pathNode4->i);
     ASSERT_EQ(pathNode->j, pathNode4->j);
@@ -277,7 +279,7 @@ TEST_F(MemoryCompareTest, do_empty_path_build_diff_expect_empty_data)
     std::shared_ptr<PathNode> pathNode;
     NAME_WITH_INDEX kernelIndexMap {};
     NAME_WITH_INDEX kernelIndexCompareMap {};
-    MemoryCompare memCompare{config};
+    MemoryCompare memCompare;
     memCompare.BuildDiff(pathNode, 0, kernelIndexMap, kernelIndexCompareMap);
     ASSERT_EQ(memCompare.result_.size(), 0);
 }
@@ -292,7 +294,7 @@ TEST_F(MemoryCompareTest, do_build_diff_expect_correct_data)
     Config config;
     ORIGINAL_FILE_DATA data;
     CreateCsvData(data);
-    MemoryCompare memCompare{config};
+    MemoryCompare memCompare;
     memCompare.baseFileOriginData_[0] = data;
     data[1]["name"] = "mul";
     memCompare.compareFileOriginData_[0] = data;
@@ -312,7 +314,7 @@ TEST_F(MemoryCompareTest, do_myersdiff_input_kernelLaunch_data)
     Config config;
     NAME_WITH_INDEX kernelIndexMap {};
     NAME_WITH_INDEX kernelIndexCompareMap {};
-    MemoryCompare memCompare{config};
+    MemoryCompare memCompare;
     memCompare.MyersDiff(0, kernelIndexMap, kernelIndexCompareMap);
     ASSERT_EQ(memCompare.result_[0].size(), 0);
 
@@ -337,7 +339,7 @@ TEST_F(MemoryCompareTest, do_stepinter_compare_input_invalid_path_return_empty_d
     paths.emplace_back("test_path1");
     paths.emplace_back("test_path2");
 
-    MemoryCompare memCompare{config};
+    MemoryCompare memCompare;
     memCompare.RunComparison(paths);
     ASSERT_EQ(memCompare.baseFileOriginData_.size(), 0);
 }
@@ -348,6 +350,7 @@ TEST_F(MemoryCompareTest, do_kernel_launch_compare)
     BitField<decltype(config.levelType)> levelBit;
     levelBit.setBit(static_cast<size_t>(LevelType::LEVEL_KERNEL));
     config.levelType = levelBit.getValue();
+    ConfigManager::Instance().SetConfig(config);
     config.enableCStack = false;
     config.enablePyStack = false;
     Utility::UmaskGuard umaskGuard(Utility::DEFAULT_UMASK_FOR_CSV_FILE);
@@ -378,7 +381,7 @@ TEST_F(MemoryCompareTest, do_kernel_launch_compare)
     paths.emplace_back("test_memscope.csv");
     paths.emplace_back("test_memscope.csv");
 
-    MemoryCompare memCompare{config};
+    MemoryCompare memCompare;
     memCompare.RunComparison(paths);
     ASSERT_EQ(memCompare.result_.size(), 2);
     remove("test_memscope.csv");

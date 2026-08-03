@@ -14,6 +14,7 @@ from .base_test import BaseTest, TestSuite
 from ..utils.result import Result
 from ..utils.file_system import WorkingDir
 from ..utils.utils import ColorText
+from ..utils.dump_csv_check import check_memscope_dump_files
 
 
 class InefficientTestSuite(TestSuite):
@@ -70,10 +71,16 @@ class InefficientTestCase(BaseTest):
             except Exception as e:
                 logging.error(f"Error reading {file}: {str(e)}")
         
+        # 内存池数据一致性检查（used 累积校验、allocation_id 配对校验），
+        # 不同文件的 allocation_id 可能重复，须在 concat 前按文件分别校验
+        check_result = check_memscope_dump_files(dfs)
+        if not check_result.success:
+            return check_result
+
         # 合并所有 DataFrame（按行叠加）
         if dfs:
             data = pd.concat(dfs, ignore_index=True)
-        
+
         # 校验条件 1、低效显存的个数是否符合
         ATTR_VALID_RULES = [
                 "inefficient_type",                     

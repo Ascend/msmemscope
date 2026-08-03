@@ -38,10 +38,10 @@ inline std::string DevID2String(int32_t dev)
     return std::to_string(dev);
 }
 
-DataHandler::DataHandler(const Config config) { config_ = config; }
+DataHandler::DataHandler(const Config& config) : outputDir_(config.outputDir) {}
 
 // csv handler
-CsvHandler::CsvHandler(const Config config, DataType dataType, int32_t devId)
+CsvHandler::CsvHandler(const Config& config, DataType dataType, int32_t devId)
     : DataHandler(config), dataType_(dataType), devId_(devId)
 {
     InitSetParm();
@@ -73,7 +73,7 @@ void CsvHandler::InitSetParm()
 
 bool CsvHandler::Init()
 {
-    return Utility::FileCreateManager::GetInstance(config_.outputDir)
+    return Utility::FileCreateManager::GetInstance(outputDir_)
         .CreateCsvFile(&file_, devId_, prefix_, DUMP_DIR, csvHeader_);
 }
 
@@ -184,7 +184,7 @@ CsvHandler::~CsvHandler()
     }
 }
 
-DbHandler::DbHandler(const Config config, DataType dataType, int32_t devId)
+DbHandler::DbHandler(const Config& config, DataType dataType, int32_t devId)
     : DataHandler(config), dataType_(dataType), devId_(devId)
 {
     InitSetParm();
@@ -247,7 +247,7 @@ void DbHandler::InitSetParm()
 
 bool DbHandler::Init()
 {
-    return Utility::FileCreateManager::GetInstance(config_.outputDir)
+    return Utility::FileCreateManager::GetInstance(outputDir_)
         .CreateDbFile(&dataFileDb_, devId_, CSV_FILE_PREFIX, DUMP_DIR, tableName_, dbHeader_);
 }
 
@@ -439,7 +439,7 @@ std::string BuildCreateStatement(const std::string& table,
     return oss.str();
 }
 
-std::unique_ptr<DataHandler> MakeDataHandler(Config config, DataType data, int32_t devId)
+std::unique_ptr<DataHandler> MakeDataHandler(const Config& config, DataType data, int32_t devId)
 {
     switch (config.dataFormat)
     {

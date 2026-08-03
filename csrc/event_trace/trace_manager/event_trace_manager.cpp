@@ -247,7 +247,7 @@ bool EventTraceManager::ShouldCollectShadowEvents()
 
 void EventTraceManager::PromoteHistoricalStates()
 {
-    auto &dump = Dump::GetInstance(GetConfig());
+    auto &dump = Dump::GetInstance();
     auto dumpFunc = [&dump](MemoryState *state) { dump.DumpHistoricalState(state); };
     // 委托给MemoryStateManager内部加锁处理，避免多线程竞态
     MemoryStateManager::GetInstance().PromoteShadowStates(dumpFunc);
@@ -326,8 +326,7 @@ void EventTraceManager::SetAclInitStatus(bool isInit)
 void EventTraceManager::CleanUpEventTraceManager()
 {
     // 这里可以添加其他的CleanUp操作,最好把析构函数中的抽象出来,放到stop实现
-    Config config = Config{};
-    Dump::GetInstance(config).WritePublicEventToFile();
-    Dump::GetInstance(config).FflushEventToFile();
+    Dump::GetInstance().WritePublicEventToFile();
+    Dump::GetInstance().FflushEventToFile();
 }
 }  // namespace MemScope

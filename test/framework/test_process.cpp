@@ -56,7 +56,7 @@ TEST(Process, process_setpreloadenv_without_atb_expect_success)
     setenv("LD_PRELOAD_PATH", "/lib64/", 1);
     Config config;
     Utility::FileCreateManager::GetInstance("testmsmemscope");
-    Process process(config);
+    Process process;
     process.SetPreloadEnv();
     char *env = getenv("LD_PRELOAD");
     std::string hooksSo = "libleaks_ascend_hal_hook.so:"
@@ -75,7 +75,7 @@ TEST(Process, process_setpreloadenv_with_atb_abi_0_expect_success)
     setenv("LD_PRELOAD_PATH", "/lib64/", 1);
     Config config;
     Utility::FileCreateManager::GetInstance("testmsmemscope");
-    Process process(config);
+    Process process;
     process.SetPreloadEnv();
     char *env = getenv("LD_PRELOAD");
     std::string hooksSo = "libleaks_ascend_hal_hook.so:"
@@ -94,7 +94,7 @@ TEST(Process, process_setpreloadenv_with_atb_abi_1_expect_success)
     setenv("LD_PRELOAD_PATH", "/lib64/", 1);
     Config config;
     Utility::FileCreateManager::GetInstance("testmsmemscope");
-    Process process(config);
+    Process process;
     process.SetPreloadEnv();
     char *env = getenv("LD_PRELOAD");
     std::string hooksSo = "libleaks_ascend_hal_hook.so:"
@@ -149,10 +149,10 @@ TEST(Process, do_record_handler_except_success)
 
     Config config;
     setConfig(config);
-    Process::GetInstance(config).SendEvent(event1);
-    Process::GetInstance(config).SendEvent(event2);
-    Process::GetInstance(config).SendEvent(event3);
-    Process::GetInstance(config).SendEvent(event4);
-    Process::GetInstance(config).SendEvent(event5);
-    Process::GetInstance(config).SendEvent(event6);
+    Process::GetInstance().SendEvent(event1);
+    Process::GetInstance().SendEvent(event2);
+    Process::GetInstance().SendEvent(event3);
+    Process::GetInstance().SendEvent(event4);
+    Process::GetInstance().SendEvent(event5);
+    Process::GetInstance().SendEvent(event6);
 }

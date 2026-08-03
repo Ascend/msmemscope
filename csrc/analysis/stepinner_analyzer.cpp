@@ -24,22 +24,21 @@
 
 #include "bit_field.h"
 #include "config_info.h"
+#include "event_trace/trace_manager/event_trace_manager.h"
 #include "utility/log.h"
 #include "utility/utils.h"
 
 namespace MemScope
 {
 
-StepInnerAnalyzer &StepInnerAnalyzer::GetInstance(Config config)
+StepInnerAnalyzer &StepInnerAnalyzer::GetInstance()
 {
-    static StepInnerAnalyzer analyzer(config);
+    static StepInnerAnalyzer analyzer;
     return analyzer;
 }
 
-StepInnerAnalyzer::StepInnerAnalyzer(Config config)
+StepInnerAnalyzer::StepInnerAnalyzer()
 {
-    config_ = config;
-
     // 通过EventDispatcher统一订阅，替代原有的MstxAnalyzer/PyStepManager回调
     Subscribe();
 
@@ -176,20 +175,22 @@ bool StepInnerAnalyzer::CreateLeakSumTables(const DeviceId &deviceId)
 
 bool StepInnerAnalyzer::IsStepInnerAnalysisEnable()
 {
+    // 动态读取当前配置（每个事件只取一次锁），保证分析开关与运行中修改的配置保持一致
+    const Config &config = GetConfig();
     // 确认analysis设置中是否包含泄漏分析
-    BitField<decltype(config_.analysisType)> analysisType(config_.analysisType);
+    BitField<decltype(config.analysisType)> analysisType(config.analysisType);
     if (!(analysisType.checkBit(static_cast<size_t>(AnalysisType::LEAKS_ANALYSIS))))
     {
         return false;
     }
     // 当开启--steps时，关闭所有分析功能
-    if (config_.stepList.stepCount != 0)
+    if (config.stepList.stepCount != 0)
     {
         return false;
     }
 
     // 当malloc和free采集并非都开启时，关闭分析功能
-    BitField<decltype(config_.eventType)> eventType(config_.eventType);
+    BitField<decltype(config.eventType)> eventType(config.eventType);
     if (!(eventType.checkBit(static_cast<size_t>(EventType::ALLOC_EVENT))) ||
         !(eventType.checkBit(static_cast<size_t>(EventType::FREE_EVENT))))
     {
