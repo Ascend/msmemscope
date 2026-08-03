@@ -8,7 +8,7 @@
 
 请参见[安装指南](../../docs/zh/install_guide/install_guide.md)安装msMemScope工具。
 
-在运行本样例中的python场景时，需要配置torch以及TorchNPU，具体请参见[Pytorch框架训练环境准备](https://www.hiascend.com/document/detail/zh/Pytorch/720/configandinstg/instg/insg_0001.html)文档。
+在运行本样例中的python场景时，需要配置torch以及TorchNPU，具体请参见[Pytorch框架训练环境准备](https://www.hiascend.com/document/detail/zh/Pytorch/latest/installguide/swinstall/docs/zh/installation_guide/installation_via_binary_package.md)文档。
 
 此外，使用内存块监测功能前，需要注意以下事项：
 
