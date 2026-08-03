@@ -53,7 +53,7 @@ void HalAnalyzer::UnSubscribe() const { EventDispatcher::GetInstance().UnSubscri
 void HalAnalyzer::EventHandle(std::shared_ptr<EventBase>& event, MemoryState* state)
 {
     // 仅处理HAL池的内存事件
-    if (event->poolType != PoolType::HAL)
+    if (event->poolType != PoolType::HAL || event->device == GD_INVALID_NUM)
     {
         return;
     }
@@ -152,7 +152,8 @@ void HalAnalyzer::RecordMalloc(const ClientId& clientId, std::shared_ptr<const M
         LOG_WARN("[client %u]: HalAnalyzer receive invalid event.", clientId);
         return;
     }
-    uint64_t memkey = memEvent->addr;
+    // 同一地址在不同device上是独立的内存块，key需为(deviceId, addr)组合
+    HalAddrKey memkey{memEvent->device, memEvent->addr};
     // malloc操作需解析当前moduleId
     bool foundModule = false;
     std::string modulename = "INVLID_MOUDLE_ID";
@@ -167,42 +168,32 @@ void HalAnalyzer::RecordMalloc(const ClientId& clientId, std::shared_ptr<const M
                  memEvent->device, memEvent->moduleId, memEvent->id);
     }
 
+    // 表仅保存未释放的存活块：free后条目会被删除（RecordFree），此处条目存在即表示地址仍存活
     if (memtables_[clientId].find(memkey) != memtables_[clientId].end())
     {
-        if ((memtables_[clientId].find(memkey)->second.addrStatus == AddrStatus::FREE_WAIT))
-        {
-            LOG_WARN("[client %u]: server already has malloc record in addr: 0x%lx ,", clientId, memEvent->addr);
-            LOG_WARN("[client %u]: but now malloc again in index: %u, addr: 0x%lx, size: %u, space: %u", clientId,
-                     memEvent->id, memEvent->addr, memEvent->size, memEvent->space);
-        }
+        LOG_WARN("[client %u]: server already has malloc record in addr: 0x%lx ,", clientId, memEvent->addr);
+        LOG_WARN("[client %u]: but now malloc again in index: %u, addr: 0x%lx, size: %u, space: %u", clientId,
+                 memEvent->id, memEvent->addr, memEvent->size, memEvent->space);
     }
     else
     {
-        HalMemInfo halMemInfo{};
-        memtables_[clientId].emplace(memkey, halMemInfo);
+        memtables_[clientId].emplace(memkey);
     }
-    memtables_[clientId][memkey].deviceId = memEvent->device;
-    memtables_[clientId][memkey].addrStatus = AddrStatus::FREE_WAIT;
 }
 
 void HalAnalyzer::RecordFree(const ClientId& clientId, std::shared_ptr<const MemoryEvent> memEvent)
 {
-    uint64_t memkey = memEvent->addr;
+    // 与RecordMalloc的key保持一致：同一地址在不同device上是独立的内存块
+    HalAddrKey memkey{memEvent->device, memEvent->addr};
     auto it = memtables_[clientId].find(memkey);
     if (it != memtables_[clientId].end())
     {
-        if (it->second.addrStatus == AddrStatus::FREE_WAIT)
-        {
-            memtables_[clientId][memkey].addrStatus = AddrStatus::FREE_ALREADY;
-        }
-        else
-        {
-            LOG_WARN("[client %u]: Double free operator found for malloc operation : addr: 0x%lx", clientId,
-                     memEvent->addr);
-        }
+        // 内存块已释放，直接从表中删除，避免历史条目无限累积
+        memtables_[clientId].erase(it);
     }
     else
     {
+        // 地址已释放/从未申请，或double free（条目已在首次free时删除）
         LOG_WARN("[client %u]: No matching malloc operation found for free operator: addr: 0x%lx", clientId,
                  memEvent->addr);
     }
@@ -213,13 +204,12 @@ void HalAnalyzer::CheckLeak(const size_t clientId)
     bool foundLeaks = false;
     if (memtables_.find(clientId) != memtables_.end())
     {
-        for (const auto& pair : memtables_[clientId])
+        for (const auto& memkey : memtables_[clientId])
         {
-            if (pair.second.addrStatus != AddrStatus::FREE_ALREADY)
-            {
-                foundLeaks = true;
-                LOG_WARN("[client %u]: Leak memory in Malloc operator, addr: 0x%lx", clientId, pair.first);
-            }
+            // 表内条目均为未释放的存活块（free即删除），全部视为泄漏
+            foundLeaks = true;
+            LOG_WARN("[client %u][device: %d]: Leak memory in Malloc operator, addr: 0x%lx", clientId, memkey.deviceId,
+                     memkey.addr);
         }
     }
     if (!foundLeaks)

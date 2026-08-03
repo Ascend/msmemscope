@@ -443,6 +443,7 @@ TEST(StepInnerAnalyzerTest, do_input_exist_deviceid_CreateTables_return_true)
     eventBit.setBit(static_cast<size_t>(EventType::ALLOC_EVENT));
     eventBit.setBit(static_cast<size_t>(EventType::FREE_EVENT));
     config.eventType = eventBit.getValue();
+    ConfigManager::Instance().SetConfig(config);
     StepInnerAnalyzer stepInner;
     NpuMemUsage npumemusage{};
     stepInner.npuMemUsages_.insert({1, npumemusage});
@@ -457,6 +458,7 @@ TEST(StepInnerAnalyzerTest, do_input_not_exist_deviceid_CreateTables_return_true
     eventBit.setBit(static_cast<size_t>(EventType::ALLOC_EVENT));
     eventBit.setBit(static_cast<size_t>(EventType::FREE_EVENT));
     config.eventType = eventBit.getValue();
+    ConfigManager::Instance().SetConfig(config);
     StepInnerAnalyzer stepInner;
     auto ret = stepInner.CreateTables(1);
     ASSERT_TRUE(ret);
@@ -469,6 +471,7 @@ TEST(StepInnerAnalyzerTest, do_input_exist_deviceid_CreateStepInfoTables_return_
     eventBit.setBit(static_cast<size_t>(EventType::ALLOC_EVENT));
     eventBit.setBit(static_cast<size_t>(EventType::FREE_EVENT));
     config.eventType = eventBit.getValue();
+    ConfigManager::Instance().SetConfig(config);
     StepInnerAnalyzer stepInner;
     StepInfoTable stepInfoTable{};
     stepInner.stepInfoTables_.insert({1, stepInfoTable});
@@ -483,6 +486,7 @@ TEST(StepInnerAnalyzerTest, do_input_not_exist_deviceid_CreateStepInfoTables_ret
     eventBit.setBit(static_cast<size_t>(EventType::ALLOC_EVENT));
     eventBit.setBit(static_cast<size_t>(EventType::FREE_EVENT));
     config.eventType = eventBit.getValue();
+    ConfigManager::Instance().SetConfig(config);
     StepInnerAnalyzer stepInner;
     auto ret = stepInner.CreateStepInfoTables(1);
     ASSERT_TRUE(ret);
@@ -495,6 +499,7 @@ TEST(StepInnerAnalyzerTest, do_input_exist_deviceid_CreateLeakSumTables_return_t
     eventBit.setBit(static_cast<size_t>(EventType::ALLOC_EVENT));
     eventBit.setBit(static_cast<size_t>(EventType::FREE_EVENT));
     config.eventType = eventBit.getValue();
+    ConfigManager::Instance().SetConfig(config);
     StepInnerAnalyzer stepInner;
     LeakSumsTable memscopeumstable{};
     stepInner.leakMemSums_.insert({1, memscopeumstable});
@@ -509,6 +514,7 @@ TEST(StepInnerAnalyzerTest, do_input_not_exist_deviceid_CreateLeakSumTables_retu
     eventBit.setBit(static_cast<size_t>(EventType::ALLOC_EVENT));
     eventBit.setBit(static_cast<size_t>(EventType::FREE_EVENT));
     config.eventType = eventBit.getValue();
+    ConfigManager::Instance().SetConfig(config);
     StepInnerAnalyzer stepInner;
     auto ret = stepInner.CreateLeakSumTables(1);
     ASSERT_TRUE(ret);
@@ -522,6 +528,7 @@ TEST(StepInnerAnalyzerTest, do_input_steps_command_disable_analysis)
     eventBit.setBit(static_cast<size_t>(EventType::FREE_EVENT));
     config.eventType = eventBit.getValue();
     config.stepList.stepCount = 2;
+    ConfigManager::Instance().SetConfig(config);
     StepInnerAnalyzer stepInner;
     auto ret = stepInner.IsStepInnerAnalysisEnable();
     ASSERT_FALSE(ret);
@@ -538,6 +545,7 @@ TEST(StepInnerAnalyzerTest, do_not_input_steps_command_enable_analysis)
     eventBit.setBit(static_cast<size_t>(EventType::FREE_EVENT));
     config.analysisType = analysisBit.getValue();
     config.eventType = eventBit.getValue();
+    ConfigManager::Instance().SetConfig(config);
     StepInnerAnalyzer stepInner;
     auto ret = stepInner.IsStepInnerAnalysisEnable();
     ASSERT_TRUE(ret);
@@ -550,6 +558,7 @@ TEST(StepInnerAnalyzerTest, do_stepId_below_1_SkipCheck_return_true)
     eventBit.setBit(static_cast<size_t>(EventType::ALLOC_EVENT));
     eventBit.setBit(static_cast<size_t>(EventType::FREE_EVENT));
     config.eventType = eventBit.getValue();
+    ConfigManager::Instance().SetConfig(config);
     StepInnerAnalyzer stepInner;
     NpuMemInfo npuMemInfo{};
     npuMemInfo.stepId = 0;
@@ -564,6 +573,7 @@ TEST(StepInnerAnalyzerTest, do_stepId_up_1_SkipCheck_return_true)
     eventBit.setBit(static_cast<size_t>(EventType::ALLOC_EVENT));
     eventBit.setBit(static_cast<size_t>(EventType::FREE_EVENT));
     config.eventType = eventBit.getValue();
+    ConfigManager::Instance().SetConfig(config);
     StepInnerAnalyzer stepInner;
     NpuMemInfo npuMemInfo{};
     npuMemInfo.stepId = 3;
@@ -579,6 +589,7 @@ TEST(StepInnerAnalyzerTest, do_updateallocated_step_0_update_0)
     eventBit.setBit(static_cast<size_t>(EventType::FREE_EVENT));
     config.eventType = eventBit.getValue();
     config.stepList.stepCount = 2;
+    ConfigManager::Instance().SetConfig(config);
     StepInnerAnalyzer stepInner;
     NpuMemUsage npumemusage;
     npumemusage.duringStep = 0;
@@ -598,6 +609,7 @@ TEST(StepInnerAnalyzerTest, do_updateallocated_step_2_update_allocated)
     eventBit.setBit(static_cast<size_t>(EventType::FREE_EVENT));
     config.eventType = eventBit.getValue();
     config.stepList.stepCount = 2;
+    ConfigManager::Instance().SetConfig(config);
     StepInnerAnalyzer stepInner;
     NpuMemUsage npumemusage;
     npumemusage.duringStep = 2;
@@ -618,6 +630,7 @@ TEST(StepInnerAnalyzerTest, do_checkgap_minmaxallocratio_equal_0_expect_reset_al
     eventBit.setBit(static_cast<size_t>(EventType::FREE_EVENT));
     config.eventType = eventBit.getValue();
     config.stepList.stepCount = 2;
+    ConfigManager::Instance().SetConfig(config);
     StepInnerAnalyzer stepInner;
     NpuMemUsage npumemusage;
     npumemusage.duringStep = 2;
@@ -637,6 +650,7 @@ TEST(StepInnerAnalyzerTest, do_checkgap_minmaxallocratio_expect_true_allocated)
     eventBit.setBit(static_cast<size_t>(EventType::FREE_EVENT));
     config.eventType = eventBit.getValue();
     config.stepList.stepCount = 2;
+    ConfigManager::Instance().SetConfig(config);
     StepInnerAnalyzer stepInner;
     NpuMemUsage npumemusage;
     GapInfo gapinfo;
@@ -662,6 +676,7 @@ TEST(StepInnerAnalyzerRecordFuncTest, Recordtest)
     config.inputCorrectPaths = true;
     config.outputCorrectPaths = false;
     config.stepList.stepCount = 0;
+    ConfigManager::Instance().SetConfig(config);
 
     std::shared_ptr<MemoryEvent> event = std::make_shared<MemoryEvent>();
     std::shared_ptr<EventBase> baseEvent = event;
@@ -679,6 +694,7 @@ TEST(StepInnerAnalyzerRecordFuncTest, recordMallocSuccess) {
     config.inputCorrectPaths = true;
     config.outputCorrectPaths = false;
     config.stepList.stepCount = 0;
+    ConfigManager::Instance().SetConfig(config);
 
     std::shared_ptr<MemoryEvent> event = std::make_shared<MemoryEvent>();
     event->eventType = EventBaseType::MALLOC;
@@ -705,6 +721,7 @@ TEST(StepInnerAnalyzerRecordFuncTest, recordFreeSuccess) {
     config.inputCorrectPaths = true;
     config.outputCorrectPaths = false;
     config.stepList.stepCount = 0;
+    ConfigManager::Instance().SetConfig(config);
 
     std::shared_ptr<MemoryEvent> event = std::make_shared<MemoryEvent>();
     event->eventType = EventBaseType::FREE;
@@ -731,6 +748,7 @@ TEST(StepInnerAnalyzerReceiveMstxMsgFuncTest, ReceiveMstxMsgIfRangeStartA) {
     config.inputCorrectPaths = true;
     config.outputCorrectPaths = false;
     config.stepList.stepCount = 0;
+    ConfigManager::Instance().SetConfig(config);
 
     std::shared_ptr<MstxEvent> event = std::make_shared<MstxEvent>();
     event->eventType = EventBaseType::MSTX;
@@ -757,6 +775,7 @@ TEST(StepInnerAnalyzerReceiveMstxMsgFuncTest, ReceiveMstxMsgIfRangeEnd) {
     config.inputCorrectPaths = true;
     config.outputCorrectPaths = false;
     config.stepList.stepCount = 0;
+    ConfigManager::Instance().SetConfig(config);
 
     std::shared_ptr<MstxEvent> event = std::make_shared<MstxEvent>();
     event->eventType = EventBaseType::MSTX;
@@ -783,6 +802,7 @@ TEST(StepInnerAnalyzerUpdateAllocatedFuncTest, UpdateAllocatedUpdateMaxTest)
     eventBit.setBit(static_cast<size_t>(EventType::FREE_EVENT));
     config.analysisType = analysisBit.getValue();
     config.eventType = eventBit.getValue();
+    ConfigManager::Instance().SetConfig(config);
     StepInnerAnalyzer stepInner;
     NpuMemUsage npumemusage;
     npumemusage.duringStep = 2;
@@ -806,6 +826,7 @@ TEST(StepInnerAnalyzerUpdateAllocatedFuncTest, UpdateAllocatedInitTest)
     config.analysisType = analysisBit.getValue();
     config.eventType = eventBit.getValue();
     config.stepList.stepCount = 0;
+    ConfigManager::Instance().SetConfig(config);
     StepInnerAnalyzer stepInner;
     NpuMemUsage npumemusage;
     npumemusage.duringStep = 2;
@@ -827,6 +848,7 @@ TEST(StepInnerAnalyzerUpdateAllocatedFuncTest, UpdateAllocatedreturnTest)
     eventBit.setBit(static_cast<size_t>(EventType::FREE_EVENT));
     config.eventType = eventBit.getValue();
     config.stepList.stepCount = 0;
+    ConfigManager::Instance().SetConfig(config);
     StepInnerAnalyzer stepInner;
     NpuMemUsage npumemusage;
     npumemusage.duringStep = 0;
@@ -848,6 +870,7 @@ TEST(StepInnerAnalyzerAddDurationTest, AddDurationTest)
     eventBit.setBit(static_cast<size_t>(EventType::FREE_EVENT));
     config.eventType = eventBit.getValue();
     config.stepList.stepCount = 0;
+    ConfigManager::Instance().SetConfig(config);
     StepInnerAnalyzer stepInner;
     NpuMemUsage npumemusage;
     npumemusage.duringStep = 0;
@@ -868,6 +891,7 @@ TEST(StepInnerAnalyzerAddDurationTest, AddDurationReturnTest)
     eventBit.setBit(static_cast<size_t>(EventType::FREE_EVENT));
     config.eventType = eventBit.getValue();
     config.stepList.stepCount = 0;
+    ConfigManager::Instance().SetConfig(config);
     StepInnerAnalyzer stepInner;
     NpuMemUsage npumemusage;
     npumemusage.duringStep = 0;
@@ -888,6 +912,7 @@ TEST(StepInnerAnalyzerSetStepIdFuncTest, SetStepIdTest)
     eventBit.setBit(static_cast<size_t>(EventType::FREE_EVENT));
     config.eventType = eventBit.getValue();
     config.stepList.stepCount = 0;
+    ConfigManager::Instance().SetConfig(config);
     StepInnerAnalyzer stepInner;
     NpuMemUsage npumemusage;
     npumemusage.duringStep = 1;

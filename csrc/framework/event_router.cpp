@@ -46,8 +46,6 @@ void EventRouter::Route(std::shared_ptr<EventBase> event) { EventHandler(event);
 // 阶段三：CleanupMemoryState清理已消亡的内存块
 // =============================================================================
 
-
-
 // 影子FREE事件：按当前影子状态迁移生命周期
 static void HandleShadowEvent(std::shared_ptr<EventBase> event, MemoryState* state)
 {
@@ -59,11 +57,9 @@ static void HandleShadowEvent(std::shared_ptr<EventBase> event, MemoryState* sta
     if (state->shadowState == ShadowState::SHADOW_CREATED)
     {
         // 影子分配 + 影子释放 = 直接消亡，不留痕迹
-        MemoryStateManager::GetInstance().DeteleState(event->poolType,
-                                                      MemoryStateKey{event->pid, event->addr});
+        MemoryStateManager::GetInstance().DeteleState(event->poolType, MemoryStateKey{event->pid, event->addr});
     }
-    else if (state->shadowState == ShadowState::NORMAL ||
-             state->shadowState == ShadowState::SHADOW_PROMOTED)
+    else if (state->shadowState == ShadowState::NORMAL || state->shadowState == ShadowState::SHADOW_PROMOTED)
     {
         // 正常分配/已转正影子块 + 影子释放 → 标记SHADOW_FREED待下次start或exit时处理
         state->shadowState = ShadowState::SHADOW_FREED;
@@ -113,8 +109,8 @@ static MemoryState* UpdateMemoryEventState(std::shared_ptr<EventBase> event)
     if (!manager.AddEvent(memEvent))
     {
         // 添加事件失败时，表明对应位置已存在事件，需先清空事件列表
-        std::shared_ptr<EventBase> cleanUpEvent =
-            std::make_shared<CleanUpEvent>(EventSubType::RESIDUAL_BLOCK, memEvent->poolType, memEvent->pid, memEvent->addr);
+        std::shared_ptr<EventBase> cleanUpEvent = std::make_shared<CleanUpEvent>(
+            EventSubType::RESIDUAL_BLOCK, memEvent->poolType, memEvent->pid, memEvent->addr);
         EventHandler(cleanUpEvent);  // 最大递归深度为2，因为这里传入事件的类型为CLEAN_UP
         manager.AddEvent(memEvent);  // 再次尝试添加
     }
@@ -159,7 +155,7 @@ static MemoryState* HandleCleanUpEvent(std::shared_ptr<EventBase> event)
 }
 
 // TRACE_START/TRACE_STOP事件：维护采集窗口时间戳
-static void HandleTraceEvent(std::shared_ptr<EventBase> event)
+static MemoryState* HandleTraceEvent(std::shared_ptr<EventBase> event)
 {
     if (event->eventSubType == EventSubType::TRACE_START)
     {
@@ -169,6 +165,7 @@ static void HandleTraceEvent(std::shared_ptr<EventBase> event)
     {
         MemoryStateManager::GetInstance().SetLastStopTimestamp(event->timestamp);
     }
+    return nullptr;
 }
 
 // 阶段1: 更新内存块状态追踪，仅内存类事件需要，同时返回事件关联内存块
@@ -188,7 +185,11 @@ MemoryState* UpdateMemoryState(std::shared_ptr<EventBase> event)
         }
         case EventBaseType::CLEAN_UP:
         {
-            return HandleOwnerOrCleanUpEvent(event);
+            return HandleCleanUpEvent(event);
+        }
+        case EventBaseType::SYSTEM:
+        {
+            return HandleTraceEvent(event);
         }
         default:
         {

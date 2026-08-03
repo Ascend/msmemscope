@@ -176,7 +176,7 @@ bool StepInnerAnalyzer::CreateLeakSumTables(const DeviceId &deviceId)
 bool StepInnerAnalyzer::IsStepInnerAnalysisEnable()
 {
     // 动态读取当前配置（每个事件只取一次锁），保证分析开关与运行中修改的配置保持一致
-    const Config& config = GetConfig();
+    const Config &config = GetConfig();
     // 确认analysis设置中是否包含泄漏分析
     BitField<decltype(config.analysisType)> analysisType(config.analysisType);
     if (!(analysisType.checkBit(static_cast<size_t>(AnalysisType::LEAKS_ANALYSIS))))

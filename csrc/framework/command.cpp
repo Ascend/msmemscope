@@ -19,21 +19,23 @@
 #include <map>
 #include <memory>
 
+#include "analysis/decompose_analyzer.h"
+#include "analysis/dump.h"
+#include "analysis/inefficient_analyzer.h"
+#include "analysis/memory_compare.h"
+#include "bit_field.h"
 #include "process.h"
 #include "utils.h"
-#include "bit_field.h"
-#include "analysis/memory_compare.h"
-#include "analysis/dump.h"
-#include "analysis/decompose_analyzer.h"
-#include "analysis/inefficient_analyzer.h"
 
-namespace MemScope {
+namespace MemScope
+{
 
 void Command::Exec() const
 {
     LOG_INFO("Msmemscope starts executing commands");
-    
-    if (userCommand_.config.enableCompare) {
+
+    if (userCommand_.config.enableCompare)
+    {
         MemoryCompare::GetInstance().RunComparison(userCommand_.inputPaths);
         return;
     }
@@ -43,4 +45,4 @@ void Command::Exec() const
     return;
 }
 
-}
+}  // namespace MemScope

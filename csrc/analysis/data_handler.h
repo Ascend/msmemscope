@@ -18,57 +18,61 @@
 #ifndef DATA_HANDLER_H
 #define DATA_HANDLER_H
 
-#include <string>
-#include <vector>
-#include <memory>
 #include <cstdio>
+#include <memory>
 #include <mutex>
+#include <string>
 #include <unordered_map>
-#include "sqlite3.h"
+#include <vector>
+
 #include "config_info.h"
-#include "record_info.h"
-#include "utils.h"
+#include "constant.h"
+#include "event.h"
 #include "file.h"
 #include "log.h"
-#include "constant.h"
 #include "python_trace_event.h"
-#include "event.h"
+#include "record_info.h"
+#include "sqlite3.h"
+#include "utils.h"
 
-namespace MemScope {
+namespace MemScope
+{
 
 // DumpHandler类主要用于将analyzer分析的数据dump至csv或者db文件
-class DataHandler {
-public:
+class DataHandler
+{
+   public:
     virtual ~DataHandler() = default;
     virtual bool Init() = 0;
     virtual bool Write(std::shared_ptr<DataBase> data) = 0;
     virtual void FflushFile() = 0;
 
-protected:
+   protected:
     explicit DataHandler(const Config& config);
     // 文件创建时固化的输出目录（仅用于 Init 创建文件，不持有 Config 副本）
     std::string outputDir_;
 
-private:
+   private:
     DataHandler(const DataHandler&) = delete;
     DataHandler& operator=(const DataHandler&) = delete;
     DataHandler(DataHandler&& other) = delete;
     DataHandler& operator=(DataHandler&& other) = delete;
 };
 
-class CsvHandler : public DataHandler {
-public:
+class CsvHandler : public DataHandler
+{
+   public:
     ~CsvHandler() override;
     explicit CsvHandler(const Config& config, DataType dataType, int32_t devId);
     bool Init() override;
     bool Write(std::shared_ptr<DataBase> data) override;
     void FflushFile() override;
 
-private:
+   private:
     void InitSetParm();
     bool WriteDumpRecord(std::shared_ptr<EventBase>& event);
     bool WriteTraceEvent(std::shared_ptr<TraceEvent>& event);
-    FILE *file_ = nullptr;
+    FILE* file_ = nullptr;
     std::string csvHeader_;
     std::string prefix_;
     DataType dataType_;
@@ -77,21 +81,22 @@ private:
     std::mutex traceFileMutex_;
 };
 
-class DbHandler : public DataHandler {
-public:
+class DbHandler : public DataHandler
+{
+   public:
     explicit DbHandler(const Config& config, DataType dataType, int32_t devId);
     ~DbHandler() override;
     bool Init() override;
     bool Write(std::shared_ptr<DataBase> data) override;
     void FflushFile() override;
 
-private:
+   private:
     void InitSetParm();
     bool WriteDumpRecord(std::shared_ptr<EventBase>& event);
-    bool WriteTraceEvent(std::shared_ptr<TraceEvent>& event, const std::string &tableName);
-    sqlite3 *dataFileDb_ = nullptr;
-    sqlite3_stmt *insertEventStmt_ = nullptr;
-    sqlite3_stmt *insertTraceStmt_ = nullptr;
+    bool WriteTraceEvent(std::shared_ptr<TraceEvent>& event, const std::string& tableName);
+    sqlite3* dataFileDb_ = nullptr;
+    sqlite3_stmt* insertEventStmt_ = nullptr;
+    sqlite3_stmt* insertTraceStmt_ = nullptr;
     std::vector<std::string> eventColumns_;
     std::vector<std::string> traceColumns_;
     std::string dbHeader_;
@@ -104,10 +109,10 @@ private:
 std::string Uint64ToHexString(uint64_t value);
 std::string BuildInsertStatement(const std::string& table, const std::vector<std::string>& columns);
 std::string BuildCreateStatement(const std::string& table,
-    const std::vector<std::pair<std::string, std::string>>& columns);
+                                 const std::vector<std::pair<std::string, std::string>>& columns);
 
 std::unique_ptr<DataHandler> MakeDataHandler(const Config& config, DataType data, int32_t devId);
 std::string FixJson(const std::string& input);
 std::vector<std::string> ParserHeader(const std::vector<std::pair<std::string, std::string>>& header);
-}
+}  // namespace MemScope
 #endif

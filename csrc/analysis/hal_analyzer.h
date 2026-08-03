@@ -19,6 +19,7 @@
 #define HAL_ANALYZER_H
 
 #include <unordered_map>
+#include <unordered_set>
 
 #include "comm_def.h"
 #include "config_info.h"
@@ -36,19 +37,28 @@ namespace MemScope
    3. 通过EventDispatcher订阅MALLOC/FREE事件（替代Process::SendEvent中的switch-case分发）
 */
 
-enum class AddrStatus : uint8_t
-{
-    FREE_ALREADY = 0U,
-    FREE_WAIT,
-};
-
-struct HalMemInfo
+// HAL内存块标识：同一进程在不同device上可能分配相同地址的独立内存块，key需为device与addr的组合
+struct HalAddrKey
 {
     int32_t deviceId;
-    AddrStatus addrStatus;
+    uint64_t addr;
+
+    HalAddrKey(int32_t device, uint64_t memAddr) : deviceId(device), addr(memAddr) {}
+    bool operator==(const HalAddrKey& other) const { return deviceId == other.deviceId && addr == other.addr; }
 };
 
-using MemoryRecordTable = std::unordered_map<uint64_t, HalMemInfo>;
+struct HalAddrKeyHash
+{
+    std::size_t operator()(const HalAddrKey& key) const
+    {
+        size_t deviceHash = std::hash<int32_t>()(key.deviceId);
+        size_t addrHash = std::hash<uint64_t>()(key.addr);
+        return deviceHash ^ (addrHash << 1);
+    }
+};
+
+// 表内仅保存未释放的存活块（malloc插入、free删除），key为(deviceId, addr)组合
+using MemoryRecordTable = std::unordered_set<HalAddrKey, HalAddrKeyHash>;
 
 class HalAnalyzer
 {
