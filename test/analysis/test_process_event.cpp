@@ -27,6 +27,7 @@
 #define private public
 #include "dump.h"
 #include "decompose_analyzer.h"
+#include "describe_trace.h"
 #include "data_handler.h"
 #include "process.h"
 #include "memory_state_manager.h"
@@ -101,6 +102,32 @@ static bool RemoveDir(const std::string& dirPath)
 }
  
 // 定义测试夹具
+// 清空当前线程 DescribeTrace 标签状态(线程局部单例跨用例残留隔离):
+// 系统标签栈可能同标签计数嵌套, 循环撤销至该级别为空
+static void ClearDescribeState()
+{
+    DescribeTrace& trace = DescribeTrace::GetInstance();
+    std::vector<std::string> labels = trace.GetDescribe();
+    for (uint8_t level = 0; level < static_cast<uint8_t>(OwnerLevel::OWNER_LEVEL_NUM); ++level)
+    {
+        if (labels[level].empty())
+        {
+            continue;
+        }
+        if (level <= static_cast<uint8_t>(OwnerLevel::DETAIL_2))
+        {
+            while (!trace.GetDescribe()[level].empty())
+            {
+                trace.EraseDescribe(static_cast<OwnerLevel>(level), trace.GetDescribe()[level]);
+            }
+        }
+        else
+        {
+            trace.EraseUserDescribe(labels[level]);
+        }
+    }
+}
+
 class TestProcess : public ::testing::Test {
 protected:
     void SetUp() override
@@ -110,6 +137,8 @@ protected:
         Utility::FileCreateManager::GetInstance("./testmsmemscope").SetProjectDir("./testmsmemscope");
         MemoryStateManager::GetInstance().poolsMap_.clear();
         MemoryState::count = 0;  // 重置allocation_id计数器，确保每个测试用例从1开始
+        // 清空当前线程 DescribeTrace 标签状态(线程局部单例跨用例残留隔离)
+        ClearDescribeState();
         // 初始化单例类的参数
         ResetSingleton();
 
@@ -417,9 +446,10 @@ private:
         event1->name = "N/A";
         event1->eventType = EventBaseType::MEMORY_OWNER;
         event1->eventSubType = EventSubType::DESCRIBE_OWNER;
-        event1->owner = "@memscope";
+        // 地址直标分级标签列表(用户描述标签 → USER_DEFINED_1 槽)
+        event1->ownerLabels = {{OwnerLevel::USER_DEFINED_1, "memscope"}};
         eventMap["DescribeOwnerEvent"] = event1;
- 
+
         auto event2 = std::make_shared<MemoryOwnerEvent>();
         event2->poolType = PoolType::PTA_CACHING;
         event2->id = 24;
@@ -430,8 +460,9 @@ private:
         event2->device = GD_INVALID_NUM;
         event2->name = "N/A";
         event2->eventType = EventBaseType::MEMORY_OWNER;
-        event2->eventSubType = EventSubType::TORCH_OPTIMIZER_STEP_OWNER;
-        event2->owner = "@model@gradient";
+        event2->eventSubType = EventSubType::DESCRIBE_OWNER;  // TORCH_OPTIMIZER_STEP_OWNER 已废弃, UpdateOwner 不区分 subtype
+        // 优化器标记(省略 COMPONENT=model, 与 optimizer_step_hook 上报一致) → DETAIL_1 槽
+        event2->ownerLabels = {{OwnerLevel::DETAIL_1, "gradient"}};
         eventMap["TorchStepOwnerEvent"] = event2;
     }
  
@@ -1110,7 +1141,7 @@ TEST_F(TestProcess, process_memory_owner_event)
     std::string result = "ID,Event,Event Type,Name,Timestamp(ns),Process Id,Thread Id,Device Id,Ptr,Attr"
 ",Call Stack(Python),Call Stack(C)\n"
 "3,MALLOC,PTA,N/A,3,123,1234,0,0x0000000000003039,\"{allocation_id:1,addr:0x0000000000003039,size:10,total:10,used:10,"
-"owner:PTA@model@gradient@memscope}\",,\n"
+"owner:PTA@gradient@ops@aten@memscope}\",,\n"
 "13,ACCESS,UNKNOWN,aten.add,13,123,1234,0,0x0000000000003039,\"{allocation_id:1,addr:0x0000000000003039,size:10,type:PTA,"
 "dtype:torch.float16,shape:torch.Size([1,5])}\",,\n"
 "54,FREE,PTA,N/A,54,123,1234,0,0x0000000000003039,\"{allocation_id:1,addr:0x0000000000003039,size:10,total:0,used:0}\",,\n";
@@ -1144,7 +1175,7 @@ TEST_F(TestProcess, process_memory_owner_event_in_torch_step)
     std::string result = "ID,Event,Event Type,Name,Timestamp(ns),Process Id,Thread Id,Device Id,Ptr,Attr"
 ",Call Stack(Python),Call Stack(C)\n"
 "3,MALLOC,PTA,N/A,3,123,1234,0,0x0000000000003039,\"{allocation_id:1,addr:0x0000000000003039,size:10,total:10,used:10,"
-"owner:PTA@model@gradient}\",,\n"
+"owner:PTA@gradient}\",,\n"
 "54,FREE,PTA,N/A,54,123,1234,0,0x0000000000003039,\"{allocation_id:1,addr:0x0000000000003039,size:10,total:0,used:0}\",,\n";
     std::string fileContent;
     Dump::GetInstance().handlerMap_[testdDevId].reset();

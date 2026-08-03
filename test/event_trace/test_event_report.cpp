@@ -77,7 +77,9 @@ TEST_F(EventReportTest, ReportHalMallocTestDEVICE)
 TEST_F(EventReportTest, ReportAddrInfoTest)
 {
     EventReport& instance = EventReport::Instance(MemScopeCommType::MEMORY_DEBUG);
-    EXPECT_TRUE(instance.ReportAddrInfo(EventSubType::DESCRIBE_OWNER, 12345, "owner"));
+    uint64_t testAddr = 0x12345678;
+    std::vector<std::pair<OwnerLevel, std::string>> labels = {{OwnerLevel::USER_DEFINED_1, "owner"}};
+    EXPECT_TRUE(instance.ReportAddrInfo(EventSubType::DESCRIBE_OWNER, testAddr, labels));
 }
 
 TEST_F(EventReportTest, ReportPyStepTest)
@@ -99,7 +101,7 @@ TEST_F(EventReportTest, ReportTorchNpuMallocTest)
     config.collectAllNpu = true;
     ConfigManager::Instance().SetConfig(config);
     CallStackString stack;
-    EXPECT_TRUE(instance.ReportMemPoolRecord(EventSubType::PTA_CACHING, memoryusage1, "", std::move(stack)));
+    EXPECT_TRUE(instance.ReportMemPoolRecord(EventSubType::PTA_CACHING, memoryusage1, std::move(stack)));
 }
 
 TEST_F(EventReportTest, ReportTorchNpuFreeTest)
@@ -115,7 +117,7 @@ TEST_F(EventReportTest, ReportTorchNpuFreeTest)
     config.collectAllNpu = true;
     ConfigManager::Instance().SetConfig(config);
     CallStackString stack;
-    EXPECT_TRUE(instance.ReportMemPoolRecord(EventSubType::PTA_CACHING, memoryusage1, "", std::move(stack)));
+    EXPECT_TRUE(instance.ReportMemPoolRecord(EventSubType::PTA_CACHING, memoryusage1, std::move(stack)));
 }
 
 TEST_F(EventReportTest, ReportTorchNpuConditionTest)
@@ -130,12 +132,12 @@ TEST_F(EventReportTest, ReportTorchNpuConditionTest)
     CallStackString stack;
 
     EventTraceManager::Instance().SetTraceStatus(EventTraceStatus::NOT_IN_TRACING);
-    EXPECT_TRUE(instance.ReportMemPoolRecord(EventSubType::PTA_CACHING, memoryusage1, "", std::move(stack)));
+    EXPECT_TRUE(instance.ReportMemPoolRecord(EventSubType::PTA_CACHING, memoryusage1, std::move(stack)));
     EventTraceManager::Instance().SetTraceStatus(EventTraceStatus::IN_TRACING);
     Config config = MemScope::GetConfig();
     config.collectAllNpu = true;
     ConfigManager::Instance().SetConfig(config);
-    EXPECT_TRUE(instance.ReportMemPoolRecord(EventSubType::PTA_CACHING, memoryusage1, "", std::move(stack)));
+    EXPECT_TRUE(instance.ReportMemPoolRecord(EventSubType::PTA_CACHING, memoryusage1, std::move(stack)));
 }
 
 TEST_F(EventReportTest, ReportHalMallocTestHost)
@@ -527,7 +529,7 @@ TEST_F(EventReportTest, ReportTestWithNoReceiveServerInfo)
 
     MemoryUsage info;
     CallStackString stack;
-    EXPECT_TRUE(instance.ReportMemPoolRecord(EventSubType::PTA_CACHING, info, "", std::move(stack)));
+    EXPECT_TRUE(instance.ReportMemPoolRecord(EventSubType::PTA_CACHING, info, std::move(stack)));
     std::string msg("mark");
     EXPECT_TRUE(instance.ReportMark(MarkType::MARK_A, msg, 0, 0));
 }

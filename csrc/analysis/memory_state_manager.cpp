@@ -26,6 +26,39 @@
 namespace MemScope
 {
 
+void OwnerLabelManager::AddLabel(OwnerLevel level, std::string label)
+{
+    if (level >= OwnerLevel::OWNER_LEVEL_NUM)
+    {
+        return;
+    }
+    labelList[static_cast<size_t>(level)] = std::move(label);
+}
+
+std::string OwnerLabelManager::GetLabel(OwnerLevel level) const
+{
+    if (level >= OwnerLevel::OWNER_LEVEL_NUM)
+    {
+        return "";
+    }
+    return labelList[static_cast<size_t>(level)];
+}
+
+std::string OwnerLabelManager::GetOwnerStr() const
+{
+    std::string result;
+    for (uint8_t level = 0; level < static_cast<uint8_t>(OwnerLevel::OWNER_LEVEL_NUM); ++level)
+    {
+        const auto& label = labelList[level];
+        if (label.empty())
+        {
+            continue;
+        }
+        result += result.empty() ? label : "@" + label;
+    }
+    return result;
+}
+
 uint64_t MemoryState::count = 0;
 std::mutex MemoryState::mtx;
 

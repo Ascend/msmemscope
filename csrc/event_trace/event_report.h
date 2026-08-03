@@ -24,6 +24,7 @@
 #include <string>
 #include <thread>
 #include <unordered_set>
+#include <utility>
 #include <vector>
 
 #include "ascend_hal.h"
@@ -78,8 +79,7 @@ class EventReport
     bool ReportAclItf(RecordSubType subtype);
     bool ReportTraceStatus(const EventTraceStatus status);
     bool ReportMark(MarkType type, std::string& msg, uint32_t streamId, uint64_t rangeId);
-    bool ReportMemPoolRecord(EventSubType type, const MemoryUsage& info, const std::string& owner,
-                             CallStackString&& stack);
+    bool ReportMemPoolRecord(EventSubType type, const MemoryUsage& info, CallStackString&& stack);
     bool ReportAtbOpExecute(const char* name, size_t nameSize, const char* attr, size_t attrSize, RecordSubType type);
     bool ReportAtbKernel(const char* name, size_t nameSize, const char* attr, size_t attrSize, RecordSubType type);
     bool ReportAtbAccessMemory(const char* name, size_t nameSize, const char* attr, size_t attrSize, uint64_t addr,
@@ -87,7 +87,8 @@ class EventReport
     bool ReportAtenLaunch(const std::string& name, bool isStart, std::string&& pystack);
     bool ReportAtenAccess(const std::string& name, const std::string& attr, AccessType type, uint64_t addr,
                           uint64_t size, std::string&& pystack);
-    bool ReportAddrInfo(EventSubType type, uint64_t addr, std::string owner);
+    bool ReportAddrInfo(EventSubType type, uint64_t addr,
+                        const std::vector<std::pair<OwnerLevel, std::string>>& labels);
     bool ReportPyStepRecord();
     bool ReportMemorySnapshot(const MemorySnapshotInfo& memory_info, CallStackString&& stack);
     void ReportMemorySnapshotOnOOM(const CallStackString& stack = CallStackString());

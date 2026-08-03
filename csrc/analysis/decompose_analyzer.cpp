@@ -18,8 +18,10 @@
 #include "decompose_analyzer.h"
 
 #include <string>
+#include <vector>
 
 #include "constant.h"
+#include "describe_trace.h"
 #include "event_dispatcher.h"
 
 namespace MemScope
@@ -30,9 +32,9 @@ const std::string DecomposeAnalyzer::ptaStr = "PTA";
 const std::string DecomposeAnalyzer::ptaWorkspaceStr = "PTA_WORKSPACE";
 const std::string DecomposeAnalyzer::atbStr = "ATB";
 const std::string DecomposeAnalyzer::mindsporeStr = "MINDSPORE";
-const size_t DecomposeAnalyzer::ptaStrLen = DecomposeAnalyzer::ptaStr.length();
 
-const std::string DecomposeAnalyzer::atenStr = "@ops@aten";
+// ATEN 访问标记: 存放于细化分类2(DETAIL_2), 不带前导@(由GetOwnerStr按级别拼接)
+const std::string DecomposeAnalyzer::atenStr = "ops@aten";
 
 DecomposeAnalyzer& DecomposeAnalyzer::GetInstance()
 {
@@ -81,6 +83,8 @@ void DecomposeAnalyzer::EventHandle(std::shared_ptr<EventBase>& event, MemorySta
 
 void DecomposeAnalyzer::InitOwner(std::shared_ptr<MemoryEvent>& event, MemoryState* state)
 {
+    // 框架级标签: 由分配器来源(事件subtype)填充, 不来自describe标签
+    std::string framework;
     switch (event->eventSubType)
     {
         case EventSubType::HAL:
@@ -88,41 +92,52 @@ void DecomposeAnalyzer::InitOwner(std::shared_ptr<MemoryEvent>& event, MemorySta
             auto it = MODULE_HASH_TABLE.find(event->moduleId);
             if (it != MODULE_HASH_TABLE.end())
             {
-                state->memscopeDefinedOwner = cannStr + "@" + it->second;
+                framework = cannStr + "@" + it->second;
             }
             else
             {
-                state->memscopeDefinedOwner = cannStr + "@UNKNOWN";
+                framework = cannStr + "@UNKNOWN";
             }
-            state->userDefinedOwner = event->describeOwner;
             break;
         }
         case EventSubType::PTA_CACHING:
-        {
-            state->memscopeDefinedOwner = ptaStr;
-            state->userDefinedOwner = event->describeOwner;
+            framework = ptaStr;
             break;
-        }
         case EventSubType::PTA_WORKSPACE:
-        {
-            state->memscopeDefinedOwner = ptaWorkspaceStr;
-            state->userDefinedOwner = event->describeOwner;
+            framework = ptaWorkspaceStr;
             break;
-        }
         case EventSubType::MINDSPORE:
-        {
-            state->memscopeDefinedOwner = mindsporeStr;
-            state->userDefinedOwner = event->describeOwner;
+            framework = mindsporeStr;
             break;
-        }
         case EventSubType::ATB:
-        {
-            state->memscopeDefinedOwner = atbStr;
-            state->userDefinedOwner = event->describeOwner;
+            framework = atbStr;
             break;
-        }
         default:
             break;
+    }
+    if (!framework.empty())
+    {
+        state->owner.AddLabel(OwnerLevel::FRAMEWORK, framework);
+    }
+
+    // 其余级别: 分析时直接从DescribeTrace读取(采集与分析同线程同步路由,
+    // 线程局部标签栈即为申请时刻的状态, 无需随事件携带; FRAMEWORK槽由分配器来源占用)
+    std::vector<std::string> labels = DescribeTrace::GetInstance().GetDescribe();
+    for (uint8_t level = static_cast<uint8_t>(OwnerLevel::COMPONENT);
+         level <= static_cast<uint8_t>(OwnerLevel::DETAIL_2); ++level)
+    {
+        if (!labels[level].empty())
+        {
+            state->owner.AddLabel(static_cast<OwnerLevel>(level), labels[level]);
+        }
+    }
+    for (uint8_t i = 0; i < 3; ++i)
+    {
+        uint8_t level = static_cast<uint8_t>(OwnerLevel::USER_DEFINED_1) + i;
+        if (!labels[level].empty())
+        {
+            state->owner.AddLabel(static_cast<OwnerLevel>(level), labels[level]);
+        }
     }
 }
 
@@ -134,40 +149,23 @@ void DecomposeAnalyzer::UpdateOwnerByAtenAccess(std::shared_ptr<MemoryEvent>& ev
         return;
     }
 
-    if (state->memscopeDefinedOwner.rfind(ptaStr, 0) != 0)
+    // ATEN 访问为弱标记: 细化分类2(DETAIL_2)为空时才写入, 不覆盖已有细化标签
+    if (state->owner.GetLabel(OwnerLevel::DETAIL_2).empty())
     {
-        return;
-    }
-
-    if (state->memscopeDefinedOwner.length() == ptaStrLen)
-    {
-        state->memscopeDefinedOwner += atenStr;
+        state->owner.AddLabel(OwnerLevel::DETAIL_2, atenStr);
     }
 }
 
 void DecomposeAnalyzer::UpdateOwner(std::shared_ptr<MemoryOwnerEvent>& event, MemoryState* state)
 {
-    if (event->eventSubType == EventSubType::DESCRIBE_OWNER && !(event->owner).empty())
+    // 地址直标: 逐级更新块owner, 同级别重复时以地址标签为准(AddLabel覆盖语义)
+    for (const auto& item : event->ownerLabels)
     {
-        state->userDefinedOwner += event->owner;
-    }
-    else if (event->eventSubType == EventSubType::TORCH_OPTIMIZER_STEP_OWNER && !(event->owner).empty())
-    {
-        if (state->memscopeDefinedOwner.rfind(ptaStr, 0) != 0)
+        if (item.second.empty())
         {
-            return;
+            continue;
         }
-
-        if (state->memscopeDefinedOwner.length() == ptaStrLen)
-        {
-            state->memscopeDefinedOwner += event->owner;
-        }
-        else if (event->owner != atenStr)
-        {
-            // 部分内存有可能先作为算子操作的内容，然后被识别为其他类型，如weight，
-            // 则优先用weight覆盖aten，而aten不能覆盖其他类型
-            state->memscopeDefinedOwner = ptaStr + event->owner;
-        }
+        state->owner.AddLabel(item.first, item.second);
     }
 }
 

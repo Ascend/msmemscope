@@ -22,6 +22,8 @@
 #include <cstdint>
 #include <string>
 #include <tuple>
+#include <utility>
+#include <vector>
 
 #include "data.h"
 #include "log.h"
@@ -32,6 +34,22 @@
 
 namespace MemScope
 {
+
+// 内存块 owner 标签级别: 分级模型(框架@组件@流程@细化), 各级允许省略/多个(按序拼接)
+enum class OwnerLevel : uint8_t
+{
+    FRAMEWORK = 0,  // 框架, 如 CANN、PTA 等(由分配器来源填充)
+    COMPONENT,      // 组件, 如 FSDP、VLLM 等
+    PROCESS,        // 流程, 如 forward、backward、warmup 等
+    DETAIL_1,       // 细化分类1, 如 weight、gradient 等
+    DETAIL_2,       // 细化分类2, 用于 DETAIL_1 补充描述(如 ATEN 访问)
+
+    USER_DEFINED_1,  // 用户标签(describe.py 用户接口), 栈序映射, 下同
+    USER_DEFINED_2,
+    USER_DEFINED_3,
+
+    OWNER_LEVEL_NUM
+};
 
 enum class EventBaseType : uint8_t
 {
@@ -67,7 +85,7 @@ enum class EventSubType : uint8_t
     ATEN_READ_OR_WRITE,
 
     DESCRIBE_OWNER,
-    TORCH_OPTIMIZER_STEP_OWNER,
+    TORCH_OPTIMIZER_STEP_OWNER,  // 已废弃: report_tensor 路径移除, 与 DESCRIBE_OWNER 统一处理(保留枚举值避免数值移位)
 
     ATB_START,
     ATB_END,
@@ -139,7 +157,6 @@ class MemoryEvent : public EventBase
     MemOpSpace space;
     int32_t moduleId = -1;
     MemPageType pageType = MemPageType::MEM_MAX_PAGE_TYPE;
-    std::string describeOwner;
     uint64_t kernelIndex;
     bool isShadowEvent = false;  // Shadow event created during NOT_IN_TRACING mode
 
@@ -149,12 +166,12 @@ class MemoryEvent : public EventBase
 class MemoryOwnerEvent : public EventBase
 {
    public:
-    std::string owner;
+    std::vector<std::pair<OwnerLevel, std::string>> ownerLabels;  // 地址直标分级标签列表
 
     MemoryOwnerEvent()
     {
         eventType = EventBaseType::MEMORY_OWNER;
-        poolType = PoolType::PTA_CACHING;
+        poolType = PoolType::PTA_CACHING;  // 地址直标仅作用于 PTA 块, 不处理 HAL 等池
     }
 };
 

@@ -64,6 +64,24 @@ enum class ShadowState : uint8_t
     SHADOW_FREED,     // 正常申请/已转正+影子期释放
 };
 
+// OwnerLevel 枚举定义于 event.h(分级标签模型), 此处复用
+
+class OwnerLabelManager
+{
+   public:
+    explicit OwnerLabelManager() : labelList(static_cast<size_t>(OwnerLevel::OWNER_LEVEL_NUM)) {}
+
+    // 添加标签，若已有则会覆盖(地址直标优先语义)
+    void AddLabel(OwnerLevel level, std::string label);
+    // 获取指定级别标签(不存在返回空串)
+    std::string GetLabel(OwnerLevel level) const;
+    // 获取描述字符串，dump时用，按OwnerLevel拼接，'@'分隔，空白值直接跳过
+    std::string GetOwnerStr() const;
+
+   private:
+    std::vector<std::string> labelList;
+};
+
 class MemoryState : public StateBase
 {
    public:
@@ -72,8 +90,7 @@ class MemoryState : public StateBase
     uint64_t size = 0;
     uint64_t allocationId = 0;
     ShadowState shadowState = ShadowState::NORMAL;
-    std::string memscopeDefinedOwner;
-    std::string userDefinedOwner;
+    OwnerLabelManager owner;
     std::string inefficientType;
 
     explicit MemoryState() {}
@@ -82,8 +99,6 @@ class MemoryState : public StateBase
     {
         events.push_back(event);
         size = static_cast<uint64_t>(event->size);
-        memscopeDefinedOwner = "";
-        userDefinedOwner = event->describeOwner;
         inefficientType = "";
         std::lock_guard<std::mutex> lock(mtx);
         allocationId = ++count;

@@ -34,7 +34,6 @@ TEST_F(DumpTest, EventHandle_Interface)
     auto memoryEvent = std::make_shared<MemoryEvent>();
     memoryEvent->eventType = EventBaseType::MALLOC;
     memoryEvent->eventSubType = EventSubType::HAL;
-    memoryEvent->describeOwner = "hal";
 
     std::shared_ptr<EventBase> eventBase = memoryEvent;
     MemoryState* state = new MemoryState();
@@ -47,7 +46,6 @@ TEST_F(DumpTest, WritePublicEventToFile_Interface)
     auto memoryEvent = std::make_shared<MemoryEvent>();
     memoryEvent->eventType = EventBaseType::MALLOC;
     memoryEvent->eventSubType = EventSubType::HAL;
-    memoryEvent->describeOwner = "hal";
 
     std::shared_ptr<EventBase> eventBase = memoryEvent;
     MemoryState* state = new MemoryState();
@@ -62,7 +60,6 @@ TEST_F(DumpTest, FflushEventToFile_Interface)
     auto memoryEvent = std::make_shared<MemoryEvent>();
     memoryEvent->eventType = EventBaseType::MALLOC;
     memoryEvent->eventSubType = EventSubType::HAL;
-    memoryEvent->describeOwner = "hal";
 
     std::shared_ptr<EventBase> eventBase = memoryEvent;
     MemoryState* state = new MemoryState();
