@@ -202,7 +202,6 @@ void MemoryStateManager::PromoteShadowStates(const PromoteCallback& dumpFunc)
 
     for (auto& poolPair : poolsMap_)
     {
-        PoolType poolType = poolPair.first;
         auto& statesMap = poolPair.second.statesMap;
 
         // 收集需要处理的key，避免在遍历中修改map
@@ -259,7 +258,7 @@ MemoryStateManager::~MemoryStateManager()
     for (auto& state : GetAllStateKeys())
     {
         std::shared_ptr<EventBase> event =
-            std::make_shared<CleanUpEvent>(state.first, state.second.pid, state.second.addr);
+            std::make_shared<CleanUpEvent>(EventSubType::PROC_EXIT, state.first, state.second.pid, state.second.addr);
         EventHandler(event);
     }
 }

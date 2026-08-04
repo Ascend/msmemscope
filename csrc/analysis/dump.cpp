@@ -26,17 +26,16 @@
 namespace MemScope
 {
 
-Dump& Dump::GetInstance(Config config)
+Dump& Dump::GetInstance()
 {
-    static Dump dump{config};
+    static Dump dump;
     return dump;
 }
 
-Dump::Dump(Config config)
+Dump::Dump()
 {
     // 确保 FileWriteManager 先于 Dump 构造，从而在 Dump 析构时 FileWriteManager 仍然存活
     Utility::FileWriteManager::GetInstance();
-    config_ = config;
     auto func = std::bind(&Dump::EventHandle, this, std::placeholders::_1, std::placeholders::_2);
     std::vector<EventBaseType> eventList{EventBaseType::FREE,          EventBaseType::MSTX,   EventBaseType::OP_LAUNCH,
                                          EventBaseType::KERNEL_LAUNCH, EventBaseType::SYSTEM, EventBaseType::SNAPSHOT,
@@ -221,23 +220,23 @@ void Dump::DumpSystemEvent(std::shared_ptr<SystemEvent>& event)
     WriteToFile(event);
 }
 
-bool Dump::ShouldDumpEvent(EventBaseType type) const
+bool Dump::ShouldDumpEvent(EventBaseType type, const Config& config) const
 {
     // 对于无法映射到用户可配 EventType 的事件类型（MSTX, SYSTEM, SNAPSHOT, CLEAN_UP, MEMORY_OWNER），始终落盘
     switch (type)
     {
         case EventBaseType::MALLOC:
-            return BitField<decltype(config_.dumpEventType)>(config_.dumpEventType)
+            return BitField<decltype(config.dumpEventType)>(config.dumpEventType)
                 .checkBit(static_cast<size_t>(EventType::ALLOC_EVENT));
         case EventBaseType::FREE:
-            return BitField<decltype(config_.dumpEventType)>(config_.dumpEventType)
+            return BitField<decltype(config.dumpEventType)>(config.dumpEventType)
                 .checkBit(static_cast<size_t>(EventType::FREE_EVENT));
         case EventBaseType::OP_LAUNCH:
         case EventBaseType::KERNEL_LAUNCH:
-            return BitField<decltype(config_.dumpEventType)>(config_.dumpEventType)
+            return BitField<decltype(config.dumpEventType)>(config.dumpEventType)
                 .checkBit(static_cast<size_t>(EventType::LAUNCH_EVENT));
         case EventBaseType::ACCESS:
-            return BitField<decltype(config_.dumpEventType)>(config_.dumpEventType)
+            return BitField<decltype(config.dumpEventType)>(config.dumpEventType)
                 .checkBit(static_cast<size_t>(EventType::ACCESS_EVENT));
         default:
             // MSTX, SYSTEM, SNAPSHOT, CLEAN_UP, MEMORY_OWNER 等不可控事件始终落盘
@@ -247,8 +246,10 @@ bool Dump::ShouldDumpEvent(EventBaseType type) const
 
 void Dump::WriteToFile(const std::shared_ptr<EventBase>& event)
 {
+    // 动态读取当前配置（每个事件只取一次锁），保证落盘过滤与运行中修改的配置保持一致
+    const Config& config = GetConfig();
     // 落盘前校验事件是否在用户配置的 dumpEventType 范围内
-    if (!ShouldDumpEvent(event->eventType))
+    if (!ShouldDumpEvent(event->eventType, config))
     {
         return;
     }
@@ -260,10 +261,10 @@ void Dump::WriteToFile(const std::shared_ptr<EventBase>& event)
     auto it = handlerMap_.find(event->device);
     if (it == handlerMap_.end())
     {
-        handlerMap_.insert({event->device, MakeDataHandler(config_, DataType::MEMORY_EVENT, event->device)});
+        handlerMap_.insert({event->device, MakeDataHandler(config, DataType::MEMORY_EVENT, event->device)});
     }
     // 如果是db文件，需要获取设备级锁;csv暂不需要
-    if (config_.dataFormat == static_cast<uint8_t>(DataFormat::DB))
+    if (config.dataFormat == static_cast<uint8_t>(DataFormat::DB))
     {
         auto& lock = Utility::FileWriteManager::GetInstance().GetLock(event->device);
         std::lock_guard<std::mutex> lock_guard(lock);

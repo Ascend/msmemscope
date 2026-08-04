@@ -16,63 +16,71 @@
  */
 
 #include "memory_compare.h"
+
 #include <fstream>
 #include <sstream>
-#include "file.h"
-#include "utils.h"
+
+#include "bit_field.h"
 #include "config_info.h"
+#include "event_trace/trace_manager/event_trace_manager.h"
+#include "file.h"
 #include "record_info.h"
 #include "ustring.h"
-#include "bit_field.h"
+#include "utils.h"
 
-namespace MemScope {
-
-MemoryCompare& MemoryCompare::GetInstance(Config config)
+namespace MemScope
 {
-    static MemoryCompare instance(config);
+
+MemoryCompare &MemoryCompare::GetInstance()
+{
+    static MemoryCompare instance;
     return instance;
 }
 
-MemoryCompare::MemoryCompare(Config config)
-{
-    config_ = config;
-}
+MemoryCompare::MemoryCompare() = default;
 
 // 用此方式依次读取CSV的每一行，不会被单格数据的逗号干扰
-std::string MemoryCompare::ReadQuotedField(std::stringstream& ss)
+std::string MemoryCompare::ReadQuotedField(std::stringstream &ss)
 {
     std::string field;
-    if (ss.peek() == '"') {  // 检查是否以引号开头，如果是就跳过（因为其中可能存在逗号）
+    if (ss.peek() == '"')
+    {  // 检查是否以引号开头，如果是就跳过（因为其中可能存在逗号）
         ss.get();
         std::getline(ss, field, '"');
 
         // 处理转义引号
         size_t pos = 0;
-        while ((pos = field.find("\"\"", pos)) != std::string::npos) {
+        while ((pos = field.find("\"\"", pos)) != std::string::npos)
+        {
             field.replace(pos, 2, "\"");
             pos += 1;
         }
         // 跳过可能的分隔符（逗号）
-        if (ss.peek() == ',') {
+        if (ss.peek() == ',')
+        {
             ss.get();
         }
-    } else {
+    }
+    else
+    {
         std::getline(ss, field, ',');  // 普通字段
     }
     return field;
 }
 
 bool Compare(const std::unordered_map<std::string, std::string> &a,
-    const std::unordered_map<std::string, std::string> &b)
+             const std::unordered_map<std::string, std::string> &b)
 {
     uint64_t compareA;
     uint64_t compareB;
 
-    if (!Utility::StrToUint64(compareA, a.at("Timestamp(ns)"))) {
+    if (!Utility::StrToUint64(compareA, a.at("Timestamp(ns)")))
+    {
         LOG_WARN("StrToUint64 failed, the str is %s.", a.at("Timestamp(ns)").c_str());
         compareA = UINT64_MAX;
     }
-    if (!Utility::StrToUint64(compareB, b.at("Timestamp(ns)"))) {
+    if (!Utility::StrToUint64(compareB, b.at("Timestamp(ns)")))
+    {
         LOG_WARN("StrToUint64 failed, the str is %s.", b.at("Timestamp(ns)").c_str());
         compareB = UINT64_MAX;
     }
@@ -84,22 +92,27 @@ void MemoryCompare::ReadFile(std::string &path, std::unordered_map<DEVICEID, ORI
 {
     std::vector<std::string> fileName;
     Utility::Split(path, std::back_inserter(fileName), ".");
-    if (fileName.size() > 0 && fileName.back() == "csv") {
+    if (fileName.size() > 0 && fileName.back() == "csv")
+    {
         LOG_INFO("Read csv file: %s.", path.c_str());
         ReadCsvFile(path, data);
-        for (const auto& pair : data) {
+        for (const auto &pair : data)
+        {
             uint64_t deviceId = pair.first;
             // 需要根据timestamp排序保证顺序
             sort(data[deviceId].begin(), data[deviceId].end(), Compare);
         }
-    } else {
+    }
+    else
+    {
         LOG_ERROR("The file %s is an unsupported format.", path.c_str());
     }
 }
 
-bool MemoryCompare::CheckCsvHeader(std::string &path, std::ifstream& file, std::vector<std::string> &headerData)
+bool MemoryCompare::CheckCsvHeader(std::string &path, std::ifstream &file, std::vector<std::string> &headerData)
 {
-    if (!file.is_open()) {
+    if (!file.is_open())
+    {
         LOG_ERROR("The path: %s open failed!", path.c_str());
         return false;
     }
@@ -107,7 +120,8 @@ bool MemoryCompare::CheckCsvHeader(std::string &path, std::ifstream& file, std::
     getline(file, line);
 
     std::string normalizedLine = NormalizeString(line);
-    if (normalizedLine + "\n" != std::string(MEMSCOPE_HEADERS)) {
+    if (normalizedLine + "\n" != std::string(MEMSCOPE_HEADERS))
+    {
         return false;
     }
 
@@ -116,17 +130,12 @@ bool MemoryCompare::CheckCsvHeader(std::string &path, std::ifstream& file, std::
     return true;
 }
 
-
-std::string MemoryCompare::NormalizeString(const std::string& line)
+std::string MemoryCompare::NormalizeString(const std::string &line)
 {
     std::string result = line;
     // 清除header的多余\r或者\n
-    result.erase(
-        std::remove_if(result.begin(), result.end(), [](unsigned char c) {
-            return c == '\r' || c == '\n';
-        }),
-        result.end()
-    );
+    result.erase(std::remove_if(result.begin(), result.end(), [](unsigned char c) { return c == '\r' || c == '\n'; }),
+                 result.end());
 
     // 清除header多余前导和后缀空格
     auto start = result.begin();
@@ -138,10 +147,10 @@ std::string MemoryCompare::NormalizeString(const std::string& line)
     return std::string(start, end);
 }
 
-
-bool IsSupportedFramework(const std::string& name)
+bool IsSupportedFramework(const std::string &name)
 {
-    static const std::unordered_set<std::string> supportedFrameworks = {"PTA", "MINDSPORE"}; // 暂不支持PTA_WORKSPACE的比对
+    static const std::unordered_set<std::string> supportedFrameworks = {"PTA",
+                                                                        "MINDSPORE"};  // 暂不支持PTA_WORKSPACE的比对
     return supportedFrameworks.find(name) != supportedFrameworks.end();
 }
 
@@ -149,46 +158,56 @@ void MemoryCompare::ReadCsvFile(std::string &path, std::unordered_map<DEVICEID, 
 {
     std::ifstream csvFile(path, std::ios::in);
     std::vector<std::string> headerData;
-    if (!CheckCsvHeader(path, csvFile, headerData)) {
+    if (!CheckCsvHeader(path, csvFile, headerData))
+    {
         LOG_ERROR("The headers of %s file is illegal!", path.c_str());
-        return ;
+        return;
     }
     std::string line;
     uint64_t countLine = 1;
-    while (getline(csvFile, line)) {
+    while (getline(csvFile, line))
+    {
         ++countLine;
         std::vector<std::string> lineData;
         std::stringstream ss(line);
-        while (ss.good()) {
+        while (ss.good())
+        {
             std::string singleValue = ReadQuotedField(ss);
             Utility::ToSafeString(singleValue);
             lineData.emplace_back(singleValue);
         }
-        if (lineData.size() != headerData.size()) {
+        if (lineData.size() != headerData.size())
+        {
             LOG_ERROR("The file %s on line %d is invalid!", path.c_str(), countLine);
             data.clear();
-            return ;
+            return;
         }
         std::unordered_map<std::string, std::string> tempLine;
-        for (size_t index = 0; index < headerData.size(); ++index) {
+        for (size_t index = 0; index < headerData.size(); ++index)
+        {
             tempLine.insert({headerData[index], lineData[index]});
         }
-        if (IsSupportedFramework(tempLine["Event Type"])) {
-            if (framework_.empty()) {
+        if (IsSupportedFramework(tempLine["Event Type"]))
+        {
+            if (framework_.empty())
+            {
                 framework_ = tempLine["Event Type"];
             }
-            if (framework_ != tempLine["Event Type"]) {
+            if (framework_ != tempLine["Event Type"])
+            {
                 LOG_ERROR("The content of the file %s is invalid.", path.c_str());
                 data.clear();
-                return ;
+                return;
             }
         }
         uint64_t deviceId;
         if (tempLine["Device Id"] == std::to_string(GD_INVALID_NUM) || tempLine["Device Id"] == "host" ||
-            tempLine["Device Id"] == "N/A") {
+            tempLine["Device Id"] == "N/A")
+        {
             continue;
         }
-        if (!Utility::StrToUint64(deviceId, tempLine["Device Id"])) {
+        if (!Utility::StrToUint64(deviceId, tempLine["Device Id"]))
+        {
             LOG_WARN("StrToUint64 failed, the str is %s.", tempLine["Device Id"].c_str());
             continue;
         }
@@ -201,25 +220,33 @@ void MemoryCompare::ReadNameIndexData(const ORIGINAL_FILE_DATA &originData, NAME
 {
     LOG_DEBUG("Read kernelLaunch/op data.");
     std::unordered_set<std::string> eventMap;
-    BitField<decltype(config_.levelType)> levelType(config_.levelType);
-    if (levelType.checkBit(static_cast<size_t>(LevelType::LEVEL_OP))) {
-        if (framework_ == "MINDSPORE") {
+    // 动态读取当前配置，保证分析级别与运行中修改的配置保持一致
+    const Config &config = GetConfig();
+    BitField<decltype(config.levelType)> levelType(config.levelType);
+    if (levelType.checkBit(static_cast<size_t>(LevelType::LEVEL_OP)))
+    {
+        if (framework_ == "MINDSPORE")
+        {
             LOG_ERROR("Comparison of the MindSpore framework under the op level is not supported.");
-            return ;
+            return;
         }
         eventMap.insert("ATB_END");
         eventMap.insert("ATEN_END");
     }
-    if (levelType.checkBit(static_cast<size_t>(LevelType::LEVEL_KERNEL))) {
+    if (levelType.checkBit(static_cast<size_t>(LevelType::LEVEL_KERNEL)))
+    {
         eventMap.insert("KERNEL_LAUNCH");
     }
-    for (size_t index = 0; index < originData.size(); ++index) {
+    for (size_t index = 0; index < originData.size(); ++index)
+    {
         auto lineData = originData[index];
-        if (eventMap.find(lineData["Event Type"]) != eventMap.end()) {
-            if (Utility::CheckStrIsStartsWithInvalidChar(lineData["Name"].c_str())) {
+        if (eventMap.find(lineData["Event Type"]) != eventMap.end())
+        {
+            if (Utility::CheckStrIsStartsWithInvalidChar(lineData["Name"].c_str()))
+            {
                 LOG_ERROR("Name %s is invalid!", lineData["Name"].c_str());
                 dataList.clear();
-                return ;
+                return;
             }
             dataList.emplace_back(std::make_tuple(lineData["Name"], lineData["Event"], index));
         }
@@ -230,26 +257,31 @@ void MemoryCompare::GetMemoryUsage(size_t index, const ORIGINAL_FILE_DATA &data,
 {
     LOG_DEBUG("Get memorypool usage.");
     std::unordered_map<std::string, std::string> frameworkMemory;
-    for (size_t i = index; i < data.size(); ++i) {
+    for (size_t i = index; i < data.size(); ++i)
+    {
         auto lineData = data[i];
-        if (lineData["Event Type"] == framework_) {
+        if (lineData["Event Type"] == framework_)
+        {
             frameworkMemory = lineData;
             break;
         }
     }
 
-    if (frameworkMemory.empty()) {
+    if (frameworkMemory.empty())
+    {
         memDiff = 0;
-        return ;
+        return;
     }
 
     std::string attrKey = "size";
     std::string attrValue = Utility::ExtractAttrValueByKey(frameworkMemory["Attr"], attrKey);
-    if (attrValue.empty()) {
+    if (attrValue.empty())
+    {
         LOG_WARN("Attr has no \"size\" value");
-        return ;
+        return;
     }
-    if (!Utility::StrToInt64(memDiff, attrValue)) {
+    if (!Utility::StrToInt64(memDiff, attrValue))
+    {
         LOG_WARN("Alloc Size to int64_t failed!");
     }
 }
@@ -257,24 +289,30 @@ void MemoryCompare::GetMemoryUsage(size_t index, const ORIGINAL_FILE_DATA &data,
 bool MemoryCompare::WriteCompareDataToCsv()
 {
     LOG_DEBUG("Write compare result data to csv file.");
-    if (result_.empty()) {
+    if (result_.empty())
+    {
         LOG_WARN("Empty comparison result data!");
         return false;
     }
 
-    if (!Utility::FileCreateManager::GetInstance(config_.outputDir).CreateCsvFile(&compareFile_,
-        GD_INVALID_NUM, MEMORY_COMPARE_FILE_PREFIX, COMPARE_DIR, std::string(STEP_INTER_HEADERS))) {
+    if (!Utility::FileCreateManager::GetInstance(GetConfig().outputDir)
+             .CreateCsvFile(&compareFile_, GD_INVALID_NUM, MEMORY_COMPARE_FILE_PREFIX, COMPARE_DIR,
+                            std::string(STEP_INTER_HEADERS)))
+    {
         LOG_ERROR("Create comparison csv file failed!");
         return false;
     }
 
-    for (const auto& pair : result_) {
+    for (const auto &pair : result_)
+    {
         uint64_t deviceId = pair.first;
         std::reverse(result_[deviceId].begin(), result_[deviceId].end());
 
-        for (const auto& str : result_[deviceId]) {
+        for (const auto &str : result_[deviceId])
+        {
             int fpRes = fprintf(compareFile_, "%s\n", str.c_str());
-            if (fpRes < 0) {
+            if (fpRes < 0)
+            {
                 std::cout << "[msmemscope] Error: Fail to write data to csv file, errno:" << fpRes << std::endl;
                 return false;
             }
@@ -285,8 +323,8 @@ bool MemoryCompare::WriteCompareDataToCsv()
 }
 
 void MemoryCompare::CalcuMemoryDiff(const DEVICEID deviceId,
-    const std::tuple<std::string, std::string, size_t> &baseData,
-    const std::tuple<std::string, std::string, size_t> &compareData)
+                                    const std::tuple<std::string, std::string, size_t> &baseData,
+                                    const std::tuple<std::string, std::string, size_t> &compareData)
 {
     std::string temp;
     std::string name;
@@ -295,22 +333,28 @@ void MemoryCompare::CalcuMemoryDiff(const DEVICEID deviceId,
     int64_t compareAllocSize = 0;
 
     std::string baseMemDiff;
-    if (!std::get<0>(baseData).empty()) {
+    if (!std::get<0>(baseData).empty())
+    {
         name = std::get<0>(baseData);
         event = std::get<1>(baseData);
         GetMemoryUsage(std::get<2>(baseData), baseFileOriginData_[deviceId], baseAllocSize);
         baseMemDiff = std::to_string(baseAllocSize);
-    } else {
+    }
+    else
+    {
         baseMemDiff = "N/A";
     }
 
     std::string compareMemDiff;
-    if (!std::get<0>(compareData).empty()) {
+    if (!std::get<0>(compareData).empty())
+    {
         name = std::get<0>(compareData);
         event = std::get<1>(compareData);
         GetMemoryUsage(std::get<2>(compareData), compareFileOriginData_[deviceId], compareAllocSize);
         compareMemDiff = std::to_string(compareAllocSize);
-    } else {
+    }
+    else
+    {
         compareMemDiff = "N/A";
     }
 
@@ -323,7 +367,7 @@ void MemoryCompare::CalcuMemoryDiff(const DEVICEID deviceId,
 }
 
 std::shared_ptr<PathNode> MemoryCompare::BuildPath(const NAME_WITH_INDEX &baseLists,
-    const NAME_WITH_INDEX &compareLists)
+                                                   const NAME_WITH_INDEX &compareLists)
 {
     LOG_DEBUG("Start to build myers path.");
     const int64_t n = static_cast<int64_t>(baseLists.size());
@@ -331,13 +375,16 @@ std::shared_ptr<PathNode> MemoryCompare::BuildPath(const NAME_WITH_INDEX &baseLi
     const int64_t max = m + n + 1;
     const int64_t size = 1 + 2 * max;
     const int64_t middle = size / 2;
-    std::vector<std::shared_ptr<PathNode>> diagonal(size, nullptr); // 存储每一步的最优路径位置
+    std::vector<std::shared_ptr<PathNode>> diagonal(size, nullptr);  // 存储每一步的最优路径位置
     diagonal[middle + 1] = std::make_shared<Snake>(0, -1);
     auto start_time = Utility::GetTimeMicroseconds();
-    for (int64_t d = 0; d < max; ++d) {
-        for (int64_t k = -d; k <= d; k += KSTEPSIZE) {
+    for (int64_t d = 0; d < max; ++d)
+    {
+        for (int64_t k = -d; k <= d; k += KSTEPSIZE)
+        {
             auto end_time = Utility::GetTimeMicroseconds();
-            if ((end_time - start_time) >= MAXLOOPTIME) {
+            if ((end_time - start_time) >= MAXLOOPTIME)
+            {
                 LOG_ERROR("Memory comparison build path failed! Reaching maximum loop time limit!");
                 break;
             }
@@ -346,10 +393,13 @@ std::shared_ptr<PathNode> MemoryCompare::BuildPath(const NAME_WITH_INDEX &baseLi
             int64_t kminus = kmiddle - 1;
             int64_t i;
             std::shared_ptr<PathNode> prev;
-            if ((k == -d) || (k != d && diagonal[kminus]->i < diagonal[kplus]->i)) { // 最优路径为从上往下走
+            if ((k == -d) || (k != d && diagonal[kminus]->i < diagonal[kplus]->i))
+            {  // 最优路径为从上往下走
                 i = diagonal[kplus]->i;
                 prev = diagonal[kplus];
-            } else { // 最优路径为从左往右走
+            }
+            else
+            {  // 最优路径为从左往右走
                 i = diagonal[kminus]->i + 1;
                 prev = diagonal[kminus];
             }
@@ -357,15 +407,18 @@ std::shared_ptr<PathNode> MemoryCompare::BuildPath(const NAME_WITH_INDEX &baseLi
             diagonal[kminus] = nullptr;
             std::shared_ptr<PathNode> node = std::make_shared<DiffNode>(i, j, prev);
             // 判断两个name是否相同
-            while (i < n && j < m && (std::get<0>(baseLists[i]) == std::get<0>(compareLists[j]))) {
+            while (i < n && j < m && (std::get<0>(baseLists[i]) == std::get<0>(compareLists[j])))
+            {
                 ++i;
                 ++j;
             }
-            if (i > node->i) { // 对角线节点更新为snake
+            if (i > node->i)
+            {  // 对角线节点更新为snake
                 node = std::make_shared<Snake>(i, j, node);
             }
             diagonal[kmiddle] = node;
-            if (i >= n && j >= m) { // 达到终点，返回节点
+            if (i >= n && j >= m)
+            {  // 达到终点，返回节点
                 return diagonal[kmiddle];
             }
         }
@@ -373,36 +426,46 @@ std::shared_ptr<PathNode> MemoryCompare::BuildPath(const NAME_WITH_INDEX &baseLi
     return nullptr;
 }
 
-void MemoryCompare::BuildDiff(std::shared_ptr<PathNode> path, const DEVICEID deviceId,
-    const NAME_WITH_INDEX &baseLists, const NAME_WITH_INDEX &compareLists)
+void MemoryCompare::BuildDiff(std::shared_ptr<PathNode> path, const DEVICEID deviceId, const NAME_WITH_INDEX &baseLists,
+                              const NAME_WITH_INDEX &compareLists)
 {
     LOG_DEBUG("Start to build myers diff.");
-    if (path == nullptr) {
+    if (path == nullptr)
+    {
         LOG_WARN("Empty myers path!");
-        return ;
+        return;
     }
     auto start_time = Utility::GetTimeMicroseconds();
-    while (path && path->prev && path->prev->j >= 0) {
+    while (path && path->prev && path->prev->j >= 0)
+    {
         auto end_time = Utility::GetTimeMicroseconds();
-        if ((end_time - start_time) >= MAXLOOPTIME) {
-                LOG_ERROR("Memory compare build diff failed! Reaching maximum loop time limit!");
-                break;
-            }
-        if (path->IsSnake()) { // base name = compare name
+        if ((end_time - start_time) >= MAXLOOPTIME)
+        {
+            LOG_ERROR("Memory compare build diff failed! Reaching maximum loop time limit!");
+            break;
+        }
+        if (path->IsSnake())
+        {  // base name = compare name
             int endi = path->i;
 
             int endj = path->j;
             int beginj = path->prev->j;
-            for (int i = endi - 1, j = endj - 1; j >= beginj; --i, --j) {
+            for (int i = endi - 1, j = endj - 1; j >= beginj; --i, --j)
+            {
                 CalcuMemoryDiff(deviceId, baseLists[i], compareLists[j]);
             }
-        } else {
+        }
+        else
+        {
             int i = path->i;
             int j = path->j;
             int prei = path->prev->i;
-            if (prei < i) { // base name diff
+            if (prei < i)
+            {  // base name diff
                 CalcuMemoryDiff(deviceId, baseLists[i - 1], {});
-            } else { // compare name diff
+            }
+            else
+            {  // compare name diff
                 CalcuMemoryDiff(deviceId, {}, compareLists[j - 1]);
             }
         }
@@ -411,13 +474,16 @@ void MemoryCompare::BuildDiff(std::shared_ptr<PathNode> path, const DEVICEID dev
 }
 
 void MemoryCompare::MyersDiff(const DEVICEID deviceId, const NAME_WITH_INDEX &baseLists,
-    const NAME_WITH_INDEX &compareLists)
+                              const NAME_WITH_INDEX &compareLists)
 {
     LOG_DEBUG("Start to compare with Myers algorithm.");
-    if (baseLists.empty() && compareLists.empty()) {
+    if (baseLists.empty() && compareLists.empty())
+    {
         LOG_WARN("Device %s has empty kernelLaunch/op data!", std::to_string(deviceId).c_str());
-        return ;
-    } else {
+        return;
+    }
+    else
+    {
         auto pathNode = BuildPath(baseLists, compareLists);
         BuildDiff(pathNode, deviceId, baseLists, compareLists);
     }
@@ -430,45 +496,55 @@ void MemoryCompare::RunComparison(const std::vector<std::string> &paths)
     // 已在命令行输入处校验path长度
     std::string pathBase = paths[0];
     std::string pathCompare = paths[1];
-    
+
     ReadFile(pathBase, baseFileOriginData_);
     ReadFile(pathCompare, compareFileOriginData_);
 
-    if (baseFileOriginData_.empty() || compareFileOriginData_.empty()) {
+    if (baseFileOriginData_.empty() || compareFileOriginData_.empty())
+    {
         std::cout << "[msmemscope] ERROR: Memory comparison failed!" << std::endl;
-        return ;
+        return;
     }
 
-    for (const auto& pair : baseFileOriginData_) {
+    for (const auto &pair : baseFileOriginData_)
+    {
         deviceIdSet_.insert(pair.first);
     }
-    for (const auto& pair : compareFileOriginData_) {
+    for (const auto &pair : compareFileOriginData_)
+    {
         deviceIdSet_.insert(pair.first);
     }
 
-    for (const auto& deviceId : deviceIdSet_) {
-        NAME_WITH_INDEX baseLists {};
-        NAME_WITH_INDEX compareLists {};
+    for (const auto &deviceId : deviceIdSet_)
+    {
+        NAME_WITH_INDEX baseLists{};
+        NAME_WITH_INDEX compareLists{};
         ReadNameIndexData(baseFileOriginData_[deviceId], baseLists);
         ReadNameIndexData(compareFileOriginData_[deviceId], compareLists);
         MyersDiff(deviceId, baseLists, compareLists);
     }
 
-    if (!WriteCompareDataToCsv()) {
+    if (!WriteCompareDataToCsv())
+    {
         std::cout << "[msmemscope] ERROR: Memory comparison failed!" << std::endl;
-    } else {
-        auto end_time = Utility::GetTimeMicroseconds();
-        LOG_INFO("The memory comparison has been completed "
-            "in a total time of %.6f(s)", (end_time-start_time) / MICROSEC);
     }
-    return ;
+    else
+    {
+        auto end_time = Utility::GetTimeMicroseconds();
+        LOG_INFO(
+            "The memory comparison has been completed "
+            "in a total time of %.6f(s)",
+            (end_time - start_time) / MICROSEC);
+    }
+    return;
 }
 
 MemoryCompare::~MemoryCompare()
 {
-    if (compareFile_ != nullptr) {
+    if (compareFile_ != nullptr)
+    {
         std::fclose(compareFile_);
         compareFile_ = nullptr;
     }
 }
-}
+}  // namespace MemScope

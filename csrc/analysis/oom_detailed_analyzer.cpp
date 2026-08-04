@@ -37,10 +37,10 @@ std::vector<OOMMemRecord> OOMDetailedAnalyzer::QueryRecentAllocs(int32_t deviceI
 {
     std::vector<OOMMemRecord> allRecords;
 
-    auto npuRecords = StepInnerAnalyzer::GetInstance(config_).QueryUnfreedRecords(deviceId);
+    auto npuRecords = StepInnerAnalyzer::GetInstance().QueryUnfreedRecords(deviceId);
     allRecords.insert(allRecords.end(), npuRecords.begin(), npuRecords.end());
 
-    auto halRecords = HalAnalyzer::GetInstance(config_).QueryUnfreedRecords(clientId);
+    auto halRecords = HalAnalyzer::GetInstance().QueryUnfreedRecords(clientId);
     allRecords.insert(allRecords.end(), halRecords.begin(), halRecords.end());
 
     uint16_t k = config_.oomTopK;
@@ -59,10 +59,10 @@ std::vector<OOMMemRecord> OOMDetailedAnalyzer::QueryTopAllocs(int32_t deviceId, 
 {
     std::vector<OOMMemRecord> allRecords;
 
-    auto npuRecords = StepInnerAnalyzer::GetInstance(config_).QueryUnfreedRecords(deviceId);
+    auto npuRecords = StepInnerAnalyzer::GetInstance().QueryUnfreedRecords(deviceId);
     allRecords.insert(allRecords.end(), npuRecords.begin(), npuRecords.end());
 
-    auto halRecords = HalAnalyzer::GetInstance(config_).QueryUnfreedRecords(clientId);
+    auto halRecords = HalAnalyzer::GetInstance().QueryUnfreedRecords(clientId);
     allRecords.insert(allRecords.end(), halRecords.begin(), halRecords.end());
 
     uint16_t k = config_.oomTopK;

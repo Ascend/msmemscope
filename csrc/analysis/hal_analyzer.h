@@ -20,6 +20,7 @@
 
 #include <mutex>
 #include <unordered_map>
+#include <unordered_set>
 
 #include "comm_def.h"
 #include "config_info.h"
@@ -37,35 +38,48 @@ namespace MemScope
    3. 通过EventDispatcher订阅MALLOC/FREE事件（替代Process::SendEvent中的switch-case分发）
 */
 
-enum class AddrStatus : uint8_t
+// HAL内存块标识：同一进程在不同device上可能分配相同地址的独立内存块，key需为device与addr的组合
+struct HalAddrKey
 {
-    FREE_ALREADY = 0U,
-    FREE_WAIT,
+    int32_t deviceId;
+    uint64_t addr;
+
+    HalAddrKey(int32_t device, uint64_t memAddr) : deviceId(device), addr(memAddr) {}
+    bool operator==(const HalAddrKey& other) const { return deviceId == other.deviceId && addr == other.addr; }
+};
+
+struct HalAddrKeyHash
+{
+    std::size_t operator()(const HalAddrKey& key) const
+    {
+        size_t deviceHash = std::hash<int32_t>()(key.deviceId);
+        size_t addrHash = std::hash<uint64_t>()(key.addr);
+        return deviceHash ^ (addrHash << 1);
+    }
 };
 
 struct HalMemInfo
 {
-    int32_t deviceId;
-    AddrStatus addrStatus;
     int64_t size = 0;
     uint64_t timestamp = 0;
     std::string cCallStack;
     std::string pyCallStack;
 };
 
-using MemoryRecordTable = std::unordered_map<uint64_t, HalMemInfo>;
+// 表内仅保存未释放的存活块（malloc插入、free删除），key为(deviceId, addr)组合
+using MemoryRecordTable = std::unordered_map<HalAddrKey, HalMemInfo, HalAddrKeyHash>;
 
 class HalAnalyzer
 {
    public:
-    static HalAnalyzer& GetInstance(Config config);
+    static HalAnalyzer& GetInstance();
     void EventHandle(std::shared_ptr<EventBase>& event, MemoryState* state);
     void Subscribe();
     void UnSubscribe() const;
     std::vector<OOMMemRecord> QueryUnfreedRecords(uint32_t clientId) const;
 
    private:
-    explicit HalAnalyzer(Config config);
+    explicit HalAnalyzer();
     ~HalAnalyzer();
     HalAnalyzer(const HalAnalyzer&) = delete;
     HalAnalyzer& operator=(const HalAnalyzer&) = delete;
@@ -79,7 +93,6 @@ class HalAnalyzer
     void RecordFree(const ClientId& clientId, std::shared_ptr<const MemoryEvent> memEvent);
     void LeakAnalyze();
     void CheckLeak(const size_t clientId);
-    Config config_;
     mutable std::mutex mutex_;
 };
 

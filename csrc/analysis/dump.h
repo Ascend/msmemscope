@@ -32,14 +32,14 @@ namespace MemScope
 class Dump : public AnalyzerBase
 {
    public:
-    static Dump& GetInstance(Config config);
+    static Dump& GetInstance();
     void EventHandle(std::shared_ptr<EventBase>& event, MemoryState* state) override;
     void DumpHistoricalState(MemoryState* state);  // 落盘完整MemoryState（用于影子FREE转正）
     void WritePublicEventToFile();
     void FflushEventToFile() const;
 
    private:
-    explicit Dump(Config config);
+    explicit Dump();
     ~Dump() override;
     Dump(const Dump&) = delete;
     Dump& operator=(const Dump&) = delete;
@@ -58,9 +58,8 @@ class Dump : public AnalyzerBase
     void DumpOOMMemRecordEvent(const std::shared_ptr<OOMMemRecordEvent>& event);
 
     void WriteToFile(const std::shared_ptr<EventBase>& event);
-    bool ShouldDumpEvent(EventBaseType type) const;
+    bool ShouldDumpEvent(EventBaseType type, const Config& config) const;
 
-    Config config_;
     std::unordered_map<int32_t, std::unique_ptr<DataHandler>> handlerMap_;
     std::vector<std::shared_ptr<EventBase>> sharedEventLists_;
 };

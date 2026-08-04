@@ -50,7 +50,7 @@ struct ExecCmd
 class Process
 {
    public:
-    static Process &GetInstance(Config config);
+    static Process &GetInstance();
     void Launch(const std::vector<std::string> &execParams);
     bool SendEvent(std::shared_ptr<EventBase> event);
 
@@ -59,8 +59,7 @@ class Process
     void DoLaunch(const ExecCmd &cmd) const;
 
    private:
-    explicit Process(const Config &config) : config_(config) {}
-    Config config_;
+    explicit Process() {}
     std::mutex processMutex_;
 
     static constexpr const size_t MAX_EVENT_QUEUE_LEN = 4096;

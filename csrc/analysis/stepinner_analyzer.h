@@ -146,14 +146,14 @@ struct NpuMemUsage
 class StepInnerAnalyzer
 {
    public:
-    static StepInnerAnalyzer &GetInstance(Config config);
+    static StepInnerAnalyzer &GetInstance();
     void EventHandle(std::shared_ptr<EventBase> &event, MemoryState *state);
     void Subscribe();
     void UnSubscribe() const;
     std::vector<OOMMemRecord> QueryUnfreedRecords(int32_t deviceId) const;
 
    private:
-    explicit StepInnerAnalyzer(Config config);
+    explicit StepInnerAnalyzer();
     ~StepInnerAnalyzer();
     StepInnerAnalyzer(const StepInnerAnalyzer &) = delete;
     StepInnerAnalyzer &operator=(const StepInnerAnalyzer &) = delete;
@@ -187,7 +187,6 @@ class StepInnerAnalyzer
     std::atomic<StepSource> crtStepSource_{StepSource::None};
     uint64_t durationThreshold_ = 1;  // 设置警告阈值, 可由用户更改
     uint64_t skipSteps_ = 1;
-    Config config_;
     mutable std::mutex mutex_;  // 保护共享数据的互斥锁
 };
 

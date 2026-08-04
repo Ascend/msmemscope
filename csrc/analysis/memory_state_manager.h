@@ -119,11 +119,16 @@ class MemoryStateManager : StateManager
     using PromoteCallback = std::function<void(MemoryState*)>;
     void PromoteShadowStates(const PromoteCallback& dumpFunc);
 
+    void SetLastStopTimestamp(uint64_t ts) { lastStopTimestamp_ = ts; }
+    void ClearLastStopTimestamp() { lastStopTimestamp_ = 0; }
+    uint64_t GetLastStopTimestamp() const { return lastStopTimestamp_; }
+
    private:
     MemoryState* FindStateInPool(const PoolType& poolType, const MemoryStateKey& key, uint64_t size);
     ~MemoryStateManager() override;
     std::unordered_map<PoolType, Pool> poolsMap_;
     std::mutex mtx_;
+    uint64_t lastStopTimestamp_ = 0;  // 最后一次TRACE_STOP的时间戳，0表示无效
 };
 
 }  // namespace MemScope

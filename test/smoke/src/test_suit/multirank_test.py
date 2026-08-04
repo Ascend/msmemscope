@@ -15,6 +15,7 @@ from .base_test import BaseTest, TestSuite
 from ..utils.result import Result
 from ..utils.file_system import WorkingDir
 from ..utils.utils import ColorText
+from ..utils.dump_csv_check import check_memscope_dump_files
 
 
 class MultirankConfig:
@@ -197,7 +198,14 @@ class MultirankTestCase(BaseTest):
         if not dfs:
             logging.error(f"No valid data found in files: {file_paths}")
             return Result(False, ["Valid data expected"], ["No data"])
-        
+
+        if not is_db:
+            # 内存池数据一致性检查（used 累积校验、allocation_id 配对校验），
+            # 不同文件的 allocation_id 可能重复，须在 concat 前按文件分别校验
+            check_result = check_memscope_dump_files(dfs)
+            if not check_result.success:
+                return check_result
+
         # 合并数据
         data = pd.concat(dfs, ignore_index=True)
 
@@ -206,7 +214,6 @@ class MultirankTestCase(BaseTest):
             validate_result = self._validate_data_frame(data, MultirankConfig.CSV_COLUMNS, file_paths)
             if not validate_result.success:
                 return validate_result
-
 
         # 开始事件计数校验
         event_counts = data['Event'].value_counts()
