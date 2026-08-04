@@ -53,7 +53,11 @@ void HandleOOM(size_t size, uint64_t flag, int ret, const char* funcName)
     if (oomAnalyzer.IsEnabled())
     {
         int32_t devId = GD_INVALID_NUM;
-        GetDeviceInfo::Instance().GetDeviceId(devId);
+        if (!GetDeviceInfo::Instance().GetDeviceId(devId) || devId == GD_INVALID_NUM)
+        {
+            LOG_ERROR("HandleOOM: failed to get device ID, skip OOM detailed analysis");
+            return;
+        }
 
         OOMTriggerInfo triggerInfo;
         triggerInfo.requestSize = size;

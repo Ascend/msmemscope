@@ -269,6 +269,7 @@ HalAnalyzer::~HalAnalyzer()
 
 std::vector<OOMMemRecord> HalAnalyzer::QueryUnfreedRecords(uint32_t clientId) const
 {
+    std::lock_guard<std::mutex> lock(mutex_);
     std::vector<OOMMemRecord> records;
     auto it = memtables_.find(clientId);
     if (it == memtables_.end())

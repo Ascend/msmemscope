@@ -667,6 +667,7 @@ StepInnerAnalyzer::~StepInnerAnalyzer()
 
 std::vector<OOMMemRecord> StepInnerAnalyzer::QueryUnfreedRecords(int32_t deviceId) const
 {
+    std::lock_guard<std::mutex> lock(mutex_);
     std::vector<OOMMemRecord> records;
     auto it = npuMemUsages_.find(deviceId);
     if (it == npuMemUsages_.end())

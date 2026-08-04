@@ -18,6 +18,7 @@
 #ifndef HAL_ANALYZER_H
 #define HAL_ANALYZER_H
 
+#include <mutex>
 #include <unordered_map>
 
 #include "comm_def.h"
@@ -79,6 +80,7 @@ class HalAnalyzer
     void LeakAnalyze();
     void CheckLeak(const size_t clientId);
     Config config_;
+    mutable std::mutex mutex_;
 };
 
 }  // namespace MemScope

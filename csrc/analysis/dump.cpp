@@ -92,13 +92,13 @@ void Dump::EventHandle(std::shared_ptr<EventBase>& event, MemoryState* state)
             }
             break;
         case EventBaseType::OOM_DETAIL:
-            if (auto oomTriggerEvent = std::dynamic_pointer_cast<OOMTriggerEvent>(event))
+            if (event->eventSubType == EventSubType::OOM_TRIGGER)
             {
-                DumpOOMTriggerEvent(oomTriggerEvent);
+                DumpOOMTriggerEvent(std::static_pointer_cast<OOMTriggerEvent>(event));
             }
-            else if (auto oomMemEvent = std::dynamic_pointer_cast<OOMMemRecordEvent>(event))
+            else
             {
-                DumpOOMMemRecordEvent(oomMemEvent);
+                DumpOOMMemRecordEvent(std::static_pointer_cast<OOMMemRecordEvent>(event));
             }
             break;
         default:
@@ -328,7 +328,7 @@ void Dump::DumpSnapshotEvent(std::shared_ptr<SnapshotEvent>& snapshotEvent)
     WriteToFile(snapshotEvent);
 }
 
-void Dump::DumpOOMTriggerEvent(std::shared_ptr<OOMTriggerEvent>& event)
+void Dump::DumpOOMTriggerEvent(const std::shared_ptr<OOMTriggerEvent>& event)
 {
     std::string attr;
     attr += "func:" + event->funcName + ",";
@@ -340,7 +340,7 @@ void Dump::DumpOOMTriggerEvent(std::shared_ptr<OOMTriggerEvent>& event)
     WriteToFile(event);
 }
 
-void Dump::DumpOOMMemRecordEvent(std::shared_ptr<OOMMemRecordEvent>& event)
+void Dump::DumpOOMMemRecordEvent(const std::shared_ptr<OOMMemRecordEvent>& event)
 {
     std::string attr;
     auto poolIt = PoolTypeMap.find(event->poolType);
