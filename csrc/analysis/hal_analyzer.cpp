@@ -276,7 +276,6 @@ std::vector<OOMMemRecord> HalAnalyzer::QueryUnfreedRecords(uint32_t clientId) co
         rec.ptr = pair.first.addr;
         rec.memSize = pair.second.size;
         rec.allocTimestamp = pair.second.timestamp;
-        rec.clientId = clientId;
         rec.cCallStack = pair.second.cCallStack;
         rec.pyCallStack = pair.second.pyCallStack;
         records.push_back(rec);

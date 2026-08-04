@@ -1151,7 +1151,6 @@ bool EventReport::ReportOOMTrigger(const OOMTriggerInfo& info)
     event->device = devId;
     event->requestSize = info.requestSize;
     event->flag = info.flag;
-    event->retCode = info.retCode;
     event->funcName = info.funcName;
     event->cCallStack = info.stack.cStack;
     event->pyCallStack = info.stack.pyStack;
@@ -1177,9 +1176,6 @@ bool EventReport::ReportOOMMemRecord(const OOMMemRecord& record, EventSubType su
     event->addr = record.ptr;
     event->memSize = record.memSize;
     event->allocTimestamp = record.allocTimestamp;
-    event->stepId = record.stepId;
-    event->kernelIndex = record.kernelIndex;
-    event->clientId = record.clientId;
     event->cCallStack = record.cCallStack;
     event->pyCallStack = record.pyCallStack;
     event->name = (subType == EventSubType::OOM_RECENT_ALLOC) ? "OOM_RecentAlloc" : "OOM_TopAlloc";

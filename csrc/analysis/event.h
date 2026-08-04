@@ -228,7 +228,6 @@ class OOMTriggerEvent : public EventBase
    public:
     uint64_t requestSize = 0;
     uint64_t flag = 0;
-    int32_t retCode = 0;
     std::string funcName;
 
     OOMTriggerEvent()
@@ -243,9 +242,6 @@ class OOMMemRecordEvent : public EventBase
    public:
     int64_t memSize = 0;
     uint64_t allocTimestamp = 0;
-    uint64_t stepId = 0;
-    uint64_t kernelIndex = 0;
-    uint32_t clientId = 0;
 
     OOMMemRecordEvent()
     {

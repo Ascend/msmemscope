@@ -682,8 +682,6 @@ std::vector<OOMMemRecord> StepInnerAnalyzer::QueryUnfreedRecords(int32_t deviceI
         rec.ptr = pair.first.ptr;
         rec.memSize = pair.second.memSize;
         rec.allocTimestamp = pair.second.timestamp;
-        rec.stepId = pair.second.stepId;
-        rec.kernelIndex = pair.second.kernelIndex;
         rec.cCallStack = pair.second.cCallStack;
         rec.pyCallStack = pair.second.pyCallStack;
         records.push_back(rec);

@@ -334,8 +334,7 @@ void Dump::DumpOOMTriggerEvent(const std::shared_ptr<OOMTriggerEvent>& event)
     std::string attr;
     attr += "func:" + event->funcName + ",";
     attr += "req_size:" + std::to_string(event->requestSize) + ",";
-    attr += "flag:" + std::to_string(event->flag) + ",";
-    attr += "ret:" + std::to_string(event->retCode);
+    attr += "flag:" + std::to_string(event->flag);
     event->attr = "\"{" + attr + "}\"";
 
     WriteToFile(event);
@@ -348,10 +347,7 @@ void Dump::DumpOOMMemRecordEvent(const std::shared_ptr<OOMMemRecordEvent>& event
     attr += "pool:" + (poolIt != PoolTypeMap.end() ? poolIt->second : "UNKNOWN") + ",";
     attr += "ptr:" + Uint64ToHexString(event->addr) + ",";
     attr += "size:" + std::to_string(event->memSize) + ",";
-    attr += "timestamp:" + std::to_string(event->allocTimestamp) + ",";
-    attr += "step:" + std::to_string(event->stepId) + ",";
-    attr += "kernel:" + std::to_string(event->kernelIndex) + ",";
-    attr += "client:" + std::to_string(event->clientId);
+    attr += "timestamp:" + std::to_string(event->allocTimestamp);
     event->attr = "\"{" + attr + "}\"";
 
     WriteToFile(event);

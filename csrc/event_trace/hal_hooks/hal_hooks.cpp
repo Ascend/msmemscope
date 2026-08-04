@@ -62,7 +62,6 @@ void HandleOOM(size_t size, uint64_t flag, int ret, const char* funcName)
         OOMTriggerInfo triggerInfo;
         triggerInfo.requestSize = size;
         triggerInfo.flag = flag;
-        triggerInfo.retCode = ret;
         triggerInfo.funcName = funcName;
         triggerInfo.stack = stack;
         triggerInfo.deviceId = devId;

@@ -168,9 +168,6 @@ struct OOMMemRecord
     uint64_t ptr = 0;
     int64_t memSize = 0;
     uint64_t allocTimestamp = 0;
-    uint64_t stepId = 0;
-    uint64_t kernelIndex = 0;
-    uint32_t clientId = 0;
     std::string cCallStack;
     std::string pyCallStack;
 };
@@ -179,7 +176,6 @@ struct OOMTriggerInfo
 {
     size_t requestSize = 0;
     uint64_t flag = 0;
-    int32_t retCode = 0;
     std::string funcName;
     CallStackString stack;
     int32_t deviceId = GD_INVALID_NUM;
