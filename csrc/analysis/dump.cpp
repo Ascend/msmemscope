@@ -37,9 +37,9 @@ Dump::Dump()
     // 确保 FileWriteManager 先于 Dump 构造，从而在 Dump 析构时 FileWriteManager 仍然存活
     Utility::FileWriteManager::GetInstance();
     auto func = std::bind(&Dump::EventHandle, this, std::placeholders::_1, std::placeholders::_2);
-    std::vector<EventBaseType> eventList{EventBaseType::FREE,          EventBaseType::MSTX,   EventBaseType::OP_LAUNCH,
-                                         EventBaseType::KERNEL_LAUNCH, EventBaseType::SYSTEM, EventBaseType::SNAPSHOT,
-                                         EventBaseType::CLEAN_UP,      EventBaseType::OOM_DETAIL};
+    std::vector<EventBaseType> eventList{
+        EventBaseType::FREE,   EventBaseType::MSTX,     EventBaseType::OP_LAUNCH, EventBaseType::KERNEL_LAUNCH,
+        EventBaseType::SYSTEM, EventBaseType::SNAPSHOT, EventBaseType::CLEAN_UP,  EventBaseType::OOM_DETAIL};
     EventDispatcher::GetInstance().Subscribe(SubscriberId::DUMP, eventList, EventDispatcher::Priority::Lowest, func);
     return;
 }

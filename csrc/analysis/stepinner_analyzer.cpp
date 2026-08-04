@@ -392,9 +392,14 @@ void StepInnerAnalyzer::RecordNpuMalloc(const ClientId &clientId, const DeviceId
         npuMemUsages_[deviceId].poolStatusTable.emplace(poolType, memPoolStatus);
     }
 
-    NpuMemInfo npuMemInfo = {
-        poolType, memEvent->size, memEvent->timestamp, 0, npuMemUsages_[deviceId].duringStep, memEvent->kernelIndex,
-        memEvent->cCallStack, memEvent->pyCallStack};
+    NpuMemInfo npuMemInfo = {poolType,
+                             memEvent->size,
+                             memEvent->timestamp,
+                             0,
+                             npuMemUsages_[deviceId].duringStep,
+                             memEvent->kernelIndex,
+                             memEvent->cCallStack,
+                             memEvent->pyCallStack};
     npuMemUsages_[deviceId].poolOpTable.emplace(NpuMemKey(npumemptr, poolType), npuMemInfo);
     UpdateAllocated(deviceId, poolType, memEvent->used);
     npuMemUsages_[deviceId].poolStatusTable[poolType].totalAllocated = memEvent->used;
@@ -675,7 +680,7 @@ std::vector<OOMMemRecord> StepInnerAnalyzer::QueryUnfreedRecords(int32_t deviceI
     {
         return records;
     }
-    for (const auto& pair : it->second.poolOpTable)
+    for (const auto &pair : it->second.poolOpTable)
     {
         OOMMemRecord rec;
         rec.poolType = pair.second.type;

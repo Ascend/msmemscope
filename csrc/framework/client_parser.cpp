@@ -370,11 +370,10 @@ void ParseAnalysis(const std::string &param, Config &config, bool &printHelpInfo
                     Utility::IntValidateRule verRule;
                     verRule.minValue = 1;
                     verRule.maxValue = 1000;
-                    if (kStr.empty() || !Utility::IsValidInteger(kStr, verRule) ||
-                        !Utility::StrToUint32(kVal, kStr))
+                    if (kStr.empty() || !Utility::IsValidInteger(kStr, verRule) || !Utility::StrToUint32(kVal, kStr))
                     {
-                        std::cout << "[msmemscope] Warn: invalid OOM top-K value '" << kStr
-                                  << "', using default 10." << std::endl;
+                        std::cout << "[msmemscope] Warn: invalid OOM top-K value '" << kStr << "', using default 10."
+                                  << std::endl;
                         config.oomTopK = 10;
                     }
                     else

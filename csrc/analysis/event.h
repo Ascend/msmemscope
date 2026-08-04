@@ -243,10 +243,7 @@ class OOMMemRecordEvent : public EventBase
     int64_t memSize = 0;
     uint64_t allocTimestamp = 0;
 
-    OOMMemRecordEvent()
-    {
-        eventType = EventBaseType::OOM_DETAIL;
-    }
+    OOMMemRecordEvent() { eventType = EventBaseType::OOM_DETAIL; }
 };
 
 }  // namespace MemScope

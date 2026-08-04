@@ -16,6 +16,7 @@
  */
 
 #include "oom_detailed_analyzer.h"
+
 #include "bit_field.h"
 #include "utility/utils.h"
 
@@ -61,8 +62,7 @@ std::vector<OOMMemRecord> OOMDetailedAnalyzer::QueryRecentAllocs(int32_t deviceI
         k = static_cast<uint16_t>(allRecords.size());
     }
     std::partial_sort(allRecords.begin(), allRecords.begin() + k, allRecords.end(),
-        [](const OOMMemRecord& a, const OOMMemRecord& b)
-        { return a.allocTimestamp > b.allocTimestamp; });
+                      [](const OOMMemRecord& a, const OOMMemRecord& b) { return a.allocTimestamp > b.allocTimestamp; });
     allRecords.resize(k);
     return allRecords;
 }
@@ -83,8 +83,7 @@ std::vector<OOMMemRecord> OOMDetailedAnalyzer::QueryTopAllocs(int32_t deviceId, 
         k = static_cast<uint16_t>(allRecords.size());
     }
     std::partial_sort(allRecords.begin(), allRecords.begin() + k, allRecords.end(),
-        [](const OOMMemRecord& a, const OOMMemRecord& b)
-        { return a.memSize > b.memSize; });
+                      [](const OOMMemRecord& a, const OOMMemRecord& b) { return a.memSize > b.memSize; });
     allRecords.resize(k);
     return allRecords;
 }

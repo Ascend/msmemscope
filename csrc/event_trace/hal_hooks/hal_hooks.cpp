@@ -32,7 +32,7 @@
 using namespace MemScope;
 
 // 通用OOM错误处理函数
-void HandleOOM(size_t size, uint64_t flag, int ret, const char* funcName)
+void HandleOOM(size_t size, uint64_t flag, int ret, const char *funcName)
 {
     if (!EventTraceManager::Instance().IsNeedTrace(EventBaseType::MALLOC) &&
         !EventTraceManager::Instance().IsNeedTrace(EventBaseType::FREE))
@@ -49,7 +49,7 @@ void HandleOOM(size_t size, uint64_t flag, int ret, const char* funcName)
     EventReport::Instance(MemScopeCommType::SHARED_MEMORY).ReportMemorySnapshotOnOOM(stack);
 
     // OOM详细分析
-    auto& oomAnalyzer = OOMDetailedAnalyzer::GetInstance(GetConfig());
+    auto &oomAnalyzer = OOMDetailedAnalyzer::GetInstance(GetConfig());
     if (oomAnalyzer.IsEnabled())
     {
         int32_t devId = GD_INVALID_NUM;
@@ -77,17 +77,16 @@ void HandleOOM(size_t size, uint64_t flag, int ret, const char* funcName)
 
         uint32_t clientId = static_cast<uint32_t>(Utility::GetPid());
         auto recentRecs = oomAnalyzer.QueryRecentAllocs(devId, clientId);
-        for (const auto& rec : recentRecs)
+        for (const auto &rec : recentRecs)
         {
             EventReport::Instance(MemScopeCommType::SHARED_MEMORY)
                 .ReportOOMMemRecord(rec, EventSubType::OOM_RECENT_ALLOC);
         }
 
         auto topRecs = oomAnalyzer.QueryTopAllocs(devId, clientId);
-        for (const auto& rec : topRecs)
+        for (const auto &rec : topRecs)
         {
-            EventReport::Instance(MemScopeCommType::SHARED_MEMORY)
-                .ReportOOMMemRecord(rec, EventSubType::OOM_TOP_ALLOC);
+            EventReport::Instance(MemScopeCommType::SHARED_MEMORY).ReportOOMMemRecord(rec, EventSubType::OOM_TOP_ALLOC);
         }
     }
 }
