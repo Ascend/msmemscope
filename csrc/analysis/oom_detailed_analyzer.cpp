@@ -17,6 +17,7 @@
 
 #include "oom_detailed_analyzer.h"
 #include "bit_field.h"
+#include "utility/utils.h"
 
 namespace MemScope
 {
@@ -31,6 +32,17 @@ bool OOMDetailedAnalyzer::IsEnabled() const
 {
     BitField<decltype(config_.analysisType)> analysisType(config_.analysisType);
     return analysisType.checkBit(static_cast<size_t>(AnalysisType::OOM_ANALYSIS));
+}
+
+bool OOMDetailedAnalyzer::ShouldDumpDetails()
+{
+    uint64_t now = Utility::GetTimeNanoseconds();
+    if (now - lastDetailDumpTimestamp_ < kDetailDumpIntervalNs)
+    {
+        return false;
+    }
+    lastDetailDumpTimestamp_ = now;
+    return true;
 }
 
 std::vector<OOMMemRecord> OOMDetailedAnalyzer::QueryRecentAllocs(int32_t deviceId, uint32_t clientId)

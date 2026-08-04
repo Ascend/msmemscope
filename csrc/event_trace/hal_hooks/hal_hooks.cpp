@@ -69,6 +69,12 @@ void HandleOOM(size_t size, uint64_t flag, int ret, const char* funcName)
 
         EventReport::Instance(MemScopeCommType::SHARED_MEMORY).ReportOOMTrigger(triggerInfo);
 
+        // 短时间内重复OOM（如PyTorch重试）不再重复dump内存详情，只上报trigger
+        if (!oomAnalyzer.ShouldDumpDetails())
+        {
+            return;
+        }
+
         uint32_t clientId = static_cast<uint32_t>(Utility::GetPid());
         auto recentRecs = oomAnalyzer.QueryRecentAllocs(devId, clientId);
         for (const auto& rec : recentRecs)

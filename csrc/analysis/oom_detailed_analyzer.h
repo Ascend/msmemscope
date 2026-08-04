@@ -34,6 +34,7 @@ class OOMDetailedAnalyzer
    public:
     static OOMDetailedAnalyzer& GetInstance(Config config);
     bool IsEnabled() const;
+    bool ShouldDumpDetails();
     std::vector<OOMMemRecord> QueryRecentAllocs(int32_t deviceId, uint32_t clientId);
     std::vector<OOMMemRecord> QueryTopAllocs(int32_t deviceId, uint32_t clientId);
 
@@ -46,6 +47,8 @@ class OOMDetailedAnalyzer
     OOMDetailedAnalyzer& operator=(OOMDetailedAnalyzer&& other) = delete;
 
     Config config_;
+    uint64_t lastDetailDumpTimestamp_ = 0;
+    static constexpr uint64_t kDetailDumpIntervalNs = 2000000000ULL;  // 2s 内重复OOM不重复dump详情
 };
 
 }  // namespace MemScope
