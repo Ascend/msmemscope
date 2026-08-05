@@ -307,10 +307,12 @@ void EventTraceManager::HandleWithDecompose()
         BitPresent(GetConfig().analysisType, static_cast<size_t>(AnalysisType::DECOMPOSE_ANALYSIS)) && aclInit_)
     {
         Utility::MemScopePythonCall("msmemscope.optimizer_step_hook", "enable_optimizer_step_hook");
+        Utility::MemScopePythonCall("msmemscope.hijacker.hijack_manager", "enable_decompose_hooks");
         return;
     }
 
     Utility::MemScopePythonCall("msmemscope.optimizer_step_hook", "disable_optimizer_step_hook");
+    Utility::MemScopePythonCall("msmemscope.hijacker.hijack_manager", "disable_decompose_hooks");
 
     return;
 }

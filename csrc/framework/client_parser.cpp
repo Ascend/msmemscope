@@ -197,6 +197,7 @@ void SetAnalysisDefaultConfig(Config &config)
         {AnalysisType::LEAKS_ANALYSIS, EventType::FREE_EVENT},
         {AnalysisType::DECOMPOSE_ANALYSIS, EventType::ALLOC_EVENT},
         {AnalysisType::DECOMPOSE_ANALYSIS, EventType::FREE_EVENT},
+        {AnalysisType::DECOMPOSE_ANALYSIS, EventType::ACCESS_EVENT},
         {AnalysisType::INEFFICIENCY_ANALYSIS, EventType::ALLOC_EVENT},
         {AnalysisType::INEFFICIENCY_ANALYSIS, EventType::FREE_EVENT},
         {AnalysisType::INEFFICIENCY_ANALYSIS, EventType::ACCESS_EVENT},

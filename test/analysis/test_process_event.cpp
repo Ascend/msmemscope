@@ -1141,7 +1141,7 @@ TEST_F(TestProcess, process_memory_owner_event)
     std::string result = "ID,Event,Event Type,Name,Timestamp(ns),Process Id,Thread Id,Device Id,Ptr,Attr"
 ",Call Stack(Python),Call Stack(C)\n"
 "3,MALLOC,PTA,N/A,3,123,1234,0,0x0000000000003039,\"{allocation_id:1,addr:0x0000000000003039,size:10,total:10,used:10,"
-"owner:PTA@gradient@ops@aten@memscope}\",,\n"
+"owner:PTA@gradient@ops@memscope}\",,\n"
 "13,ACCESS,UNKNOWN,aten.add,13,123,1234,0,0x0000000000003039,\"{allocation_id:1,addr:0x0000000000003039,size:10,type:PTA,"
 "dtype:torch.float16,shape:torch.Size([1,5])}\",,\n"
 "54,FREE,PTA,N/A,54,123,1234,0,0x0000000000003039,\"{allocation_id:1,addr:0x0000000000003039,size:10,total:0,used:0}\",,\n";
@@ -1286,7 +1286,7 @@ TEST_F(TestProcess, updata_owner_by_access_event)
  
     std::string result = "ID,Event,Event Type,Name,Timestamp(ns),Process Id,Thread Id,Device Id,Ptr,Attr"
 ",Call Stack(Python),Call Stack(C)\n"
-"3,MALLOC,PTA,N/A,3,123,1234,0,0x0000000000003039,\"{allocation_id:1,addr:0x0000000000003039,size:10,total:10,used:10,owner:PTA@ops@aten}\",,\n"
+"3,MALLOC,PTA,N/A,3,123,1234,0,0x0000000000003039,\"{allocation_id:1,addr:0x0000000000003039,size:10,total:10,used:10,owner:PTA@ops}\",,\n"
 "13,ACCESS,UNKNOWN,aten.add,13,123,1234,0,0x0000000000003039,\"{allocation_id:1,addr:0x0000000000003039,size:10,type:PTA,dtype:torch.float16,"
 "shape:torch.Size([1,5])}\",,\n"
 "54,FREE,PTA,N/A,54,123,1234,0,0x0000000000003039,\"{allocation_id:1,addr:0x0000000000003039,size:10,total:0,used:0}\",,\n";

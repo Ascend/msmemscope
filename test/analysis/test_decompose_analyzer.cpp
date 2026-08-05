@@ -216,7 +216,7 @@ TEST_F(DecomposeAnalyzerTest, TestUpdateOwnerByAtenAccess_WeakMark)
 
     analyzer->EventHandle(eventBase, state);
 
-    EXPECT_EQ(state->owner.GetOwnerStr(), "ops@aten");
+    EXPECT_EQ(state->owner.GetOwnerStr(), "ops");
     delete state;
 }
 

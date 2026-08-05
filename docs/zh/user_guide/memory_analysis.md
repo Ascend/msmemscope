@@ -258,13 +258,28 @@ msMemScope工具通过增加Python接口，支持用户自行对代码段做描�
 ### 注意事项
 
 - 使用示例中的方式一和方式二，最多可添加3个不重复的标签。
-- 内存拆解功能可通过两种方式开启，方式一为本节的自动开启，方式二为一键分析功能开启，具体操作可参见[一键分析功能介绍](#一键分析功能介绍)。内存拆解支持以下应用场景。
+- 内存拆解功能可通过两种方式开启，方式一为自动拆解（自动使能），方式二为一键分析功能开启，具体操作可参见[自动拆解功能介绍](#自动拆解功能介绍)和[一键分析功能介绍](#一键分析功能介绍)。内存拆解支持以下应用场景。
 
     |场景|说明|
     |----|-----|
-    |训练|支持在训练过程中对权重、梯度、优化器开启内存拆解功能。|
+    |训练|支持对Ascend for PyTorch（python原生训练）和pytorch fsdp、fsdp2的训练过程开启内存拆解，可对训练过程中的权重、梯度、优化器状态、激活值等内存申请进行拆解分析。|
     |推理|支持为vLLM推理框架开启内存拆解功能，可对推理过程中的load_weight、profile_run、kv_cache和activate等环节的内存占用进行拆解分析。|
-    |强化学习|强化学习（verl）涉及推理和训练两个阶段，其中一键分析功能目前仅支持在强化学习的推理过程中开启内存拆解；训练过程则可使用自动开启方式启用内存拆解功能。|
+    |强化学习|强化学习（verl）涉及推理和训练两个阶段，目前暂不支持内存拆解（verl的内存拆解能力规划中）；如需获取verl场景的内存快照，可使用一键分析功能，具体可参见[一键分析功能介绍](#一键分析功能介绍)。|
+
+### 自动拆解功能介绍
+
+配置`analysis=decompose`（Python接口或命令行`--analysis=decompose`）后，msMemScope自动使能框架级内存拆解钩子，无需手动调用接口。钩子采用惰性激活机制，仅在实际导入的框架上生效，未使用框架的钩子静默不生效。自动拆解支持的场景、框架、版本与拆解内容如下表所示。
+
+|场景|框架|版本|拆解内容|
+|----|----|----|----|
+|训练|Ascend for PyTorch（python原生训练）|不限制|权重、梯度、优化器状态等内存申请。|
+|训练|pytorch fsdp1|2.6+|FSDP分布式训练的激活值、分片权重、all-gather缓冲、梯度等内存申请。|
+|训练|pytorch fsdp2|2.6-2.9、2.10+|FSDP2分布式训练的激活值、分片权重、all-gather缓冲、梯度等内存申请。|
+|推理|vllm-ascend|11.0|推理过程中的load_weight、profile_run、kv_cache、activate等环节的内存占用。|
+
+> [!NOTE]
+>
+> 版本键说明："2.6+"表示2.6及以上版本；"2.6-2.9"表示2.6~2.9各分支的全部版本（含补丁，不含2.10）；"2.10+"表示2.10及以上版本。
 
 ### 使用示例
 
@@ -312,7 +327,7 @@ msMemScope工具通过增加Python接口，支持用户自行对代码段做描�
 
 ### 输出说明
 
-低效内存识别的结果会保存在memscope_dump_{_timestamp_}.csv文件中，具体信息可参见[输出文件说明](./output_file_spec.md)。
+内存拆解的结果会保存在memscope_dump_{_timestamp_}.csv或memscope_dump_{_timestamp_}.db文件中，文件中的owner字段记录了各内存申请事件的显存类别和组件名称，具体信息可参见[输出文件说明](./output_file_spec.md)。
 
 ## 低效内存识别功能介绍
 
@@ -354,15 +369,36 @@ msmemscope ${Application} --analysis=inefficient
 
 ### 功能说明
 
-msMemScope工具支持在当前主流训练或推理场景下，一键开启内存拆解或内存快照功能。
+msMemScope工具支持在当前主流训练或推理场景下，开启内存拆解或内存快照功能。其中内存拆解已支持自动使能，配置`analysis=decompose`即可开启，无需调用接口，具体可参见[自动使能机制](#自动使能机制)；内存快照暂不支持自动使能，仍需通过手动接口开启，具体可参见[手动接口说明](#手动接口说明)。
 
 ### 注意事项
 
 一键分析功能可快速开启内存拆解或内存快照采集，其注意事项可具体参见[内存拆解功能介绍](#内存拆解功能介绍)和[内存快照采集](./memory_profile.md#python接口采集功能介绍)的内容。
 
-### 命令格式
+### 自动使能机制
 
-一键分析功能包含两个接口。
+内存拆解（decompose）已支持自动静默使能：配置`analysis=decompose`（Python接口或命令行`--analysis=decompose`）后，msMemScope自动遍历所有已注册的框架劫持映射，全量注册内存拆解钩子。钩子采用惰性激活机制——仅在目标框架模块被实际导入时才生效，未安装框架的钩子静默不生效，用户无需感知当前使用的框架及版本，也无需手动调用接口。自动拆解支持的框架范围可参见[自动拆解功能介绍](#自动拆解功能介绍)。
+
+在vLLM推理框架下，使用一键分析功能开启内存拆解，仅需配置`analysis=decompose`。
+
+```python
+import msmemscope
+msmemscope.config(
+events="alloc,free",
+data_format="db",
+analysis="decompose",
+output="/vllm-ascend/wlz_data_test"
+)
+msmemscope.start()
+# ... 训练或推理逻辑 ...
+msmemscope.stop()
+```
+
+命令行模式同样无需额外参数：`msmemscope --events=alloc,free --analysis=decompose python train.py`。
+
+### 手动接口说明
+
+一键分析功能包含两个接口。内存快照（snapshot）场景暂不支持自动使能，仍需手动调用以下接口开启。
 
 - init_framework_hooks(framework,version,component,type):
 
@@ -370,10 +406,23 @@ msMemScope工具支持在当前主流训练或推理场景下，一键开启内�
 
     |参数|说明|
     |-----|-------|
-    |framework|支持的框架。当前仅支持vllm_ascend。|
-    |version|框架所对应的版本。当前仅支持vllm_ascend 11.0版本。|
-    |component|指定需要hook的组件或模块。当前仅支持vllm_ascend的worker组件。<br> 例如，vllm_ascend对应的为worker，verl对应的为actor_rollout\ref\critic\reward等。|
-    |type|对应的hook函数。当前支持decompose（内存拆解）和snapshot（内存快照）。|
+    |framework|支持的框架。当前支持vllm_ascend、pytorch、verl和mindspeed_llm，各框架支持的版本、组件与功能组合如下表所示。|
+    |version|框架所对应的版本，各框架支持的版本如下表所示。|
+    |component|指定需要hook的组件或模块，各框架支持的组件如下表所示。|
+    |type|对应的hook函数。当前支持decompose（内存拆解）和snapshot（内存快照），各框架/版本/组件组合可用的功能如下表所示。|
+
+    一键分析支持的场景、框架、版本、组件与功能组合如下表所示。
+
+    |场景|框架|版本|组件|功能|
+    |----|----|----|----|----|
+    |推理|vllm_ascend|11.0|worker|decompose、snapshot|
+    |训练|pytorch|2.6+|fsdp1|decompose|
+    |训练|pytorch|2.6-2.9、2.10+|fsdp2|decompose|
+    |训练|mindspeed_llm|0.12.1|training|snapshot|
+    |强化学习|verl|0.7.0|TaskRunner|snapshot|
+
+    > 版本键说明与自动拆解一致，可参见[自动拆解功能介绍](#自动拆解功能介绍)。
+    > 内存拆解（decompose）场景下钩子已自动使能，一般无需手动调用；若手动调用该接口且type为decompose，自动使能将会让位（互斥语义），以手动注册为准。
 
 - cleanup_framework_hooks()
 
@@ -381,7 +430,7 @@ msMemScope工具支持在当前主流训练或推理场景下，一键开启内�
 
 ### 使用示例
 
-在vLLM推理框架下，使用一键分析功能开启内存拆解。
+在vLLM推理框架下，使用一键分析功能开启内存快照。
 
 1. 导入msMemScope工具，需先设置config，后通过`cleanup_framework_hooks`接口清空历史记录接口，使用`init_framework_hooks`接口配置需要一键分析的框架类型、版本、组件和功能。
 
@@ -392,14 +441,13 @@ msMemScope工具支持在当前主流训练或推理场景下，一键开启内�
     msmemscope.config(
     events="alloc,free",
     data_format="db",
-    analysis="decompose",
     output="/vllm-ascend/wlz_data_test"
     )
     msmemscope.cleanup_framework_hooks()
-    msmemscope.init_framework_hooks("vllm_ascend","11.0","worker","decompose")
+    msmemscope.init_framework_hooks("vllm_ascend","11.0","worker","snapshot")
     ```
 
-2. 设置`msmemscope.start()`和`msmemscope.stop()`，采集数据。采集完成后，落盘数据中会包含内存拆解的字段`owner`。
+2. 设置`msmemscope.start()`和`msmemscope.stop()`，采集数据。采集完成后，落盘数据中会包含内存快照数据。
 
 ### 输出说明
 

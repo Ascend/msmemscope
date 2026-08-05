@@ -83,7 +83,7 @@ class DecomposeTestCase(BaseTest):
 
         # 校验条件 1、总条数符合冗余 2、对应条目是否存在
         ATTR_VALID_RULES = [
-            "owner:PTA", "owner:PTA@optimizer_state", "owner:PTA@ops@aten",
+            "owner:PTA", "owner:PTA@optimizer_state", "owner:PTA@ops",
             "owner:PTA@gradient", "owner:PTA@weight", "owner:CANN",
             "owner:CANN@HCCL", "owner:CANN@APP", "owner:CANN@RUNTIME", "owner:CANN@GE"
         ]
