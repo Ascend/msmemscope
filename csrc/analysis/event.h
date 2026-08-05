@@ -63,9 +63,9 @@ enum class EventBaseType : uint8_t
     SYSTEM,
     CLEAN_UP,
     SNAPSHOT,
+    OOM_DETAIL,
     INVALID,
 };
-
 enum class EventSubType : uint8_t
 {
     PTA_CACHING = 0,
@@ -114,6 +114,10 @@ enum class EventSubType : uint8_t
     STEP,
 
     SNAPSHOT,
+
+    OOM_TRIGGER,
+    OOM_RECENT_ALLOC,
+    OOM_TOP_ALLOC,
 
     INVALID,
 };
@@ -234,6 +238,29 @@ class SnapshotEvent : public EventBase
     uint64_t free_memory = 0;
 
     SnapshotEvent() {}
+};
+
+class OOMTriggerEvent : public EventBase
+{
+   public:
+    uint64_t requestSize = 0;
+    uint64_t flag = 0;
+    std::string funcName;
+
+    OOMTriggerEvent()
+    {
+        eventType = EventBaseType::OOM_DETAIL;
+        eventSubType = EventSubType::OOM_TRIGGER;
+    }
+};
+
+class OOMMemRecordEvent : public EventBase
+{
+   public:
+    int64_t memSize = 0;
+    uint64_t allocTimestamp = 0;
+
+    OOMMemRecordEvent() { eventType = EventBaseType::OOM_DETAIL; }
 };
 
 }  // namespace MemScope

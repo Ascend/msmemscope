@@ -116,7 +116,7 @@ const std::unordered_map<EventBaseType, std::string> EVENT_BASE_TYPE_MAP = {
     {EventBaseType::FREE, "FREE"},           {EventBaseType::MSTX, "MSTX"},
     {EventBaseType::OP_LAUNCH, "OP_LAUNCH"}, {EventBaseType::KERNEL_LAUNCH, "KERNEL_LAUNCH"},
     {EventBaseType::SYSTEM, "SYSTEM"},       {EventBaseType::CLEAN_UP, "CLEAN_UP"},
-    {EventBaseType::SNAPSHOT, "SNAPSHOT"},
+    {EventBaseType::SNAPSHOT, "SNAPSHOT"},   {EventBaseType::OOM_DETAIL, "OOM_DETAIL"},
 };
 
 const std::unordered_map<EventSubType, std::string> EVENT_SUB_TYPE_MAP = {
@@ -153,6 +153,9 @@ const std::unordered_map<EventSubType, std::string> EVENT_SUB_TYPE_MAP = {
     {EventSubType::PROC_EXIT, "PROC_EXIT"},
     {EventSubType::STEP, "STEP"},
     {EventSubType::SNAPSHOT, "SNAPSHOT"},
+    {EventSubType::OOM_TRIGGER, "OOM_TRIGGER"},
+    {EventSubType::OOM_RECENT_ALLOC, "OOM_RECENT_ALLOC"},
+    {EventSubType::OOM_TOP_ALLOC, "OOM_TOP_ALLOC"},
 };
 
 const std::vector<std::pair<std::string, std::string>> DUMP_RECORD_TABLE_SQL = {{"ID", "INTEGER"},

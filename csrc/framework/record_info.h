@@ -26,6 +26,7 @@
 #include <unordered_map>
 
 #include "securec.h"
+#include "state_manager.h"
 #include "utils.h"
 
 namespace MemScope
@@ -159,6 +160,26 @@ struct CallStackString
     std::string pyStack;
     CallStackString() {}
     CallStackString(std::string& c, std::string& python) : cStack(c), pyStack(python) {}
+};
+
+struct OOMMemRecord
+{
+    PoolType poolType = PoolType::INVALID;
+    uint64_t ptr = 0;
+    int64_t memSize = 0;
+    uint64_t allocTimestamp = 0;
+    std::string cCallStack;
+    std::string pyCallStack;
+};
+
+struct OOMTriggerInfo
+{
+    size_t requestSize = 0;
+    uint64_t flag = 0;
+    std::string funcName;
+    CallStackString stack;
+    int32_t deviceId = GD_INVALID_NUM;
+    uint64_t timestamp = 0;
 };
 
 }  // namespace MemScope

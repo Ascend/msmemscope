@@ -107,6 +107,9 @@ void ShowHelpInfo()
         << "                                               - decompose : Enables memory categorization" << std::endl
         << "                                               - inefficient : Enables inefficient memory recognition"
         << std::endl
+        << "                                               - oom[:K] : Enables OOM detailed analysis," << std::endl
+        << "                                                 K for top-K records (default:10, range:[1,1000])"
+        << std::endl
         << "                                               - none : Disables all analysis features" << std::endl
         << "                                             Leave empty to disable all analysis features." << std::endl
         << "    --compare                                Enable memory data comparison." << std::endl
@@ -175,7 +178,9 @@ void SetAnalysisDefaultConfig(Config &config)
         {AnalysisType::INEFFICIENCY_ANALYSIS, EventType::ALLOC_EVENT},
         {AnalysisType::INEFFICIENCY_ANALYSIS, EventType::FREE_EVENT},
         {AnalysisType::INEFFICIENCY_ANALYSIS, EventType::ACCESS_EVENT},
-        {AnalysisType::INEFFICIENCY_ANALYSIS, EventType::LAUNCH_EVENT}};
+        {AnalysisType::INEFFICIENCY_ANALYSIS, EventType::LAUNCH_EVENT},
+        {AnalysisType::OOM_ANALYSIS, EventType::ALLOC_EVENT},
+        {AnalysisType::OOM_ANALYSIS, EventType::FREE_EVENT}};
 
     BitField<decltype(config.analysisType)> analysisTypeBit(config.analysisType);
     BitField<decltype(config.eventType)> eventTypeBit(config.eventType);
@@ -354,7 +359,30 @@ void ParseAnalysis(const std::string &param, Config &config, bool &printHelpInfo
                 config.analysisType = 0;
                 return;
             }
-            if (analysisMp.count(analysisMethod))
+            if (analysisMethod.rfind("oom", 0) == 0)
+            {
+                analysisTypeBit.setBit(static_cast<size_t>(AnalysisType::OOM_ANALYSIS));
+                size_t colonPos = analysisMethod.find(':');
+                if (colonPos != std::string::npos)
+                {
+                    std::string kStr = analysisMethod.substr(colonPos + 1);
+                    uint32_t kVal = 0;
+                    Utility::IntValidateRule verRule;
+                    verRule.minValue = 1;
+                    verRule.maxValue = 1000;
+                    if (kStr.empty() || !Utility::IsValidInteger(kStr, verRule) || !Utility::StrToUint32(kVal, kStr))
+                    {
+                        std::cout << "[msmemscope] Warn: invalid OOM top-K value '" << kStr << "', using default 10."
+                                  << std::endl;
+                        config.oomTopK = 10;
+                    }
+                    else
+                    {
+                        config.oomTopK = static_cast<uint16_t>(kVal);
+                    }
+                }
+            }
+            else if (analysisMp.count(analysisMethod))
             {
                 analysisTypeBit.setBit(static_cast<size_t>(analysisMp[analysisMethod]));
             }

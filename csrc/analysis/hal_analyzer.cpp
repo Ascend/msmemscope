@@ -101,9 +101,10 @@ bool HalAnalyzer::IsHalAnalysisEnable()
 {
     // 动态读取当前配置（每个事件只取一次锁），保证分析开关与运行中修改的配置保持一致
     const Config& config = GetConfig();
-    // 确认analysis设置中是否包含泄漏分析
+    // 确认analysis设置中是否包含泄漏分析或OOM详细分析
     BitField<decltype(config.analysisType)> analysisType(config.analysisType);
-    if (!(analysisType.checkBit(static_cast<size_t>(AnalysisType::LEAKS_ANALYSIS))))
+    if (!(analysisType.checkBit(static_cast<size_t>(AnalysisType::LEAKS_ANALYSIS))) &&
+        !(analysisType.checkBit(static_cast<size_t>(AnalysisType::OOM_ANALYSIS))))
     {
         return false;
     }
@@ -177,7 +178,18 @@ void HalAnalyzer::RecordMalloc(const ClientId& clientId, std::shared_ptr<const M
     }
     else
     {
-        memtables_[clientId].emplace(memkey);
+        HalMemInfo halMemInfo{};
+        halMemInfo.size = memEvent->size;
+        halMemInfo.timestamp = memEvent->timestamp;
+        if (!memEvent->cCallStack.empty())
+        {
+            halMemInfo.cCallStack = memEvent->cCallStack;
+        }
+        if (!memEvent->pyCallStack.empty())
+        {
+            halMemInfo.pyCallStack = memEvent->pyCallStack;
+        }
+        memtables_[clientId].emplace(memkey, halMemInfo);
     }
 }
 
@@ -204,12 +216,12 @@ void HalAnalyzer::CheckLeak(const size_t clientId)
     bool foundLeaks = false;
     if (memtables_.find(clientId) != memtables_.end())
     {
-        for (const auto& memkey : memtables_[clientId])
+        for (const auto& pair : memtables_[clientId])
         {
             // 表内条目均为未释放的存活块（free即删除），全部视为泄漏
             foundLeaks = true;
-            LOG_WARN("[client %u][device: %d]: Leak memory in Malloc operator, addr: 0x%lx", clientId, memkey.deviceId,
-                     memkey.addr);
+            LOG_WARN("[client %u][device: %d]: Leak memory in Malloc operator, addr: 0x%lx", clientId,
+                     pair.first.deviceId, pair.first.addr);
         }
     }
     if (!foundLeaks)
@@ -246,6 +258,29 @@ HalAnalyzer::~HalAnalyzer()
     // Log将在HalAnalyzer之后析构，因此此处调用LeakAnalyze使用LOG宏是安全的
     LeakAnalyze();
     UnSubscribe();
+}
+
+std::vector<OOMMemRecord> HalAnalyzer::QueryUnfreedRecords(uint32_t clientId) const
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    std::vector<OOMMemRecord> records;
+    auto it = memtables_.find(clientId);
+    if (it == memtables_.end())
+    {
+        return records;
+    }
+    for (const auto& pair : it->second)
+    {
+        OOMMemRecord rec;
+        rec.poolType = PoolType::HAL;
+        rec.ptr = pair.first.addr;
+        rec.memSize = pair.second.size;
+        rec.allocTimestamp = pair.second.timestamp;
+        rec.cCallStack = pair.second.cCallStack;
+        rec.pyCallStack = pair.second.pyCallStack;
+        records.push_back(rec);
+    }
+    return records;
 }
 
 }  // namespace MemScope

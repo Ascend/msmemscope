@@ -1131,4 +1131,59 @@ void EventReport::ReportMemorySnapshotOnOOM(const CallStackString& stack)
     }
 }
 
+bool EventReport::ReportOOMTrigger(const OOMTriggerInfo& info)
+{
+    int32_t devId = info.deviceId;
+    if (devId == GD_INVALID_NUM)
+    {
+        if (!GetDeviceInfo::Instance().GetDeviceId(devId) || devId == GD_INVALID_NUM)
+        {
+            LOG_ERROR("Failed to get device ID for OOM trigger event");
+            return false;
+        }
+    }
+
+    if (IsNeedSkip(devId))
+    {
+        return true;
+    }
+
+    std::shared_ptr<OOMTriggerEvent> event = std::make_shared<OOMTriggerEvent>();
+    event->device = devId;
+    event->requestSize = info.requestSize;
+    event->flag = info.flag;
+    event->funcName = info.funcName;
+    event->cCallStack = info.stack.cStack;
+    event->pyCallStack = info.stack.pyStack;
+    event->timestamp = info.timestamp;
+    event->name = "OOM_Trigger";
+
+    Process::GetInstance().SendEvent(event);
+
+    return true;
+}
+
+bool EventReport::ReportOOMMemRecord(const OOMMemRecord& record, EventSubType subType)
+{
+    if (IsNeedSkip(GD_INVALID_NUM))
+    {
+        return true;
+    }
+
+    std::shared_ptr<OOMMemRecordEvent> event = std::make_shared<OOMMemRecordEvent>();
+    event->eventSubType = subType;
+    event->device = GD_INVALID_NUM;
+    event->poolType = record.poolType;
+    event->addr = record.ptr;
+    event->memSize = record.memSize;
+    event->allocTimestamp = record.allocTimestamp;
+    event->cCallStack = record.cCallStack;
+    event->pyCallStack = record.pyCallStack;
+    event->name = (subType == EventSubType::OOM_RECENT_ALLOC) ? "OOM_RecentAlloc" : "OOM_TopAlloc";
+
+    Process::GetInstance().SendEvent(event);
+
+    return true;
+}
+
 }  // namespace MemScope
