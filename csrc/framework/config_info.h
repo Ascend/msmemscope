@@ -150,6 +150,11 @@ struct UserCommand
     std::vector<std::string> cmd;
     std::vector<std::string> inputPaths;
     std::string outputPath;
+    /* 日志等级冲突裁决的解析状态：
+     * 显式 --log-level 优先于快捷开关；多个快捷开关并存时按"可见度最高者生效" */
+    bool logLevelExplicitSet{false};  // 是否显式指定 --log-level
+    bool logLevelVerboseSet{false};   // --verbose/-v/--debug 任一出现
+    bool logLevelQuietSet{false};     // --quiet/-q 出现
 };
 
 }  // namespace MemScope

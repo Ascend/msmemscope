@@ -17,6 +17,8 @@
  
 #include <gtest/gtest.h>
 #include <gtest/internal/gtest-port.h>
+#include <cstdio>
+#include <fstream>
 #include <string>
 #include <vector>
 
@@ -1160,4 +1162,446 @@ TEST(ClientParser, pass_events_and_analysis_none_expect_no_collection_no_analysi
     ASSERT_EQ(cmd.config.eventType, 0);
     ASSERT_EQ(cmd.config.dumpEventType, 0);
     ASSERT_EQ(cmd.config.analysisType, 0);
+}
+
+// ==================== RFC: CLI Standardization Tests ====================
+
+TEST(ClientParser, pass_new_standard_format_expect_data_format_parsed)
+{
+    std::vector<const char*> argv = {
+        "msmemscope",
+        "--format=db"
+    };
+
+    optind = 1;
+    ClientParser cliParser;
+    UserCommand cmd = cliParser.Parse(argv.size(), const_cast<char**>(argv.data()));
+    ASSERT_FALSE(cmd.printHelpInfo);
+    ASSERT_EQ(cmd.config.dataFormat, 1);
+
+    argv = {
+        "msmemscope",
+        "--format=csv"
+    };
+    cmd = cliParser.Parse(argv.size(), const_cast<char**>(argv.data()));
+    ASSERT_FALSE(cmd.printHelpInfo);
+    ASSERT_EQ(cmd.config.dataFormat, 0);
+}
+
+TEST(ClientParser, pass_new_standard_input_path_expect_parsed)
+{
+    // 创建两个临时文件作为合法的 compare 输入
+    const char* file1 = "cli_std_input_tmp1.csv";
+    const char* file2 = "cli_std_input_tmp2.csv";
+    {
+        std::ofstream ofs1(file1);
+        std::ofstream ofs2(file2);
+        ofs1 << "ID,Event\n" << std::endl;
+        ofs2 << "ID,Event\n" << std::endl;
+    }
+
+    std::string inputArg = std::string("--input-path=") + file1 + "," + file2;
+    std::vector<const char*> argv = {
+        "msmemscope",
+        inputArg.c_str()
+    };
+
+    optind = 1;
+    ClientParser cliParser;
+    UserCommand cmd = cliParser.Parse(argv.size(), const_cast<char**>(argv.data()));
+    std::remove(file1);
+    std::remove(file2);
+    ASSERT_TRUE(cmd.config.inputCorrectPaths);
+    ASSERT_EQ(cmd.inputPaths.size(), PATHSIZE);
+}
+
+TEST(ClientParser, pass_new_standard_output_path_expect_output_dir_set)
+{
+    std::vector<const char*> argv = {
+        "msmemscope",
+        "--output-path=./testmsmemscope_cli_std"
+    };
+
+    optind = 1;
+    ClientParser cliParser;
+    UserCommand cmd = cliParser.Parse(argv.size(), const_cast<char**>(argv.data()));
+    ASSERT_FALSE(cmd.printHelpInfo);
+    ASSERT_NE(cmd.config.outputDir[0], '\0');
+    ASSERT_TRUE(cmd.config.outputCorrectPaths);
+}
+
+TEST(ClientParser, pass_old_alias_expect_deprecation_warning)
+{
+    // --input 别名：解析行为不变，stderr 打印弃用告警
+    {
+        std::vector<const char*> argv = {
+            "msmemscope",
+            "--input=path1,path2"
+        };
+        optind = 1;
+        ClientParser cliParser;
+        testing::internal::CaptureStderr();
+        UserCommand cmd = cliParser.Parse(argv.size(), const_cast<char**>(argv.data()));
+        std::string capture = testing::internal::GetCapturedStderr();
+        ASSERT_FALSE(cmd.config.inputCorrectPaths);
+        ASSERT_NE(capture.find("[msmemscope] Deprecation:"), std::string::npos);
+        ASSERT_NE(capture.find("'--input' is deprecated, use '--input-path'"), std::string::npos);
+    }
+
+    // --output 别名：仍能正确解析
+    {
+        std::vector<const char*> argv = {
+            "msmemscope",
+            "--output=./testmsmemscope_cli_std"
+        };
+        optind = 1;
+        ClientParser cliParser;
+        testing::internal::CaptureStderr();
+        UserCommand cmd = cliParser.Parse(argv.size(), const_cast<char**>(argv.data()));
+        std::string capture = testing::internal::GetCapturedStderr();
+        ASSERT_NE(cmd.config.outputDir[0], '\0');
+        ASSERT_NE(capture.find("'--output' is deprecated, use '--output-path'"), std::string::npos);
+    }
+
+    // --data-format 别名：仍能正确解析
+    {
+        std::vector<const char*> argv = {
+            "msmemscope",
+            "--data-format=db"
+        };
+        optind = 1;
+        ClientParser cliParser;
+        testing::internal::CaptureStderr();
+        UserCommand cmd = cliParser.Parse(argv.size(), const_cast<char**>(argv.data()));
+        std::string capture = testing::internal::GetCapturedStderr();
+        ASSERT_EQ(cmd.config.dataFormat, 1);
+        ASSERT_NE(capture.find("'--data-format' is deprecated, use '--format'"), std::string::npos);
+    }
+}
+
+TEST(ClientParser, pass_short_version_expect_print_version_info)
+{
+    std::vector<const char*> argv = {
+        "msmemscope",
+        "-V"
+    };
+
+    optind = 1;
+    ClientParser cliParser;
+    UserCommand cmd = cliParser.Parse(argv.size(), const_cast<char**>(argv.data()));
+    ASSERT_TRUE(cmd.printVersionInfo);
+
+    argv = {
+        "msmemscope",
+        "--version"
+    };
+    cmd = cliParser.Parse(argv.size(), const_cast<char**>(argv.data()));
+    ASSERT_TRUE(cmd.printVersionInfo);
+}
+
+TEST(ClientParser, pass_verbose_expect_log_level_debug)
+{
+    const uint8_t debugLv = static_cast<uint8_t>(LogLv::DEBUG);
+
+    std::vector<const char*> argv = {
+        "msmemscope",
+        "-v"
+    };
+    optind = 1;
+    ClientParser cliParser;
+    UserCommand cmd = cliParser.Parse(argv.size(), const_cast<char**>(argv.data()));
+    ASSERT_FALSE(cmd.printVersionInfo);
+    ASSERT_EQ(cmd.config.logLevel, debugLv);
+
+    argv = {
+        "msmemscope",
+        "--verbose"
+    };
+    cmd = cliParser.Parse(argv.size(), const_cast<char**>(argv.data()));
+    ASSERT_EQ(cmd.config.logLevel, debugLv);
+}
+
+TEST(ClientParser, pass_quiet_expect_log_level_error)
+{
+    const uint8_t errorLv = static_cast<uint8_t>(LogLv::ERROR);
+
+    std::vector<const char*> argv = {
+        "msmemscope",
+        "-q"
+    };
+    optind = 1;
+    ClientParser cliParser;
+    UserCommand cmd = cliParser.Parse(argv.size(), const_cast<char**>(argv.data()));
+    ASSERT_EQ(cmd.config.logLevel, errorLv);
+
+    argv = {
+        "msmemscope",
+        "--quiet"
+    };
+    cmd = cliParser.Parse(argv.size(), const_cast<char**>(argv.data()));
+    ASSERT_EQ(cmd.config.logLevel, errorLv);
+}
+
+TEST(ClientParser, pass_debug_expect_log_level_debug)
+{
+    std::vector<const char*> argv = {
+        "msmemscope",
+        "--debug"
+    };
+
+    optind = 1;
+    ClientParser cliParser;
+    UserCommand cmd = cliParser.Parse(argv.size(), const_cast<char**>(argv.data()));
+    ASSERT_EQ(cmd.config.logLevel, static_cast<uint8_t>(LogLv::DEBUG));
+}
+
+TEST(ClientParser, pass_log_level_new_values_expect_parsed)
+{
+    std::vector<const char*> argv = {
+        "msmemscope",
+        "--log-level=debug"
+    };
+    optind = 1;
+    ClientParser cliParser;
+    UserCommand cmd = cliParser.Parse(argv.size(), const_cast<char**>(argv.data()));
+    ASSERT_FALSE(cmd.printHelpInfo);
+    ASSERT_EQ(cmd.config.logLevel, static_cast<uint8_t>(LogLv::DEBUG));
+
+    argv = {
+        "msmemscope",
+        "--log-level=warning"
+    };
+    cmd = cliParser.Parse(argv.size(), const_cast<char**>(argv.data()));
+    ASSERT_FALSE(cmd.printHelpInfo);
+    ASSERT_EQ(cmd.config.logLevel, static_cast<uint8_t>(LogLv::WARN));
+}
+
+TEST(ClientParser, pass_log_level_warn_alias_expect_warn_with_deprecation)
+{
+    std::vector<const char*> argv = {
+        "msmemscope",
+        "--log-level=warn"
+    };
+
+    optind = 1;
+    ClientParser cliParser;
+    testing::internal::CaptureStderr();
+    UserCommand cmd = cliParser.Parse(argv.size(), const_cast<char**>(argv.data()));
+    std::string capture = testing::internal::GetCapturedStderr();
+    ASSERT_EQ(cmd.config.logLevel, static_cast<uint8_t>(LogLv::WARN));
+    ASSERT_NE(capture.find("'--log-level=warn' is deprecated, use '--log-level=warning'"), std::string::npos);
+}
+
+TEST(ClientParser, default_log_level_expect_info)
+{
+    std::vector<const char*> argv = {
+        "msmemscope",
+    };
+
+    optind = 1;
+    ClientParser cliParser;
+    UserCommand cmd = cliParser.Parse(argv.size(), const_cast<char**>(argv.data()));
+    ASSERT_EQ(cmd.config.logLevel, static_cast<uint8_t>(LogLv::INFO));
+}
+
+TEST(ClientParser, pass_legacy_level_value_expect_parsed_with_deprecation)
+{
+    // --level=0 → op，带弃用告警
+    {
+        std::vector<const char*> argv = {
+            "msmemscope",
+            "--level=0"
+        };
+        optind = 1;
+        ClientParser cliParser;
+        testing::internal::CaptureStderr();
+        UserCommand cmd = cliParser.Parse(argv.size(), const_cast<char**>(argv.data()));
+        std::string capture = testing::internal::GetCapturedStderr();
+        ASSERT_EQ(cmd.config.levelType, 1);
+        ASSERT_NE(capture.find("'--level=0' is deprecated, use '--level=op'"), std::string::npos);
+    }
+
+    // --level=1 → kernel，带弃用告警
+    {
+        std::vector<const char*> argv = {
+            "msmemscope",
+            "--level=1"
+        };
+        optind = 1;
+        ClientParser cliParser;
+        testing::internal::CaptureStderr();
+        UserCommand cmd = cliParser.Parse(argv.size(), const_cast<char**>(argv.data()));
+        std::string capture = testing::internal::GetCapturedStderr();
+        ASSERT_EQ(cmd.config.levelType, 2);
+        ASSERT_NE(capture.find("'--level=1' is deprecated, use '--level=kernel'"), std::string::npos);
+    }
+
+    // 新标准取值 op/kernel 不触发告警
+    {
+        std::vector<const char*> argv = {
+            "msmemscope",
+            "--level=op"
+        };
+        optind = 1;
+        ClientParser cliParser;
+        testing::internal::CaptureStderr();
+        UserCommand cmd = cliParser.Parse(argv.size(), const_cast<char**>(argv.data()));
+        std::string capture = testing::internal::GetCapturedStderr();
+        ASSERT_EQ(cmd.config.levelType, 1);
+        ASSERT_EQ(capture.find("Deprecation"), std::string::npos);
+    }
+}
+
+TEST(ClientParser, legacy_commands_regression_expect_unchanged)
+{
+    // 存量命令回归：事件配置 + 程序参数仍正常
+    std::vector<const char*> argv = {
+        "msmemscope",
+        "--events=alloc,free",
+        "--",
+        "python",
+        "train.py"
+    };
+
+    optind = 1;
+    ClientParser cliParser;
+    UserCommand cmd = cliParser.Parse(argv.size(), const_cast<char**>(argv.data()));
+    ASSERT_EQ(cmd.config.eventType, 3);
+    ASSERT_EQ(cmd.config.dumpEventType, 3);
+    ASSERT_FALSE(cmd.cmd.empty());
+    ASSERT_EQ(cmd.cmd[0], "python");
+    ASSERT_EQ(cmd.cmd[1], "train.py");
+
+    // 旧别名组合命令仍可解析
+    argv = {
+        "msmemscope",
+        "--data-format=db",
+        "--output=./testmsmemscope_cli_std"
+    };
+    cmd = cliParser.Parse(argv.size(), const_cast<char**>(argv.data()));
+    ASSERT_EQ(cmd.config.dataFormat, 1);
+    ASSERT_NE(cmd.config.outputDir[0], '\0');
+}
+
+TEST(ClientParser, show_help_info_standardized_format)
+{
+    std::vector<const char*> argv = {
+        "msmemscope",
+        "--help"
+    };
+
+    optind = 1;
+    ClientParser cliParser;
+    testing::internal::CaptureStdout();
+    cliParser.Interpretor(argv.size(), const_cast<char**>(argv.data()));
+    std::string capture = testing::internal::GetCapturedStdout();
+
+    // Description / Usage
+    ASSERT_NE(capture.find("Description:"), std::string::npos);
+    ASSERT_NE(capture.find("Usage:"), std::string::npos);
+
+    // 参数分组
+    ASSERT_NE(capture.find("General options:"), std::string::npos);
+    ASSERT_NE(capture.find("Collection options:"), std::string::npos);
+    ASSERT_NE(capture.find("Analysis options:"), std::string::npos);
+    ASSERT_NE(capture.find("Input / Output options:"), std::string::npos);
+
+    // 标准短选项与 metavar
+    ASSERT_NE(capture.find("-V, --version"), std::string::npos);
+    ASSERT_NE(capture.find("-v, --verbose"), std::string::npos);
+    ASSERT_NE(capture.find("-q, --quiet"), std::string::npos);
+    ASSERT_NE(capture.find("--input-path <DIR>"), std::string::npos);
+    ASSERT_NE(capture.find("--output-path <DIR>"), std::string::npos);
+    ASSERT_NE(capture.find("--format <FORMAT>"), std::string::npos);
+
+    // 默认值标注与示例
+    ASSERT_NE(capture.find("[default: info]"), std::string::npos);
+    ASSERT_NE(capture.find("Examples:"), std::string::npos);
+    ASSERT_NE(capture.find("msmemscope -- python train.py"), std::string::npos);
+
+    // 帮助信息中不应出现隐藏别名
+    ASSERT_EQ(capture.find("--data-format"), std::string::npos);
+}
+
+TEST(ClientParser, log_level_conflict_shortcuts_highest_visibility_wins)
+{
+    const uint8_t debugLv = static_cast<uint8_t>(LogLv::DEBUG);
+    const uint8_t errorLv = static_cast<uint8_t>(LogLv::ERROR);
+
+    // 多个快捷开关并存时，按"可见度最高者生效"（debug 最高），与参数顺序无关
+    std::vector<const char*> argv = {
+        "msmemscope",
+        "-q", "-v"
+    };
+    optind = 1;
+    ClientParser cliParser;
+    UserCommand cmd = cliParser.Parse(argv.size(), const_cast<char**>(argv.data()));
+    ASSERT_EQ(cmd.config.logLevel, debugLv);
+
+    argv = {
+        "msmemscope",
+        "-v", "-q"
+    };
+    cmd = cliParser.Parse(argv.size(), const_cast<char**>(argv.data()));
+    ASSERT_EQ(cmd.config.logLevel, debugLv);
+
+    argv = {
+        "msmemscope",
+        "--verbose", "--quiet"
+    };
+    cmd = cliParser.Parse(argv.size(), const_cast<char**>(argv.data()));
+    ASSERT_EQ(cmd.config.logLevel, debugLv);
+
+    argv = {
+        "msmemscope",
+        "--quiet", "--debug"
+    };
+    cmd = cliParser.Parse(argv.size(), const_cast<char**>(argv.data()));
+    ASSERT_EQ(cmd.config.logLevel, debugLv);
+
+    // 仅有 --quiet/-q 时取 error
+    argv = {
+        "msmemscope",
+        "-q"
+    };
+    cmd = cliParser.Parse(argv.size(), const_cast<char**>(argv.data()));
+    ASSERT_EQ(cmd.config.logLevel, errorLv);
+}
+
+TEST(ClientParser, log_level_conflict_explicit_log_level_wins)
+{
+    const uint8_t debugLv = static_cast<uint8_t>(LogLv::DEBUG);
+    const uint8_t infoLv = static_cast<uint8_t>(LogLv::INFO);
+    const uint8_t errorLv = static_cast<uint8_t>(LogLv::ERROR);
+
+    // 显式 --log-level 优先于快捷开关，与参数顺序无关
+    std::vector<const char*> argv = {
+        "msmemscope",
+        "--verbose", "--log-level=error"
+    };
+    optind = 1;
+    ClientParser cliParser;
+    UserCommand cmd = cliParser.Parse(argv.size(), const_cast<char**>(argv.data()));
+    ASSERT_EQ(cmd.config.logLevel, errorLv);
+
+    argv = {
+        "msmemscope",
+        "--log-level=error", "--verbose"
+    };
+    cmd = cliParser.Parse(argv.size(), const_cast<char**>(argv.data()));
+    ASSERT_EQ(cmd.config.logLevel, errorLv);
+
+    argv = {
+        "msmemscope",
+        "-q", "--log-level=info"
+    };
+    cmd = cliParser.Parse(argv.size(), const_cast<char**>(argv.data()));
+    ASSERT_EQ(cmd.config.logLevel, infoLv);
+
+    argv = {
+        "msmemscope",
+        "--log-level=debug", "-q"
+    };
+    cmd = cliParser.Parse(argv.size(), const_cast<char**>(argv.data()));
+    ASSERT_EQ(cmd.config.logLevel, debugLv);
 }

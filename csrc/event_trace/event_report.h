@@ -131,7 +131,7 @@ class GetDeviceInfo
         const char* visibleDeviceEnv = std::getenv("ASCEND_RT_VISIBLE_DEVICES");
         if (!visibleDeviceEnv)
         {
-            LOG_INFO("ASCEND_RT_VISIBLE_DEVICES environment variable not found!");
+            LOG_DEBUG("ASCEND_RT_VISIBLE_DEVICES environment variable not found!");
             return;
         }
 

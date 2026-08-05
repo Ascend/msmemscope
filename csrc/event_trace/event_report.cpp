@@ -231,7 +231,7 @@ EventReport::EventReport(MemScopeCommType type)
     HalAnalyzer::GetInstance();
     StepInnerAnalyzer::GetInstance();
 
-    LOG_INFO("LOG INIT");
+    LOG_DEBUG("LOG INIT");
     RegisterRtProfileCallback();
 
     return;
