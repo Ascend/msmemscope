@@ -16,18 +16,49 @@
  */
 
 #include <gtest/gtest.h>
-#include "decompose_analyzer.h"
 #include <string>
+#include "decompose_analyzer.h"
+#include "describe_trace.h"
 #include "event_dispatcher.h"
+#include "memory_state_manager.h"
 
 namespace MemScope {
+
+// 清空当前线程 DescribeTrace 标签状态(线程局部单例跨用例残留隔离):
+// 系统标签栈可能同标签计数嵌套, 循环撤销至该级别为空
+static void ClearDescribeState()
+{
+    DescribeTrace& trace = DescribeTrace::GetInstance();
+    std::vector<std::string> labels = trace.GetDescribe();
+    for (uint8_t level = 0; level < static_cast<uint8_t>(OwnerLevel::OWNER_LEVEL_NUM); ++level)
+    {
+        if (labels[level].empty())
+        {
+            continue;
+        }
+        if (level <= static_cast<uint8_t>(OwnerLevel::DETAIL_2))
+        {
+            while (!trace.GetDescribe()[level].empty())
+            {
+                trace.EraseDescribe(static_cast<OwnerLevel>(level), trace.GetDescribe()[level]);
+            }
+        }
+        else
+        {
+            trace.EraseUserDescribe(labels[level]);
+        }
+    }
+}
 
 class DecomposeAnalyzerTest : public ::testing::Test {
 protected:
     void SetUp() override
     {
         analyzer = &DecomposeAnalyzer::GetInstance();
+        ClearDescribeState();
     }
+
+    void TearDown() override { ClearDescribeState(); }
 
     DecomposeAnalyzer* analyzer;
 };
@@ -37,15 +68,13 @@ TEST_F(DecomposeAnalyzerTest, TestInitOwner_CANN)
     auto memoryEvent = std::make_shared<MemoryEvent>();
     memoryEvent->eventType = EventBaseType::MALLOC;
     memoryEvent->eventSubType = EventSubType::HAL;
-    memoryEvent->describeOwner = "hal";
 
     std::shared_ptr<EventBase> eventBase = memoryEvent;
     MemoryState* state = new MemoryState();
 
     analyzer->EventHandle(eventBase, state);
 
-    EXPECT_EQ(state->memscopeDefinedOwner, "CANN@UNKNOWN");
-    EXPECT_EQ(state->userDefinedOwner, "hal");
+    EXPECT_EQ(state->owner.GetOwnerStr(), "CANN@UNKNOWN");
     delete state;
 }
 
@@ -54,7 +83,6 @@ TEST_F(DecomposeAnalyzerTest, TestInitOwner_CANN_HCCL)
     auto memoryEvent = std::make_shared<MemoryEvent>();
     memoryEvent->eventType = EventBaseType::MALLOC;
     memoryEvent->eventSubType = EventSubType::HAL;
-    memoryEvent->describeOwner = "hal";
     memoryEvent->moduleId = 3;
 
     std::shared_ptr<EventBase> eventBase = memoryEvent;
@@ -62,8 +90,7 @@ TEST_F(DecomposeAnalyzerTest, TestInitOwner_CANN_HCCL)
 
     analyzer->EventHandle(eventBase, state);
 
-    EXPECT_EQ(state->memscopeDefinedOwner, "CANN@HCCL");
-    EXPECT_EQ(state->userDefinedOwner, "hal");
+    EXPECT_EQ(state->owner.GetOwnerStr(), "CANN@HCCL");
     delete state;
 }
 
@@ -72,33 +99,28 @@ TEST_F(DecomposeAnalyzerTest, TestInitOwner_PTA_CACHING)
     auto memoryEvent = std::make_shared<MemoryEvent>();
     memoryEvent->eventType = EventBaseType::MALLOC;
     memoryEvent->eventSubType = EventSubType::PTA_CACHING;
-    memoryEvent->describeOwner = "pta_caching";
 
     std::shared_ptr<EventBase> eventBase = memoryEvent;
     MemoryState* state = new MemoryState();
 
     analyzer->EventHandle(eventBase, state);
 
-    EXPECT_EQ(state->memscopeDefinedOwner, "PTA");
-    EXPECT_EQ(state->userDefinedOwner, "pta_caching");
+    EXPECT_EQ(state->owner.GetOwnerStr(), "PTA");
     delete state;
 }
-
 
 TEST_F(DecomposeAnalyzerTest, TestInitOwner_PTA_WORKSPACE)
 {
     auto memoryEvent = std::make_shared<MemoryEvent>();
     memoryEvent->eventType = EventBaseType::MALLOC;
     memoryEvent->eventSubType = EventSubType::PTA_WORKSPACE;
-    memoryEvent->describeOwner = "pta_workspace";
 
     std::shared_ptr<EventBase> eventBase = memoryEvent;
     MemoryState* state = new MemoryState();
 
     analyzer->EventHandle(eventBase, state);
 
-    EXPECT_EQ(state->memscopeDefinedOwner, "PTA_WORKSPACE");
-    EXPECT_EQ(state->userDefinedOwner, "pta_workspace");
+    EXPECT_EQ(state->owner.GetOwnerStr(), "PTA_WORKSPACE");
     delete state;
 }
 
@@ -107,15 +129,13 @@ TEST_F(DecomposeAnalyzerTest, TestInitOwner_MINDSPORE)
     auto memoryEvent = std::make_shared<MemoryEvent>();
     memoryEvent->eventType = EventBaseType::MALLOC;
     memoryEvent->eventSubType = EventSubType::MINDSPORE;
-    memoryEvent->describeOwner = "mindspore";
 
     std::shared_ptr<EventBase> eventBase = memoryEvent;
     MemoryState* state = new MemoryState();
 
     analyzer->EventHandle(eventBase, state);
 
-    EXPECT_EQ(state->memscopeDefinedOwner, "MINDSPORE");
-    EXPECT_EQ(state->userDefinedOwner, "mindspore");
+    EXPECT_EQ(state->owner.GetOwnerStr(), "MINDSPORE");
     delete state;
 }
 
@@ -124,117 +144,132 @@ TEST_F(DecomposeAnalyzerTest, TestInitOwner_ATB)
     auto memoryEvent = std::make_shared<MemoryEvent>();
     memoryEvent->eventType = EventBaseType::MALLOC;
     memoryEvent->eventSubType = EventSubType::ATB;
-    memoryEvent->describeOwner = "atb";
 
     std::shared_ptr<EventBase> eventBase = memoryEvent;
     MemoryState* state = new MemoryState();
 
     analyzer->EventHandle(eventBase, state);
 
-    EXPECT_EQ(state->memscopeDefinedOwner, "ATB");
-    EXPECT_EQ(state->userDefinedOwner, "atb");
+    EXPECT_EQ(state->owner.GetOwnerStr(), "ATB");
     delete state;
 }
 
 TEST_F(DecomposeAnalyzerTest, TestInitOwner_UnknownSubType)
 {
     auto memoryEvent = std::make_shared<MemoryEvent>();
-    memoryEvent->eventType =  static_cast<EventBaseType>(999);  // 无效值
+    memoryEvent->eventType = static_cast<EventBaseType>(999);  // 无效值
     memoryEvent->eventSubType = static_cast<EventSubType>(999);
-    memoryEvent->describeOwner = "unknown";
 
     std::shared_ptr<EventBase> eventBase = memoryEvent;
     MemoryState* state = new MemoryState();
 
     analyzer->EventHandle(eventBase, state);
 
-    EXPECT_EQ(state->memscopeDefinedOwner, "");
-    EXPECT_EQ(state->userDefinedOwner, "");
+    EXPECT_TRUE(state->owner.GetOwnerStr().empty());
     delete state;
 }
 
-TEST_F(DecomposeAnalyzerTest, TestUpdateOwnerByAtenAccess_OpsAten_UnknownSubType)
+TEST_F(DecomposeAnalyzerTest, TestInitOwner_WithDescribeLabels)
+{
+    // 事件不再携带 owner: InitOwner 分析时直接从 DescribeTrace 读取当前线程分级标签
+    DescribeTrace& trace = DescribeTrace::GetInstance();
+    trace.AddDescribe(OwnerLevel::COMPONENT, "ut_fsdp2");
+    trace.AddDescribe(OwnerLevel::PROCESS, "ut_activation");
+
+    auto memoryEvent = std::make_shared<MemoryEvent>();
+    memoryEvent->eventType = EventBaseType::MALLOC;
+    memoryEvent->eventSubType = EventSubType::PTA_CACHING;
+
+    std::shared_ptr<EventBase> eventBase = memoryEvent;
+    MemoryState* state = new MemoryState();
+
+    analyzer->EventHandle(eventBase, state);
+
+    EXPECT_EQ(state->owner.GetOwnerStr(), "PTA@ut_fsdp2@ut_activation");
+    delete state;
+}
+
+TEST_F(DecomposeAnalyzerTest, TestUpdateOwnerByAtenAccess_UnknownSubType)
 {
     auto memoryEvent = std::make_shared<MemoryEvent>();
     memoryEvent->eventType = EventBaseType::ACCESS;
     memoryEvent->eventSubType = static_cast<EventSubType>(999);
-    memoryEvent->describeOwner = "aten_owner";
 
     std::shared_ptr<EventBase> eventBase = memoryEvent;
     MemoryState* state = new MemoryState();
-    state->memscopeDefinedOwner = "PTA";
 
     analyzer->EventHandle(eventBase, state);
 
-    EXPECT_EQ(state->memscopeDefinedOwner, "PTA");
+    EXPECT_TRUE(state->owner.GetOwnerStr().empty());
     delete state;
 }
 
-TEST_F(DecomposeAnalyzerTest, TestUpdateOwnerByAtenAccess_UnknownDefinedOwner)
+TEST_F(DecomposeAnalyzerTest, TestUpdateOwnerByAtenAccess_WeakMark)
 {
+    // ATEN 访问为弱标记: 细化分类2(DETAIL_2)为空时写入
     auto memoryEvent = std::make_shared<MemoryEvent>();
     memoryEvent->eventType = EventBaseType::ACCESS;
     memoryEvent->eventSubType = EventSubType::ATEN_READ;
-    memoryEvent->describeOwner = "aten_owner";
 
     std::shared_ptr<EventBase> eventBase = memoryEvent;
     MemoryState* state = new MemoryState();
 
     analyzer->EventHandle(eventBase, state);
 
-    EXPECT_EQ(state->memscopeDefinedOwner, "");
+    EXPECT_EQ(state->owner.GetOwnerStr(), "ops@aten");
     delete state;
 }
 
-TEST_F(DecomposeAnalyzerTest, TestUpdateOwnerByAtenAccess_OpsAten)
+TEST_F(DecomposeAnalyzerTest, TestUpdateOwnerByAtenAccess_NotOverwrite)
 {
+    // ATEN 访问不覆盖已有细化标签(DETAIL_2 非空时跳过)
     auto memoryEvent = std::make_shared<MemoryEvent>();
     memoryEvent->eventType = EventBaseType::ACCESS;
     memoryEvent->eventSubType = EventSubType::ATEN_READ;
-    memoryEvent->describeOwner = "aten_owner";
 
     std::shared_ptr<EventBase> eventBase = memoryEvent;
     MemoryState* state = new MemoryState();
-    state->memscopeDefinedOwner = "PTA";
+    state->owner.AddLabel(OwnerLevel::DETAIL_2, "ut_existing");
 
     analyzer->EventHandle(eventBase, state);
 
-    EXPECT_EQ(state->memscopeDefinedOwner, "PTA@ops@aten");
+    EXPECT_EQ(state->owner.GetOwnerStr(), "ut_existing");
     delete state;
 }
 
 TEST_F(DecomposeAnalyzerTest, TestUpdateOwner_DescribeOwner)
 {
+    // 地址直标: 携带分级标签列表, 逐级更新块 owner
     auto memoryEvent = std::make_shared<MemoryOwnerEvent>();
     memoryEvent->eventType = EventBaseType::MEMORY_OWNER;
     memoryEvent->eventSubType = EventSubType::DESCRIBE_OWNER;
-    memoryEvent->owner = "@user_defined";
+    memoryEvent->ownerLabels = {{OwnerLevel::COMPONENT, "user_defined"}};
 
     std::shared_ptr<EventBase> eventBase = memoryEvent;
     MemoryState* state = new MemoryState();
 
     analyzer->EventHandle(eventBase, state);
 
-    EXPECT_EQ(state->userDefinedOwner, "@user_defined");
-
+    EXPECT_EQ(state->owner.GetOwnerStr(), "user_defined");
     delete state;
 }
 
-TEST_F(DecomposeAnalyzerTest, TestUpdateOwner_DescribeOwner_TorchOptimizer)
+TEST_F(DecomposeAnalyzerTest, TestUpdateOwner_AddressLabelOverwrites)
 {
+    // 地址直标: 同级别重复时以地址标签为准(AddLabel 覆盖语义)
     auto memoryEvent = std::make_shared<MemoryOwnerEvent>();
     memoryEvent->eventType = EventBaseType::MEMORY_OWNER;
-    memoryEvent->eventSubType = EventSubType::TORCH_OPTIMIZER_STEP_OWNER;
-    memoryEvent->owner = "@gradient";
+    memoryEvent->eventSubType = EventSubType::DESCRIBE_OWNER;
+    memoryEvent->ownerLabels = {{OwnerLevel::DETAIL_1, "gradient"}};
 
     std::shared_ptr<EventBase> eventBase = memoryEvent;
     MemoryState* state = new MemoryState();
-    state->memscopeDefinedOwner = "PTA";
+    state->owner.AddLabel(OwnerLevel::FRAMEWORK, "PTA");
+    state->owner.AddLabel(OwnerLevel::DETAIL_1, "ut_range_mark");
 
     analyzer->EventHandle(eventBase, state);
 
-    EXPECT_EQ(state->memscopeDefinedOwner, "PTA@gradient");
-
+    EXPECT_EQ(state->owner.GetOwnerStr(), "PTA@gradient");
     delete state;
 }
 
@@ -244,7 +279,6 @@ TEST_F(DecomposeAnalyzerTest, TestShadowEventIsSkipped)
     auto memoryEvent = std::make_shared<MemoryEvent>();
     memoryEvent->eventType = EventBaseType::MALLOC;
     memoryEvent->eventSubType = EventSubType::PTA_CACHING;
-    memoryEvent->describeOwner = "should_be_ignored";
     memoryEvent->isShadowEvent = true;
 
     std::shared_ptr<EventBase> eventBase = memoryEvent;
@@ -252,10 +286,8 @@ TEST_F(DecomposeAnalyzerTest, TestShadowEventIsSkipped)
 
     analyzer->EventHandle(eventBase, state);
 
-    // 影子事件被跳过，memscopeDefinedOwner不应被设置
-    EXPECT_TRUE(state->memscopeDefinedOwner.empty());
-    EXPECT_TRUE(state->userDefinedOwner.empty());
-
+    // 影子事件被跳过, owner 不应被设置
+    EXPECT_TRUE(state->owner.GetOwnerStr().empty());
     delete state;
 }
 

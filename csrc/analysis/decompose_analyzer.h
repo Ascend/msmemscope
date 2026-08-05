@@ -48,7 +48,6 @@ class DecomposeAnalyzer : public AnalyzerBase
     static const std::string ptaWorkspaceStr;
     static const std::string atbStr;
     static const std::string mindsporeStr;
-    static const size_t ptaStrLen;
     static const std::string atenStr;
 };
 

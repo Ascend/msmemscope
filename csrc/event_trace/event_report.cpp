@@ -303,7 +303,8 @@ bool EventReport::IsNeedSkip(int32_t devid)
     return true;
 }
 
-bool EventReport::ReportAddrInfo(EventSubType type, uint64_t addr, std::string owner)
+bool EventReport::ReportAddrInfo(EventSubType type, uint64_t addr,
+                                 const std::vector<std::pair<OwnerLevel, std::string>>& labels)
 {
     int32_t devId = GD_INVALID_NUM;
     GetDeviceInfo::Instance().GetDeviceId(devId);
@@ -311,11 +312,15 @@ bool EventReport::ReportAddrInfo(EventSubType type, uint64_t addr, std::string o
     {
         return true;
     }
-    Utility::ToSafeString(owner);
+    std::vector<std::pair<OwnerLevel, std::string>> safeLabels = labels;
+    for (auto& item : safeLabels)
+    {
+        Utility::ToSafeString(item.second);
+    }
     std::shared_ptr<MemoryOwnerEvent> event = std::make_shared<MemoryOwnerEvent>();
     event->eventType = EventBaseType::MEMORY_OWNER;
     event->eventSubType = type;
-    event->owner = owner;
+    event->ownerLabels = safeLabels;
     event->addr = addr;
     event->device = devId;
 
@@ -343,8 +348,7 @@ bool EventReport::ReportPyStepRecord()
     return true;
 }
 
-bool EventReport::ReportMemPoolRecord(EventSubType type, const MemoryUsage& info, const std::string& owner,
-                                      CallStackString&& stack)
+bool EventReport::ReportMemPoolRecord(EventSubType type, const MemoryUsage& info, CallStackString&& stack)
 {
     TraceMode traceMode = DetermineTraceMode();
     if (traceMode == TraceMode::SKIP)
@@ -396,10 +400,10 @@ bool EventReport::ReportMemPoolRecord(EventSubType type, const MemoryUsage& info
         return true;
     }
 
-    // 正常采集模式：上报完整数据
+    // 正常采集模式：上报完整数据(分级标签不随事件携带, 由 DecomposeAnalyzer::InitOwner 分析时
+    // 直接从 DescribeTrace 读取——采集与分析同线程同步路由, 线程局部标签栈即申请时刻状态)
     event->total = info.totalReserved;
     event->used = info.totalAllocated;
-    event->describeOwner = owner;
     event->cCallStack = std::move(stack.cStack);
     event->pyCallStack = std::move(stack.pyStack);
 
@@ -418,7 +422,6 @@ bool EventReport::ReportHalCreate(uint64_t addr, uint64_t size, const drv_mem_pr
     std::shared_ptr<MemoryEvent> event = std::make_shared<MemoryEvent>();
     event->eventType = EventBaseType::MALLOC;
     event->eventSubType = EventSubType::HAL;
-    event->describeOwner = DescribeTrace::GetInstance().GetDescribe();
     event->cCallStack = std::move(stack.cStack);
     event->pyCallStack = std::move(stack.pyStack);
     event->poolType = PoolType::HAL;
@@ -505,7 +508,6 @@ bool EventReport::ReportHalMalloc(uint64_t addr, uint64_t size, unsigned long lo
     std::shared_ptr<MemoryEvent> event = std::make_shared<MemoryEvent>();
     event->eventType = EventBaseType::MALLOC;
     event->eventSubType = space == MemOpSpace::HOST ? EventSubType::HOST_PINNED : EventSubType::HAL;
-    event->describeOwner = DescribeTrace::GetInstance().GetDescribe();
     event->cCallStack = std::move(stack.cStack);
     event->pyCallStack = std::move(stack.pyStack);
     event->poolType = PoolType::HAL;
@@ -660,7 +662,6 @@ bool EventReport::ReportHostRegister(uint64_t addr, uint64_t size, CallStackStri
     std::shared_ptr<MemoryEvent> event = std::make_shared<MemoryEvent>();
     event->eventType = EventBaseType::MALLOC;
     event->eventSubType = EventSubType::HOST_PINNED;
-    event->describeOwner = DescribeTrace::GetInstance().GetDescribe();
     event->cCallStack = std::move(stack.cStack);
     event->pyCallStack = std::move(stack.pyStack);
     event->poolType = PoolType::HAL;

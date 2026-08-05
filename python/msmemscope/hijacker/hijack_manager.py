@@ -13,8 +13,9 @@
 # MERCHANTABILITY OR FIT FOR A PARTICULAR PURPOSE.
 # See the Mulan PSL v2 for more details.
 # -------------------------------------------------------------------------
-from .hijack_map import memscope_hijack_map 
+from .hijack_map import memscope_hijack_map
 from .hijack_utility import hijacker, release, PRE_HOOK, POST_HOOK
+
 
 class MemScopeHijackManager:
     _instance = None
@@ -27,9 +28,8 @@ class MemScopeHijackManager:
     def __init__(self):
         self.registered_handlers = []
 
-    def init_framework_hooks(self, framework: str, version: str, component:str, hook_type: str):
+    def init_framework_hooks(self, framework: str, version: str, component: str, hook_type: str):
         # 所有函数的hooklet管理器
-        self.registered_handlers.clear()
         hooklet_list = memscope_hijack_map.get_hooklet_list(framework, version, component, hook_type)
         if not hooklet_list:
             return
@@ -42,7 +42,7 @@ class MemScopeHijackManager:
                     cls=hooklet_unit.class_name,
                     function=hooklet_unit.method_name,
                     action=PRE_HOOK,
-                    priority=hooklet_unit.priority
+                    priority=hooklet_unit.priority,
                 )
                 self.registered_handlers.append(pre_handler)
 
@@ -52,26 +52,29 @@ class MemScopeHijackManager:
                     cls=hooklet_unit.class_name,
                     function=hooklet_unit.method_name,
                     action=POST_HOOK,
-                    priority=hooklet_unit.priority
+                    priority=hooklet_unit.priority,
                 )
                 self.registered_handlers.append(post_handler)
 
             except Exception as e:
-                print(f"[msmemscope] Error: [{idx+1}/{len(self.registered_handlers)}] 注册劫持函数失败,错误:{str(e)}")
-                return    
-        print(f"[msmemscope] Info: 框架 '{framework}' 下的版本 '{version}' 的 {component} 组件 {hook_type} 劫持函数注册成功")
+                print(f"[msmemscope] Error: [{idx + 1}/{len(self.registered_handlers)}] 注册劫持函数失败,错误:{str(e)}")
+                return
+        print(
+            f"[msmemscope] Info: 框架 '{framework}' 下的版本 '{version}' 的 {component} 组件 {hook_type} 劫持函数注册成功"
+        )
 
     def cleanup_framework_hooks(self):
         if not self.registered_handlers:
-            print(f"[msmemscope] Info: 无已注册的劫持处理器，无需释放")
+            print("[msmemscope] Info: 无已注册的劫持处理器，无需释放")
             return
         for idx, handler in enumerate(self.registered_handlers):
             try:
                 release(handler)
             except Exception as e:
-                print(f"[msmemscope] Error: [{idx+1}/{len(self.registered_handlers)}] 释放劫持函数失败,错误:{str(e)}")
+                print(f"[msmemscope] Error: [{idx + 1}/{len(self.registered_handlers)}] 释放劫持函数失败,错误:{str(e)}")
         self.registered_handlers.clear()
-        print(f"[msmemscope] Info: 所有劫持函数handler均已释放")
+        print("[msmemscope] Info: 所有劫持函数handler均已释放")
+
 
 # 生成单例实例
 memscope_hijack_manager = MemScopeHijackManager()

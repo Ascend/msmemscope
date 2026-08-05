@@ -15,74 +15,142 @@
  * -------------------------------------------------------------------------
  */
 #include "describe_trace.h"
-#include <cstring>
+
 #include <algorithm>
-#include "securec.h"
-#include "call_stack.h"
+
 #include "event_report.h"
-#include "record_info.h"
 #include "log.h"
+#include "record_info.h"
 #include "ustring.h"
+#include "utils.h"
 
-namespace MemScope {
-
-std::string DescribeTrace::GetDescribe()
+namespace MemScope
 {
-    std::string res;
-    auto tid = Utility::GetTid();
-    for (auto s : describe_[tid]) {
-        res += "@" + s;
+
+std::vector<std::vector<std::pair<std::string, int>>>& DescribeTrace::GetThreadSystemLabels()
+{
+    // thread_local: 本设计所有访问均为当前线程自引用, 线程退出即自动释放,
+    // 避免按 tid 建表时死线程条目永久残留(线程频繁创建+退出场景下的无界增长)
+    static thread_local std::vector<std::vector<std::pair<std::string, int>>> labels{};
+    if (labels.size() < systemLevelNum)
+    {
+        // 外层长度固定为系统级别数(DETAIL_2 + 1): 空 vector 直接 [level] 索引是越界堆访问
+        labels.resize(systemLevelNum);
     }
-    return res;
+    return labels;
 }
 
-bool DescribeTrace::IsRepeat(uint64_t threadId, std::string owner)
+std::vector<std::string>& DescribeTrace::GetUserLabels()
 {
-    Utility::ToSafeString(owner);
-    for (auto s : describe_[threadId]) {
-        if (s == owner) {
-            return true;
+    static thread_local std::vector<std::string> labels{};
+    return labels;
+}
+
+std::vector<std::string> DescribeTrace::GetDescribe()
+{
+    std::vector<std::string> result(static_cast<size_t>(OwnerLevel::OWNER_LEVEL_NUM));
+    // 数据区1: 每级取栈顶(最新)标签
+    const auto& perThreadLabels = GetThreadSystemLabels();
+    for (uint8_t level = 0; level < systemLevelNum; ++level)
+    {
+        const auto& levelStack = perThreadLabels[level];
+        if (!levelStack.empty())
+        {
+            result[level] = levelStack.back().first;
         }
     }
-    return false;
+    // 数据区2: 用户标签按栈序映射 USER_DEFINED_1..3(超出部分在入栈时已静默丢弃)
+    const auto& userLabels = GetUserLabels();
+    for (size_t i = 0; i < userLabels.size(); ++i)
+    {
+        result[static_cast<size_t>(OwnerLevel::USER_DEFINED_1) + i] = userLabels[i];
+    }
+    return result;
 }
 
-void DescribeTrace::DescribeAddr(uint64_t addr, std::string owner)
+void DescribeTrace::AddDescribe(OwnerLevel level, const std::string& label)
 {
-    EventReport::Instance(MemScopeCommType::SHARED_MEMORY).ReportAddrInfo(EventSubType::DESCRIBE_OWNER, addr, owner);
-    return;
-}
-
-void DescribeTrace::AddDescribe(std::string owner)
-{
-    auto tid = Utility::GetTid();
-    Utility::ToSafeString(owner);
-    if (IsRepeat(tid, owner)) {
-        LOG_ERROR("Cannot add duplicate tags %s", owner.c_str());
+    if (level > OwnerLevel::DETAIL_2)
+    {
+        LOG_ERROR("Invalid owner level %u", static_cast<uint8_t>(level));
         return;
     }
-    if (describe_[tid].size() >= maxSize) {
-        LOG_ERROR("The current thread label exceeds %u", static_cast<uint32_t>(maxSize));
-        return;
-    }
-    describe_[tid].emplace_back(owner);
-}
-
-void DescribeTrace::EraseDescribe(std::string owner)
-{
-    auto tid = Utility::GetTid();
-    Utility::ToSafeString(owner);
-    size_t i;
-    size_t siz = describe_[tid].size();
-    for (i = 0; i < siz; i++) {
-        if (owner == describe_[tid][i]) {
-            describe_[tid].erase(describe_[tid].begin() + i);
-            break;
+    std::string safeLabel = label;
+    Utility::ToSafeString(safeLabel);
+    auto& levelStack = GetThreadSystemLabels()[static_cast<uint8_t>(level)];
+    // 同级别同标签嵌套: 计数加一
+    for (auto& item : levelStack)
+    {
+        if (item.first == safeLabel)
+        {
+            item.second += 1;
+            return;
         }
     }
-    if (i == siz) {
-        LOG_ERROR("Tag %s not found", owner.c_str());
+    if (levelStack.size() >= maxStackSize)
+    {
+        LOG_ERROR("The current level label stack exceeds %u", static_cast<uint32_t>(maxStackSize));
+        return;
     }
+    levelStack.emplace_back(safeLabel, 1);
 }
 
+void DescribeTrace::EraseDescribe(OwnerLevel level, const std::string& label)
+{
+    if (level > OwnerLevel::DETAIL_2)
+    {
+        LOG_ERROR("Invalid owner level %u", static_cast<uint8_t>(level));
+        return;
+    }
+    auto& levelStack = GetThreadSystemLabels()[static_cast<uint8_t>(level)];
+    for (auto it = levelStack.rbegin(); it != levelStack.rend(); ++it)
+    {
+        if (it->first == label)
+        {
+            it->second -= 1;
+            if (it->second <= 0)
+            {
+                // 计数归零出栈(reverse_iterator 转正向迭代器删除)
+                levelStack.erase(std::next(it).base());
+            }
+            return;
+        }
+    }
+    LOG_ERROR("Tag %s not found", label.c_str());
 }
+
+void DescribeTrace::AddUserDescribe(const std::string& label)
+{
+    auto& stack = GetUserLabels();
+    if (stack.size() >= maxStackSize)
+    {
+        // 超出3个静默丢弃
+        return;
+    }
+    std::string safeLabel = label;
+    Utility::ToSafeString(safeLabel);
+    stack.push_back(safeLabel);
+}
+
+void DescribeTrace::EraseUserDescribe(const std::string& label)
+{
+    auto& stack = GetUserLabels();
+    std::string safeLabel = label;
+    Utility::ToSafeString(safeLabel);
+    for (auto it = stack.rbegin(); it != stack.rend(); ++it)
+    {
+        if (*it == safeLabel)
+        {
+            stack.erase(std::next(it).base());
+            return;
+        }
+    }
+    LOG_ERROR("User tag %s not found", label.c_str());
+}
+
+void DescribeTrace::DescribeAddr(uint64_t addr, const std::vector<std::pair<OwnerLevel, std::string>>& labels)
+{
+    EventReport::Instance(MemScopeCommType::SHARED_MEMORY).ReportAddrInfo(EventSubType::DESCRIBE_OWNER, addr, labels);
+}
+
+}  // namespace MemScope

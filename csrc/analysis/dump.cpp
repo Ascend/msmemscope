@@ -137,10 +137,14 @@ void Dump::DumpMemoryEvent(std::shared_ptr<MemoryEvent>& event, MemoryState* sta
         }
         attr += event->attr + ",";
     }
-    if (event->eventType == EventBaseType::MALLOC &&
-        !(state->memscopeDefinedOwner.empty() && state->userDefinedOwner.empty()))
+    if (event->eventType == EventBaseType::MALLOC)
     {
-        attr += "owner:" + state->memscopeDefinedOwner + state->userDefinedOwner + ",";
+        // 分级标签按级别拼接(框架@组件@流程@细化, 跳过空值)
+        std::string ownerStr = state->owner.GetOwnerStr();
+        if (!ownerStr.empty())
+        {
+            attr += "owner:" + ownerStr + ",";
+        }
     }
     if (event->eventType == EventBaseType::MALLOC && !state->inefficientType.empty())
     {
