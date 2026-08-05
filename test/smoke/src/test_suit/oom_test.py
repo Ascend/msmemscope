@@ -67,37 +67,42 @@ class OOMTestCase(BaseTest):
         return None
 
     def _verify_csv(self, csv_path: str) -> Result:
-        df = pd.read_csv(csv_path)
+        try:
+            df = pd.read_csv(csv_path)
 
-        # 1. 必须有 OOM_DETAIL 事件
-        oom_df = df[df["Event"] == "OOM_DETAIL"]
-        if len(oom_df) == 0:
-            self._report(Result(False, ["OOM_DETAIL events"], ["0"]))
-            return Result(False, ["OOM_DETAIL events"], ["0"])
+            # 1. 必须有 OOM_DETAIL 事件
+            oom_df = df[df["Event"] == "OOM_DETAIL"]
+            if len(oom_df) == 0:
+                self._report(Result(False, ["OOM_DETAIL events"], ["0"]))
+                return Result(False, ["OOM_DETAIL events"], ["0"])
 
-        event_types = oom_df["Event Type"].value_counts().to_dict()
-        logging.info("OOM_DETAIL events: %s", event_types)
+            event_types = oom_df["Event Type"].value_counts().to_dict()
+            logging.info("OOM_DETAIL events: %s", event_types)
 
-        # 2. 必须包含三种 Event Type
-        for required in ["OOM_TRIGGER", "OOM_RECENT_ALLOC", "OOM_TOP_ALLOC"]:
-            if required not in event_types:
-                self._report(
-                    Result(False, [f"contains {required}"], [str(list(event_types.keys()))])
-                )
-                return Result(
-                    False, [f"contains {required}"], [str(list(event_types.keys()))]
-                )
+            # 2. 必须包含三种 Event Type
+            for required in ["OOM_TRIGGER", "OOM_RECENT_ALLOC", "OOM_TOP_ALLOC"]:
+                if required not in event_types:
+                    self._report(
+                        Result(False, [f"contains {required}"], [str(list(event_types.keys()))])
+                    )
+                    return Result(
+                        False, [f"contains {required}"], [str(list(event_types.keys()))]
+                    )
 
-        # 3. OOM_TRIGGER Attr 含必要字段
-        trigger_rows = oom_df[oom_df["Event Type"] == "OOM_TRIGGER"]
-        for _, row in trigger_rows.iterrows():
-            attr = str(row["Attr"])
-            if "func" not in attr or "req_size" not in attr:
-                self._report(Result(False, ["func,req_size in Attr"], [attr]))
-                return Result(False, ["func,req_size in Attr"], [attr])
+            # 3. OOM_TRIGGER Attr 含必要字段
+            trigger_rows = oom_df[oom_df["Event Type"] == "OOM_TRIGGER"]
+            for _, row in trigger_rows.iterrows():
+                attr = str(row["Attr"])
+                if "func" not in attr or "req_size" not in attr:
+                    self._report(Result(False, ["func,req_size in Attr"], [attr]))
+                    return Result(False, ["func,req_size in Attr"], [attr])
 
-        self._report(Result(True, [], []))
-        return Result(True, [], [])
+            self._report(Result(True, [], []))
+            return Result(True, [], [])
+        except Exception as e:
+            logging.error("Error verifying OOM CSV %s: %s", csv_path, str(e))
+            self._report(Result(False, ["CSV verification"], [str(e)]))
+            return Result(False, ["CSV verification"], [str(e)])
 
     def _report(self, result: Result):
         self.report(result)
