@@ -18,15 +18,13 @@
 OOM 测试工具库：提供 OOM 触发、dump 文件验证等公共方法。
 """
 
-import os
-import sys
-import re
 import glob
 import logging
-from typing import List, Dict, Optional, Tuple
+import os
+from typing import Dict, List
 
+import pandas as pd
 import torch
-import torch_npu
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("oom_test")
@@ -35,7 +33,7 @@ logger = logging.getLogger("oom_test")
 def get_device_memory_gb(device_id: int) -> float:
     """获取指定 NPU 卡的总显存（GB）。"""
     prop = torch.npu.get_device_properties(device_id)
-    return prop.total_memory / (1024 ** 3)
+    return prop.total_memory / (1024**3)
 
 
 def trigger_oom(device_id: int, target_fraction: float = 0.95) -> int:
@@ -61,7 +59,7 @@ def trigger_oom(device_id: int, target_fraction: float = 0.95) -> int:
     torch.npu.synchronize(device)
 
     total_mem = torch.npu.get_device_properties(device).total_memory
-    logger.info("NPU %d: total memory = %.1f GB", device_id, total_mem / (1024 ** 3))
+    logger.info("NPU %d: total memory = %.1f GB", device_id, total_mem / (1024**3))
 
     tensors = []
     # 每次分配 1GB (float32: 4 bytes per element)
@@ -76,8 +74,13 @@ def trigger_oom(device_id: int, target_fraction: float = 0.95) -> int:
                 logger.info("  allocated %d GB on npu:%d...", int(allocated_gb), device_id)
     except RuntimeError as e:
         allocated_gb = len(tensors) * 1.0
-        logger.info("OOM triggered on npu:%d after allocating ~%.0f GB (%d chunks): %s",
-                    device_id, allocated_gb, len(tensors), str(e).split("\n")[0])
+        logger.info(
+            "OOM triggered on npu:%d after allocating ~%.0f GB (%d chunks): %s",
+            device_id,
+            allocated_gb,
+            len(tensors),
+            str(e).split("\n", maxsplit=1)[0],
+        )
     except Exception as e:
         logger.warning("Unexpected error during OOM trigger on npu:%d: %s", device_id, str(e)[:200])
 
@@ -134,13 +137,12 @@ def find_dump_csvs(output_dir: str) -> List[str]:
     return files
 
 
-def parse_dump_csv(csv_path: str) -> "pd.DataFrame":
+def parse_dump_csv(csv_path: str) -> pd.DataFrame:
     """读取单个 dump CSV 文件，返回 DataFrame。"""
-    import pandas as pd
     return pd.read_csv(csv_path)
 
 
-def filter_oom_events(df: "pd.DataFrame") -> "pd.DataFrame":
+def filter_oom_events(df: pd.DataFrame) -> pd.DataFrame:
     """从 DataFrame 中筛选出 Event == 'OOM_DETAIL' 的行。"""
     return df[df["Event"] == "OOM_DETAIL"].copy()
 
@@ -217,9 +219,20 @@ class OOMDumpVerifier:
 
     def check_csv_columns(self, _k: int = 0) -> bool:
         """检查 CSV 列名是否符合预期。"""
-        expected_cols = ["ID", "Event", "Event Type", "Name", "Timestamp(ns)",
-                         "Process Id", "Thread Id", "Device Id",
-                         "Ptr", "Attr", "Call Stack(Python)", "Call Stack(C)"]
+        expected_cols = [
+            "ID",
+            "Event",
+            "Event Type",
+            "Name",
+            "Timestamp(ns)",
+            "Process Id",
+            "Thread Id",
+            "Device Id",
+            "Ptr",
+            "Attr",
+            "Call Stack(Python)",
+            "Call Stack(C)",
+        ]
         actual_cols = list(self.df.columns)
         if actual_cols != expected_cols:
             self.errors.append(f"CSV columns mismatch: expected {expected_cols}, got {actual_cols}")
@@ -246,12 +259,10 @@ class OOMDumpVerifier:
             attr = parse_oom_attr(str(row["Attr"]))
             for field in required_fields:
                 if field not in attr:
-                    self.errors.append(
-                        f"OOM_TRIGGER missing field '{field}' in attr: {row['Attr']}")
+                    self.errors.append(f"OOM_TRIGGER missing field '{field}' in attr: {row['Attr']}")
                     return False
             if attr.get("func", "") not in ("halMemAlloc", "halMemCreate"):
-                self.warnings.append(
-                    f"OOM_TRIGGER func={attr.get('func')} (expected halMemAlloc/halMemCreate)")
+                self.warnings.append(f"OOM_TRIGGER func={attr.get('func')} (expected halMemAlloc/halMemCreate)")
 
         logger.info("  OOM_TRIGGER count: %d", len(trigger_df))
         return True
@@ -268,7 +279,8 @@ class OOMDumpVerifier:
             return False
         if count > max_expected:
             self.errors.append(
-                f"OOM_RECENT_ALLOC count {count} exceeds {n_triggers} triggers × K={expected_k} = {max_expected}")
+                f"OOM_RECENT_ALLOC count {count} exceeds {n_triggers} triggers × K={expected_k} = {max_expected}"
+            )
             return False
         logger.info("  OOM_RECENT_ALLOC count: %d (≤ %d triggers × K=%d)", count, n_triggers, expected_k)
         return True
@@ -285,15 +297,15 @@ class OOMDumpVerifier:
             return False
         if count > max_expected:
             self.errors.append(
-                f"OOM_TOP_ALLOC count {count} exceeds {n_triggers} triggers × K={expected_k} = {max_expected}")
+                f"OOM_TOP_ALLOC count {count} exceeds {n_triggers} triggers × K={expected_k} = {max_expected}"
+            )
             return False
         logger.info("  OOM_TOP_ALLOC count: %d (≤ %d triggers × K=%d)", count, n_triggers, expected_k)
         return True
 
     def check_oom_memrecord_fields(self, _k: int = 0) -> bool:
         """检查 OOM_RECENT_ALLOC / OOM_TOP_ALLOC 事件的 Attr 包含必要字段。"""
-        mem_df = self.oom_df[self.oom_df["Event Type"].isin(
-            ["OOM_RECENT_ALLOC", "OOM_TOP_ALLOC"])]
+        mem_df = self.oom_df[self.oom_df["Event Type"].isin(["OOM_RECENT_ALLOC", "OOM_TOP_ALLOC"])]
         if len(mem_df) == 0:
             self.errors.append("No OOM memory record events found")
             return False
@@ -305,7 +317,8 @@ class OOMDumpVerifier:
                 if field not in attr:
                     self.errors.append(
                         f"OOM mem record (Event Type={row['Event Type']}) "
-                        f"missing field '{field}' in attr: {row['Attr']}")
+                        f"missing field '{field}' in attr: {row['Attr']}"
+                    )
                     return False
         return True
 
@@ -328,7 +341,8 @@ class OOMDumpVerifier:
                 if timestamps[i] < timestamps[i + 1]:
                     self.warnings.append(
                         f"OOM_RECENT_ALLOC group {gi}: timestamp not descending at pos {i}, "
-                        f"ts[{i}]={timestamps[i]} < ts[{i + 1}]={timestamps[i + 1]}")
+                        f"ts[{i}]={timestamps[i]} < ts[{i + 1}]={timestamps[i + 1]}"
+                    )
         return True
 
     def check_oom_top_alloc_order(self, expected_k: int) -> bool:
@@ -350,10 +364,11 @@ class OOMDumpVerifier:
                 if sizes[i] < sizes[i + 1]:
                     self.warnings.append(
                         f"OOM_TOP_ALLOC group {gi}: size not descending at pos {i}, "
-                        f"size[{i}]={sizes[i]} < size[{i + 1}]={sizes[i + 1]}")
+                        f"size[{i}]={sizes[i]} < size[{i + 1}]={sizes[i + 1]}"
+                    )
         return True
 
-    def _split_by_trigger(self, event_type: str, k: int) -> List["pd.DataFrame"]:
+    def _split_by_trigger(self, event_type: str, k: int) -> List[pd.DataFrame]:
         """
         将指定类型的事件按 OOM_TRIGGER 分组。
 
