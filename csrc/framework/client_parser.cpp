@@ -77,6 +77,7 @@ void ShowDescription()
 
 void ShowHelpInfo()
 {
+    std::cout << "Description:" << std::endl;
     ShowDescription();
     std::cout << std::endl
               << "Usage:" << std::endl
@@ -799,6 +800,7 @@ static void ParseLogLv(const std::string &param, UserCommand &userCommand)
 {
     const std::map<std::string, LogLv> logLevelMap = {
         {"debug", LogLv::DEBUG}, {"info", LogLv::INFO}, {"warning", LogLv::WARN}, {"warn", LogLv::WARN},  // 兼容别名
+        {"error", LogLv::ERROR},
     };
     auto it = logLevelMap.find(param);
     if (it == logLevelMap.end())

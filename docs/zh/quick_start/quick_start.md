@@ -43,7 +43,7 @@ msMemScope工具提供内存事件采集功能，基于采集事件开展内存�
       source msmemscope --unload-api-env
       ```
 
-2. 进入仓库目录后，执行以下命令进入仓库example目录。
+2. 进入仓库目录后，执行以下命令进入example目录。
 
    ```bash
    cd ./example
