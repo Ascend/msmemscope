@@ -18,6 +18,7 @@
 #ifndef HAL_ANALYZER_H
 #define HAL_ANALYZER_H
 
+#include <mutex>
 #include <unordered_map>
 #include <unordered_set>
 
@@ -57,8 +58,16 @@ struct HalAddrKeyHash
     }
 };
 
+struct HalMemInfo
+{
+    int64_t size = 0;
+    uint64_t timestamp = 0;
+    std::string cCallStack;
+    std::string pyCallStack;
+};
+
 // 表内仅保存未释放的存活块（malloc插入、free删除），key为(deviceId, addr)组合
-using MemoryRecordTable = std::unordered_set<HalAddrKey, HalAddrKeyHash>;
+using MemoryRecordTable = std::unordered_map<HalAddrKey, HalMemInfo, HalAddrKeyHash>;
 
 class HalAnalyzer
 {
@@ -67,6 +76,7 @@ class HalAnalyzer
     void EventHandle(std::shared_ptr<EventBase>& event, MemoryState* state);
     void Subscribe();
     void UnSubscribe() const;
+    std::vector<OOMMemRecord> QueryUnfreedRecords(uint32_t clientId) const;
 
    private:
     explicit HalAnalyzer();
@@ -83,6 +93,7 @@ class HalAnalyzer
     void RecordFree(const ClientId& clientId, std::shared_ptr<const MemoryEvent> memEvent);
     void LeakAnalyze();
     void CheckLeak(const size_t clientId);
+    mutable std::mutex mutex_;
 };
 
 }  // namespace MemScope

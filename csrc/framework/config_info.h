@@ -80,6 +80,7 @@ enum class AnalysisType : uint8_t
     LEAKS_ANALYSIS = 0,
     DECOMPOSE_ANALYSIS = 1,
     INEFFICIENCY_ANALYSIS = 2,
+    OOM_ANALYSIS = 3,
 };
 
 enum class LogLv : uint8_t
@@ -128,6 +129,7 @@ struct Config
     uint8_t eventType;
     uint8_t dumpEventType;
     uint8_t analysisType;
+    uint16_t oomTopK = 10;
     uint8_t logLevel;
     uint8_t collectMode;
     char outputDir[PATH_MAX];

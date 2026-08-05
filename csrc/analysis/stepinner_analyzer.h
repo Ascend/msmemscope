@@ -26,8 +26,8 @@
 #include "config_info.h"
 #include "event.h"
 #include "event_dispatcher.h"
-#include "framework/record_info.h"
 #include "memory_state_manager.h"
+#include "record_info.h"
 
 namespace MemScope
 {
@@ -101,6 +101,8 @@ struct NpuMemInfo
     uint64_t duration;     // 目前经历的duration
     uint64_t stepId;       // 来自哪个的step
     uint64_t kernelIndex;  // 处于哪个event中
+    std::string cCallStack;
+    std::string pyCallStack;
 };
 
 struct GapInfo
@@ -148,6 +150,7 @@ class StepInnerAnalyzer
     void EventHandle(std::shared_ptr<EventBase> &event, MemoryState *state);
     void Subscribe();
     void UnSubscribe() const;
+    std::vector<OOMMemRecord> QueryUnfreedRecords(int32_t deviceId) const;
 
    private:
     explicit StepInnerAnalyzer();
