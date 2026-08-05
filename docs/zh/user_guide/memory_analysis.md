@@ -131,10 +131,10 @@ msMemScope支持对指定范围内的内存事件进行离线泄漏分析。使�
 4. 执行以下命令，对比采集到的两个Step的内存使用差异。
 
     ```shell
-    msmemscope --compare --input=path1,path2 --level=kernel
+    msmemscope --compare --input-path=path1,path2 --level=kernel
     ```
 
-    其中--compare和--input参数必须一起使用，单个使用无效，同时--input输入的两个文件路径需要逗号（全角半角逗号均可）隔开，--level也可选为op。
+    其中--compare和--input-path参数必须一起使用，单个使用无效，同时--input-path输入的两个文件路径需要逗号（全角半角逗号均可）隔开，--level也可选为op。
 
 5. Step间对比生成的结果目录如下。
 

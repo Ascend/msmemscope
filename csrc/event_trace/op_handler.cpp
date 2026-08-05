@@ -392,7 +392,7 @@ void SanitizerOpHandler::Handle(const char* msg, uint64_t stream)
     auto reads = ParseAccessList(readStr);
     auto writes = ParseAccessList(writeStr);
 
-    LOG_INFO("[SanitizerOpHandler] Op: %s, stream: %lu, reads: %zu, writes: %zu", name.c_str(), stream, reads.size(),
+    LOG_DEBUG("[SanitizerOpHandler] Op: %s, stream: %lu, reads: %zu, writes: %zu", name.c_str(), stream, reads.size(),
              writes.size());
 
     // 触发 kernel launch 事件

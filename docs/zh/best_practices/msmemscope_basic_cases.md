@@ -69,19 +69,19 @@
 2. 采集第一个 Step 的数据（以 Step 2 为例）：
 
     ```shell
-    msmemscope --events=alloc,free --level=kernel --steps=2 --output=./output/step2 python train.py
+    msmemscope --events=alloc,free --level=kernel --steps=2 --output-path=./output/step2 python train.py
     ```
 
 3. 采集第二个 Step 的数据（以 Step 5 为例）：
 
     ```shell
-    msmemscope --events=alloc,free --level=kernel --steps=5 --output=./output/step5 python train.py
+    msmemscope --events=alloc,free --level=kernel --steps=5 --output-path=./output/step5 python train.py
     ```
 
 4. 执行对比命令，比较两个 Step 的内存使用差异：
 
     ```shell
-    msmemscope --compare --input=./output/step2,./output/step5 --level=kernel
+    msmemscope --compare --input-path=./output/step2,./output/step5 --level=kernel
     ```
 
 5. 对比结果会输出到 `memscopeDumpResults/compare/` 目录下，生成 `memory_compare_{timestamp}.csv` 文件。请参考《[msMemScope 使用指南](../user_guide/memory_analysis.md)》中的"内存对比分析功能介绍"分析差异。

@@ -22,6 +22,7 @@
 #include <unistd.h>
 
 #include <algorithm>
+#include <cctype>
 #include <iostream>
 #include <map>
 #include <unordered_map>
@@ -56,73 +57,86 @@ enum class OptVal : int32_t
     DATA_FORMAT,
     ANALYSIS,
     DEVICE,
+    // ↓ 以下为 CLI 规范对齐新增
+    INPUT_PATH,
+    OUTPUT_PATH,
+    FORMAT,
+    VERBOSE,
+    QUIET,
+    DEBUG,
+    INPUT_ALIAS,
+    OUTPUT_ALIAS,
+    DATA_FORMAT_ALIAS,
 };
 constexpr uint16_t INPUT_STR_MAX_LEN = 4096;
 
 void ShowDescription()
 {
-    std::cout << "msmemscope(MindStudio MemScope) is part of MindStudio Memory analysis Tools." << std::endl;
+    std::cout << "msmemscope (MindStudio MemScope) — Ascend NPU memory debugging and profiling tool." << std::endl;
 }
 
 void ShowHelpInfo()
 {
     ShowDescription();
-    std::cout
-        << std::endl
-        << "Usage: msmemscope <option(s)> prog-and-args" << std::endl
-        << std::endl
-        << "  environment setup (run from shell, must be sourced):" << std::endl
-        << "    source msmemscope --load-api-env          Set env variables for API usage." << std::endl
-        << "    source msmemscope --unload-api-env        Clear msmemscope env entries." << std::endl
-        << std::endl
-        << "  basic user options, with default in [ ]:" << std::endl
-        << "    -h --help                                Show this message." << std::endl
-        << "    -v --version                             Show version." << std::endl
-        << "    --level=<level>                          Set the data trace level." << std::endl
-        << "                                             Level [1] for kernel, Level [0] for op(default:0)."
-        << std::endl
-        << "                                             You can choose both separated by, or ，." << std::endl
-        << "    --events=event1,event2                   Set the trace event type." << std::endl
-        << "                                             You can combine any of the following options:" << std::endl
-        << "                                             alloc,free,launch,access,traceback" << std::endl
-        << "                                             Use 'none' to disable all event types." << std::endl
-        << "                                             (default:alloc,free,launch)." << std::endl
-        << "    --steps=1,2,3,...                        Select the steps to collect memory information." << std::endl
-        << "                                             The input step numbers need to be separated by, or ，."
-        << std::endl
-        << "                                             The maximum number of steps is 5." << std::endl
-        << "    --call-stack=<c/python>[:<Depth>],...    Enable C,Python call stack collection for memory event."
-        << std::endl
-        << "                                             Select the maximum depth of the collected call stack([0,1000])"
-        << std::endl
-        << "                                             If no depth is specified, use default depth(50)." << std::endl
-        << "                                             e.g. --call-stack=c:20,python:10" << std::endl
-        << "                                                  --call-stack=python" << std::endl
-        << "                                             The input params need to be separated by, or ，." << std::endl
-        << "    --analysis                               Specify the analysis method(s) to enable (optional)."
-        << std::endl
-        << "                                             Available options:" << std::endl
-        << "                                               - leaks : Enables memory leak detection (default)"
-        << std::endl
-        << "                                               - decompose : Enables memory categorization" << std::endl
-        << "                                               - inefficient : Enables inefficient memory recognition"
-        << std::endl
-        << "                                               - none : Disables all analysis features" << std::endl
-        << "                                             Leave empty to disable all analysis features." << std::endl
-        << "    --compare                                Enable memory data comparison." << std::endl
-        << "    --watch                                  Enable watch ability." << std::endl
-        << "                                             e.g. [start[:outid]],end[,full-content]" << std::endl
-        << "                                             The content within [] is optional" << std::endl
-        << "    --input=path1,path2                      Paths to compare files, valid with compare command on."
-        << std::endl
-        << "                                             The input paths need to be separated by, or ，." << std::endl
-        << "    --output=path                            The path to store the generated files." << std::endl
-        << "    --log-level                              Set log level to <level> [warn]." << std::endl
-        << "    --data-format=<db|csv>                   Set data format to <format> (default:csv)." << std::endl
-        << "    --device=<npu|npu:x|cpu>,...             Set device(s) to collect, 'npu' for all npu," << std::endl
-        << "                                             'npu:x' for npu in slot x, and 'cpu' for" << std::endl
-        << "                                             host cpu (default:npu). Fields separated by,or，." << std::endl
-        << "    --collect-mode=<immediate|deferred>      Set data collect mode. Default: immediate." << std::endl;
+    std::cout << std::endl
+              << "Usage:" << std::endl
+              << "  msmemscope [options] -- <prog> [args]" << std::endl
+              << "  source msmemscope --load-api-env" << std::endl
+              << "  source msmemscope --unload-api-env" << std::endl
+              << std::endl
+              << "Environment setup (must be sourced):" << std::endl
+              << "      --load-api-env            Set LD_PRELOAD and LD_LIBRARY_PATH for Python API usage" << std::endl
+              << "      --unload-api-env          Clear msmemscope entries from LD_PRELOAD and LD_LIBRARY_PATH"
+              << std::endl
+              << std::endl
+              << "General options:" << std::endl
+              << "  -h, --help                    Show this help message" << std::endl
+              << "  -V, --version                 Show version information" << std::endl
+              << "  -v, --verbose                 Equivalent to --log-level=debug" << std::endl
+              << "  -q, --quiet                   Equivalent to --log-level=error" << std::endl
+              << "      --debug                   Equivalent to --log-level=debug" << std::endl
+              << std::endl
+              << "Collection options:" << std::endl
+              << "      --level <LEVEL>           Data trace level: op | kernel [default: op]" << std::endl
+              << "      --events <EVENT>          Trace event types: alloc | free | launch | access | traceback"
+              << std::endl
+              << "                                (comma-separated, default: alloc,free,launch)" << std::endl
+              << "      --steps <STEP>            Steps to collect memory info (comma-separated, max 5)" << std::endl
+              << "      --call-stack <TYPE>[:<DEPTH>]  Enable C/Python call stack (c[:depth], python[:depth],"
+              << std::endl
+              << "                                comma-separated, default depth: 50)" << std::endl
+              << "      --collect-mode <MODE>     Collect mode: immediate | deferred [default: immediate]" << std::endl
+              << "      --device <DEVICE>         Device(s): npu | npu:<SLOT> | cpu (comma-separated, default: npu)"
+              << std::endl
+              << std::endl
+              << "Analysis options:" << std::endl
+              << "      --analysis <TYPE>         Analysis methods: leaks | decompose | inefficient | none" << std::endl
+              << "                                (comma-separated, default: leaks)" << std::endl
+              << "      --compare                 Enable memory comparison mode" << std::endl
+              << "      --watch <CONFIG>          Watch mode: start[:outid],end[,full-content]" << std::endl
+              << std::endl
+              << "Input / Output options:" << std::endl
+              << "  -i, --input-path <DIR>        Path(s) to input compare files (comma-separated, used with --compare)"
+              << std::endl
+              << "  -o, --output-path <DIR>       Output directory [default: ./memscopeDumpResults]" << std::endl
+              << "      --format <FORMAT>         Data format: csv | db [default: csv]" << std::endl
+              << std::endl
+              << "Other:" << std::endl
+              << "      --log-level <LEVEL>       Log level: debug | info | warning | error [default: info]"
+              << std::endl
+              << std::endl
+              << "Examples:" << std::endl
+              << "  # Collect memory events with default options" << std::endl
+              << "  msmemscope -- python train.py" << std::endl
+              << std::endl
+              << "  # Kernel-level tracing with call stacks" << std::endl
+              << "  msmemscope --level=kernel --call-stack=c:20,python:10 -- python train.py" << std::endl
+              << std::endl
+              << "  # Memory comparison" << std::endl
+              << "  msmemscope --compare --input-path=./baseline,./target" << std::endl
+              << std::endl
+              << "Output:" << std::endl
+              << "  Results are written to <output-path> (default: ./memscopeDumpResults/dump/)." << std::endl;
 }
 
 void ShowVersion()
@@ -145,6 +159,13 @@ bool UserCommandPrecheck(const UserCommand &userCommand)
         return false;
     }
     return true;
+}
+
+static void PrintDeprecation(const std::string &deprecatedField, const std::string &replacementField)
+{
+    // 弃用告警打印到 stderr，避免污染 stdout 的常规输出
+    std::cerr << "[msmemscope] Deprecation: '" << deprecatedField << "' is deprecated, "
+              << "use '" << replacementField << "' instead." << std::endl;
 }
 
 void SetEventDefaultConfig(Config &config)
@@ -236,19 +257,27 @@ std::vector<option> GetLongOptArray()
 {
     std::vector<option> longOpts = {
         {"help", no_argument, nullptr, 'h'},
-        {"version", no_argument, nullptr, 'v'},
+        {"version", no_argument, nullptr, 'V'},  // -V 表示版本，-v 预留给 --verbose
+        {"verbose", no_argument, nullptr, 'v'},  // 新增：-v 现在表示 verbose
+        {"quiet", no_argument, nullptr, 'q'},    // 新增
+        {"debug", no_argument, nullptr, static_cast<int32_t>(OptVal::DEBUG)},
         {"steps", required_argument, nullptr, static_cast<int32_t>(OptVal::SELECT_STEPS)},
         {"call-stack", required_argument, nullptr, static_cast<int32_t>(OptVal::CALL_STACK)},
         {"analysis", required_argument, nullptr, static_cast<int32_t>(OptVal::ANALYSIS)},
         {"compare", no_argument, nullptr, static_cast<int32_t>(OptVal::COMPARE)},
         {"watch", required_argument, nullptr, static_cast<int32_t>(OptVal::WATCH)},
-        {"input", required_argument, nullptr, static_cast<int32_t>(OptVal::INPUT)},
-        {"output", required_argument, nullptr, static_cast<int32_t>(OptVal::OUTPUT)},
+        // 路径参数：新标准名注册短选项，旧名保留为隐藏别名
+        {"input-path", required_argument, nullptr, 'i'},
+        {"input", required_argument, nullptr, static_cast<int32_t>(OptVal::INPUT_ALIAS)},
+        {"output-path", required_argument, nullptr, 'o'},
+        {"output", required_argument, nullptr, static_cast<int32_t>(OptVal::OUTPUT_ALIAS)},
+        // 格式参数
+        {"format", required_argument, nullptr, static_cast<int32_t>(OptVal::FORMAT)},
+        {"data-format", required_argument, nullptr, static_cast<int32_t>(OptVal::DATA_FORMAT_ALIAS)},
         {"level", required_argument, nullptr, static_cast<int32_t>(OptVal::DATA_TRACE_LEVEL)},
         {"events", required_argument, nullptr, static_cast<int32_t>(OptVal::EVENT_TRACE_TYPE)},
         {"log-level", required_argument, nullptr, static_cast<int32_t>(OptVal::LOG_LEVEL)},
         {"collect-mode", required_argument, nullptr, static_cast<int32_t>(OptVal::COLLECT_MODE)},
-        {"data-format", required_argument, nullptr, static_cast<int32_t>(OptVal::DATA_FORMAT)},
         {"device", required_argument, nullptr, static_cast<int32_t>(OptVal::DEVICE)},
         {nullptr, 0, nullptr, 0},
     };
@@ -258,6 +287,7 @@ std::vector<option> GetLongOptArray()
 std::string GetShortOptString(const std::vector<option> &longOptArray)
 {
     // 根据long option string生成short option string
+    // 支持大小写短选项（如 -V），required_argument 选项需追加冒号后缀
     std::string shortOpt;
     for (const auto &opt : longOptArray)
     {
@@ -265,9 +295,13 @@ std::string GetShortOptString(const std::vector<option> &longOptArray)
         {
             break;
         }
-        if ((opt.flag == nullptr) && (opt.val >= 'a') && (opt.val <= 'z'))
+        if (opt.flag == nullptr && std::isprint(opt.val))
         {
             shortOpt.append(1, static_cast<char>(opt.val));
+            if (opt.has_arg == required_argument)
+            {
+                shortOpt.append(1, ':');
+            }
         }
     }
     return shortOpt;
@@ -542,6 +576,11 @@ void ParseDataLevel(const std::string param, Config &config, bool &printHelpInfo
             {
                 return parseFailed();
             }
+            if (level == "0" || level == "1")
+            {
+                // 兼容旧值：0→op, 1→kernel，命中时触发弃用告警
+                PrintDeprecation("--level=" + level, level == "0" ? "--level=op" : "--level=kernel");
+            }
             if (level == "0" || level == "op")
             {
                 levelBit.setBit(static_cast<size_t>(LevelType::LEVEL_OP));
@@ -759,22 +798,21 @@ void ParseWatchConfig(const std::string param, Config &config, bool &printHelpIn
 static void ParseLogLv(const std::string &param, UserCommand &userCommand)
 {
     const std::map<std::string, LogLv> logLevelMap = {
-        {"info", LogLv::INFO},
-        {"warn", LogLv::WARN},
-        {"error", LogLv::ERROR},
+        {"debug", LogLv::DEBUG}, {"info", LogLv::INFO}, {"warning", LogLv::WARN}, {"warn", LogLv::WARN},  // 兼容别名
     };
     auto it = logLevelMap.find(param);
     if (it == logLevelMap.end())
     {
         std::cout << "[msmemscope] Error: --log-level param is invalid. "
-                  << "LOG_LEVEL can only be set info,warn,error." << std::endl;
+                  << "Log level: debug|info|warning|error." << std::endl;
         userCommand.printHelpInfo = true;
+        return;
     }
-    else
+    if (param == "warn")
     {
-        auto logLevel = it->second;
-        userCommand.config.logLevel = static_cast<uint8_t>(logLevel);
+        PrintDeprecation("--log-level=warn", "--log-level=warning");
     }
+    userCommand.config.logLevel = static_cast<uint8_t>(it->second);
 }
 
 void ParseDataFormat(const std::string &param, Config &config, bool &printHelpInfo)
@@ -885,6 +923,26 @@ void ParseCollectMode(const std::string &param, Config &config, bool &printHelpI
     return;
 }
 
+static void ResolveLogLevel(UserCommand &userCommand)
+{
+    // 日志等级冲突裁决（与参数出现顺序无关）：
+    // 1. 显式给出 --log-level 时以它为准，快捷开关不覆盖
+    // 2. 未显式指定时，多个快捷开关并存按"可见度最高者生效"：
+    //    --verbose/-v/--debug 任一出现取 debug；仅有 --quiet/-q 时取 error
+    if (userCommand.logLevelExplicitSet)
+    {
+        return;
+    }
+    if (userCommand.logLevelVerboseSet)
+    {
+        userCommand.config.logLevel = static_cast<uint8_t>(LogLv::DEBUG);
+    }
+    else if (userCommand.logLevelQuietSet)
+    {
+        userCommand.config.logLevel = static_cast<uint8_t>(LogLv::ERROR);
+    }
+}
+
 void ParseUserCommand(const int32_t &opt, const std::string &param, UserCommand &userCommand)
 {
     switch (opt)
@@ -896,8 +954,20 @@ void ParseUserCommand(const int32_t &opt, const std::string &param, UserCommand 
         case 'h':  // for --help
             userCommand.printHelpInfo = true;
             break;
-        case 'v':  // for --version
+        case 'V':  // for --version
             userCommand.printVersionInfo = true;
+            break;
+        case 'v':  // for --verbose
+            userCommand.logLevelVerboseSet = true;
+            break;
+        case 'q':  // for --quiet
+            userCommand.logLevelQuietSet = true;
+            break;
+        case 'i':  // for --input-path
+            ParseInputPaths(param, userCommand);
+            break;
+        case 'o':  // for --output-path
+            ParseOutputPath(param, userCommand.config, userCommand.printHelpInfo);
             break;
         case static_cast<int32_t>(OptVal::SELECT_STEPS):
             ParseSelectSteps(param, userCommand.config, userCommand.printHelpInfo);
@@ -914,11 +984,35 @@ void ParseUserCommand(const int32_t &opt, const std::string &param, UserCommand 
         case static_cast<int32_t>(OptVal::WATCH):
             ParseWatchConfig(param, userCommand.config, userCommand.printHelpInfo);
             break;
-        case static_cast<int32_t>(OptVal::INPUT):
+        case static_cast<int32_t>(OptVal::INPUT_PATH):
             ParseInputPaths(param, userCommand);
             break;
-        case static_cast<int32_t>(OptVal::OUTPUT):
+        case static_cast<int32_t>(OptVal::OUTPUT_PATH):
             ParseOutputPath(param, userCommand.config, userCommand.printHelpInfo);
+            break;
+        case static_cast<int32_t>(OptVal::FORMAT):
+            ParseDataFormat(param, userCommand.config, userCommand.printHelpInfo);
+            break;
+        case static_cast<int32_t>(OptVal::VERBOSE):
+            userCommand.logLevelVerboseSet = true;
+            break;
+        case static_cast<int32_t>(OptVal::QUIET):
+            userCommand.logLevelQuietSet = true;
+            break;
+        case static_cast<int32_t>(OptVal::DEBUG):
+            userCommand.logLevelVerboseSet = true;
+            break;
+        case static_cast<int32_t>(OptVal::INPUT_ALIAS):
+            PrintDeprecation("--input", "--input-path");
+            ParseInputPaths(param, userCommand);
+            break;
+        case static_cast<int32_t>(OptVal::OUTPUT_ALIAS):
+            PrintDeprecation("--output", "--output-path");
+            ParseOutputPath(param, userCommand.config, userCommand.printHelpInfo);
+            break;
+        case static_cast<int32_t>(OptVal::DATA_FORMAT_ALIAS):
+            PrintDeprecation("--data-format", "--format");
+            ParseDataFormat(param, userCommand.config, userCommand.printHelpInfo);
             break;
         case static_cast<int32_t>(OptVal::DATA_TRACE_LEVEL):
             ParseDataLevel(param, userCommand.config, userCommand.printHelpInfo);
@@ -927,10 +1021,8 @@ void ParseUserCommand(const int32_t &opt, const std::string &param, UserCommand 
             ParseEventTraceType(param, userCommand.config, userCommand.printHelpInfo);
             break;
         case static_cast<int32_t>(OptVal::LOG_LEVEL):
+            userCommand.logLevelExplicitSet = true;
             ParseLogLv(param, userCommand);
-            break;
-        case static_cast<int32_t>(OptVal::DATA_FORMAT):
-            ParseDataFormat(param, userCommand.config, userCommand.printHelpInfo);
             break;
         case static_cast<int32_t>(OptVal::DEVICE):
             ParseDevice(param, userCommand.config, userCommand.printHelpInfo);
@@ -970,7 +1062,7 @@ void ClientParser::InitialConfig(Config &config)
     config.pyStackDepth = 0;
     config.levelType = 1;
     config.dataFormat = static_cast<uint8_t>(DataFormat::CSV);
-    config.logLevel = static_cast<uint8_t>(LogLv::WARN);
+    config.logLevel = static_cast<uint8_t>(LogLv::INFO);
     config.collectAllNpu = true;
     config.collectCpu = false;
     config.collectMode = static_cast<uint8_t>(CollectMode::IMMEDIATE);
@@ -1037,6 +1129,7 @@ UserCommand ClientParser::Parse(int32_t argc, char **argv)
     }
     userCommand.cmd = userBinCmd;
 
+    ResolveLogLevel(userCommand);
     return userCommand;
 }
 }  // namespace MemScope
