@@ -63,6 +63,12 @@ static void HandleShadowEvent(std::shared_ptr<EventBase> event, MemoryState* sta
     {
         // 正常分配/已转正影子块 + 影子释放 → 标记SHADOW_FREED待下次start或exit时处理
         state->shadowState = ShadowState::SHADOW_FREED;
+        // 影子释放事件时间戳刷为上次stop时间 + 1
+        uint64_t stopTs = MemoryStateManager::GetInstance().GetLastStopTimestamp();
+        if (stopTs > 0)
+        {
+            event->timestamp = stopTs + 1;
+        }
     }
 }
 
@@ -80,7 +86,10 @@ static void AppendCleanUpFreeEvent(std::shared_ptr<EventBase> event, MemoryState
     if (!state->events.empty())
     {
         freeEvent->device = state->events[0]->device;
-        freeEvent->eventSubType = state->events[0]->eventSubType;
+        if (state->events[0]->eventType == EventBaseType::MALLOC)
+        {
+            freeEvent->eventSubType = state->events[0]->eventSubType;
+        }
     }
 
     // 析构时补的FREE事件，若当前不在trace状态，时间戳改为上次stop时间+1，防止短暂采集场景有进程退出时的记录，大大拉长时间轴跨度
