@@ -73,9 +73,8 @@ std::string CalculateDataCheckSum64(const std::vector<uint8_t>& data)
     // 异或输出
     checksum ^= DATA_CHECKSUM64_XOR_OUTPUT;
     
-    // 转换为十六进制字符串
-    std::stringstream ss;
-    static size_t valueWide = 16;
-    ss << std::hex << std::setw(valueWide) << std::setfill('0') << checksum;
-    return ss.str();
+    // 转换为十六进制字符串（避免stringstream构造开销）
+    char buf[17];
+    snprintf(buf, sizeof(buf), "%016llx", static_cast<unsigned long long>(checksum));
+    return std::string(buf);
 }

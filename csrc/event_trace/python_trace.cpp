@@ -24,9 +24,9 @@
 
 namespace MemScope {
 
-bool PythonTrace::IsIgnore(std::string funcName) const
+bool PythonTrace::IsIgnore(const std::string& funcName) const
 {
-    for (auto s : ignorePyFunc_) {
+    for (const auto& s : ignorePyFunc_) {
         if (s == funcName) {
             return true;
         }
@@ -34,9 +34,9 @@ bool PythonTrace::IsIgnore(std::string funcName) const
     return false;
 }
 
-bool PythonTrace::IsIgnoreRecordFunc(std::string funcHash)
+bool PythonTrace::IsIgnoreRecordFunc(const std::string& funcHash)
 {
-    for (auto s : ignoreRecordFunc_) {
+    for (const auto& s : ignoreRecordFunc_) {
         if (funcHash.find(s) != std::string::npos) {
             return true;
         }
@@ -76,19 +76,20 @@ void PythonTrace::DumpTraceEvent(std::shared_ptr<TraceEvent>& event)
     }
     auto it = handlerMap_.find(event->device);
     if (it == handlerMap_.end()) {
-        handlerMap_.insert({event->device, MakeDataHandler(GetConfig(), DataType::PYTHON_TRACE_EVENT, event->device)});
+        it = handlerMap_.insert(
+            {event->device, MakeDataHandler(GetConfig(), DataType::PYTHON_TRACE_EVENT, event->device)}).first;
     }
     // db文件需要文件锁
     if (GetConfig().dataFormat == static_cast<uint8_t>(DataFormat::DB)) {
         auto& lock = Utility::FileWriteManager::GetInstance().GetLock(event->device);
         std::lock_guard<std::mutex> lock_guard(lock);
-        handlerMap_[event->device]->Write(event);
+        it->second->Write(event);
     } else {
-        handlerMap_[event->device]->Write(event);
+        it->second->Write(event);
     }
 }
 
-void PythonTrace::RecordCCall(std::string funcHash, std::string funcInfo)
+void PythonTrace::RecordCCall(const std::string& funcHash, const std::string& funcInfo)
 {
     uint64_t tid = Utility::GetTid();
     if (throw_[tid]) {
@@ -109,7 +110,7 @@ void PythonTrace::RecordCCall(std::string funcHash, std::string funcInfo)
     frameStack_[tid].push(event);
 }
 
-void PythonTrace::RecordReturn(std::string funcHash, std::string funcInfo)
+void PythonTrace::RecordReturn(const std::string& funcHash, const std::string& funcInfo)
 {
     uint64_t tid = Utility::GetTid();
     if (!frameStack_[tid].empty()) {
@@ -152,7 +153,7 @@ void PythonTrace::RecordFuncPyCall(const std::string& funcHash, const std::strin
     frameStackRecordFunc_[tid].push(event);
 }
 
-void PythonTrace::RecordFuncReturn(std::string funcHash, std::string funcInfo)
+void PythonTrace::RecordFuncReturn(const std::string& funcHash, const std::string& funcInfo)
 {
     uint64_t tid = Utility::GetTid();
     if (!frameStackRecordFunc_[tid].empty()) {

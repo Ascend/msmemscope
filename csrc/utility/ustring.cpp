@@ -44,8 +44,9 @@ void ToSafeString(std::string &str)
 std::string ExtractAttrValueByKey(const std::string& str, const std::string& key)
 {
     std::string attrValue = "";
-    size_t startPos = str.find(key + ":");
-    if (startPos != std::string::npos) {
+    // 避免构造 key+":" 临时串，直接校验后续字符是否为冒号
+    size_t startPos = str.find(key);
+    if (startPos != std::string::npos && startPos + key.length() < str.size() && str[startPos + key.length()] == ':') {
         // 跳过键和冒号
         startPos += key.length() + 1;
         size_t endPos = str.find(",", startPos);

@@ -50,8 +50,8 @@ private:
     AtenManager(AtenManager&& other) = delete;
     AtenManager& operator=(AtenManager&& other) = delete;
 
-    bool ExtractTensorInfo(const char* msg, const std::string &key, std::string &value);
-    void ExtractTensorFields(const char* msg, AtenAccessTensorInfo& info);
+    bool ExtractTensorInfo(const std::string& msg, const std::string &key, std::string &value);
+    void ExtractTensorFields(const std::string& msg, AtenAccessTensorInfo& info);
     void ReportAtenLaunch(const char* msg, int32_t streamId, bool isAtenBegin);
     void ReportAtenAccess(const char* msg, int32_t streamId);
     bool IsFirstWatchedOp(const char* name);

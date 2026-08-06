@@ -52,10 +52,11 @@ public:
 
         // 遍历路径，创建中间节点
         for (size_t i = 0; i < parts.size() - 1; ++i) {
-            if (curr->find(parts[i]) == curr->end()) {
-                (*curr)[parts[i]] = nlohmann::json::object();
+            auto it = curr->find(parts[i]);
+            if (it == curr->end()) {
+                it = curr->emplace(parts[i], nlohmann::json::object()).first;
             }
-            curr = &(*curr)[parts[i]];
+            curr = &it.value();
         }
         (*curr)[parts.back()] = value;
     }

@@ -41,19 +41,18 @@ AtenManager::AtenManager()
     lastWatchOp_ = std::string(GetConfig().watchConfig.end);
 }
 
-bool AtenManager::ExtractTensorInfo(const char* msg, const std::string &key, std::string &value)
+bool AtenManager::ExtractTensorInfo(const std::string& msg, const std::string &key, std::string &value)
 {
-    std::string msgString(msg);
-    size_t startPos = msgString.find(key);
+    size_t startPos = msg.find(key);
     if (startPos == std::string::npos) {
         return false;
     }
     startPos += key.length();
-    size_t endPos = msgString.find_first_of(";}", startPos);
+    size_t endPos = msg.find_first_of(";}", startPos);
     if (endPos == std::string::npos) {
-        endPos = msgString.length();
+        endPos = msg.length();
     }
-    value = msgString.substr(startPos, endPos - startPos);
+    value = msg.substr(startPos, endPos - startPos);
     return true;
 }
 
@@ -82,26 +81,30 @@ void AtenManager::ReportAtenLaunch(const char* msg, int32_t streamId, bool isAte
     if (GetConfig().watchConfig.isWatched || TensorMonitor::GetInstance().IsInMonitoring()) {
         isWatchEnable_ = true;
     }
+    // 每条消息仅拷贝一次，供字段提取复用
+    std::string msgString(msg);
     std::string name;
-    ExtractTensorInfo(msg, "name=", name);
+    ExtractTensorInfo(msgString, "name=", name);
     int32_t devId = GD_INVALID_NUM;
     if (!GetDeviceInfo::Instance().GetDeviceId(devId) || devId == GD_INVALID_NUM) {
         LOG_ERROR("get device id failed.");
     }
     uint64_t tid = Utility::GetTid();
 
-    std::string opName = std::to_string(devId) + "_" + std::to_string(tid) + "/" + name;
-    if (isWatchEnable_ && isAtenBegin) {
-        MemoryWatch::GetInstance().OpExcuteBegin(nullptr, opName);
-    }
-    if (isWatchEnable_ && !isAtenBegin) {
-        MemoryWatch::GetInstance().OpExcuteEnd(nullptr, opName, outputTensors_);
-        if (IsFirstWatchedOp(name.c_str()) && !isfirstWatchOpSet_) {
-            isfirstWatchOpSet_ = true;
-        }
-        if (IsLastWatchedOp(name.c_str())) {
-            outputTensors_.clear();
-            isfirstWatchOpSet_ = false;
+    if (isWatchEnable_) {
+        // opName仅在watch使能时使用，避免无谓的临时串构造
+        std::string opName = std::to_string(devId) + "_" + std::to_string(tid) + "/" + name;
+        if (isAtenBegin) {
+            MemoryWatch::GetInstance().OpExcuteBegin(nullptr, opName);
+        } else {
+            MemoryWatch::GetInstance().OpExcuteEnd(nullptr, opName, outputTensors_);
+            if (IsFirstWatchedOp(name.c_str()) && !isfirstWatchOpSet_) {
+                isfirstWatchOpSet_ = true;
+            }
+            if (IsLastWatchedOp(name.c_str())) {
+                outputTensors_.clear();
+                isfirstWatchOpSet_ = false;
+            }
         }
     }
 
@@ -130,8 +133,9 @@ bool AtenManager::IsLastWatchedOp(const char* name)
     return lastWatchOp_ == std::string(name);
 }
 
-void AtenManager::ExtractTensorFields(const char* msg, AtenAccessTensorInfo& info)
+void AtenManager::ExtractTensorFields(const std::string& msg, AtenAccessTensorInfo& info)
 {
+    // 同一消息的8个字段提取共享一次拷贝，避免每次字段提取都深拷贝整条消息
     ExtractTensorInfo(msg, "ptr=", info.addr);
     ExtractTensorInfo(msg, "dtype=", info.dtype);
     ExtractTensorInfo(msg, "shape=", info.shape);
@@ -147,8 +151,10 @@ void AtenManager::ReportAtenAccess(const char* msg, int32_t streamId)
     if (GetConfig().watchConfig.isWatched || TensorMonitor::GetInstance().IsInMonitoring()) {
         isWatchEnable_ = true;
     }
+    // 每条消息仅拷贝一次，供8个字段提取复用
+    std::string msgString(msg);
     AtenAccessTensorInfo atenInfo;
-    ExtractTensorFields(msg, atenInfo);
+    ExtractTensorFields(msgString, atenInfo);
 
     // 组装attr属性
     std::ostringstream oss;

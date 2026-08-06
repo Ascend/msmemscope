@@ -43,7 +43,7 @@ public:
 
     void OpExcuteBegin(aclrtStream stream, const std::string &rawOp);
     void OpExcuteEnd(aclrtStream stream, const std::string &rawOp, const std::vector<MonitoredTensor>& tensors);
-    void ATBKernelExcute(aclrtStream stream, const std::string rawKernel, const Mki::SVector<Mki::Tensor>& tensors);
+    void ATBKernelExcute(aclrtStream stream, const std::string& rawKernel, const Mki::SVector<Mki::Tensor>& tensors);
     void KernelExcuteBegin(aclrtStream stream, const std::string &rawItem, bool isOuterLayer = false);
     void KernelExcuteEnd(aclrtStream stream, const std::string &excuteItem, bool isOuterLayer = false,
         const Mki::SVector<Mki::Tensor>& tensors = {});

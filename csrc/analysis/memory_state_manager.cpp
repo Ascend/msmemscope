@@ -72,55 +72,57 @@ MemoryStateManager& MemoryStateManager::GetInstance()
     return manager;
 }
 
-bool MemoryStateManager::AddEvent(std::shared_ptr<MemoryEvent>& event)
+MemoryState* MemoryStateManager::AddEvent(std::shared_ptr<MemoryEvent>& event)
 {
     if (event->poolType == PoolType::INVALID)
     {
         // LOG_DEBUG
-        return false;
+        return nullptr;
     }
     std::lock_guard<std::mutex> lock(mtx_);
-    if (poolsMap_.find(event->poolType) == poolsMap_.end())
-    {
-        poolsMap_[event->poolType] = Pool{};
-    }
     MemoryStateKey key = MemoryStateKey{event->pid, event->addr};
+    // operator[]在key缺失时插入默认Pool，一次查找完成
     auto& statesPool = poolsMap_[event->poolType];
     auto& statesMap = statesPool.statesMap;
 
-    // 如果device信息是缺失的，尝试补全
-    if (event->device == GD_INVALID_NUM && statesMap.find(key) != statesMap.end() && !statesMap[key].events.empty())
+    // 若已有state，复用同一次查找补全device和size信息
+    auto stateIt = statesMap.find(key);
+    if (stateIt != statesMap.end() && !stateIt->second.events.empty())
     {
-        event->device = statesMap[key].events[0]->device;
-    }
-
-    // hal和host内存存在free事件没有size信息，在此处匹配到malloc事件并填写size
-    if (event->eventType == EventBaseType::FREE && event->poolType == PoolType::HAL && !statesMap[key].events.empty() &&
-        statesMap[key].events[0]->eventType == EventBaseType::MALLOC)
-    {
-        event->size = statesMap[key].events[0]->size;
-        if (event->device == DEVICE_ID_CPU)
+        auto& firstEvent = stateIt->second.events[0];
+        // 如果device信息是缺失的，尝试补全
+        if (event->device == GD_INVALID_NUM)
         {
-            event->eventSubType = statesMap[key].events[0]->eventSubType;
-            event->used = static_cast<int64_t>(Utility::GetProcessVmRss());
+            event->device = firstEvent->device;
+        }
+
+        // hal和host内存存在free事件没有size信息，在此处匹配到malloc事件并填写size
+        if (event->eventType == EventBaseType::FREE && event->poolType == PoolType::HAL &&
+            firstEvent->eventType == EventBaseType::MALLOC)
+        {
+            event->size = firstEvent->size;
+            if (event->device == DEVICE_ID_CPU)
+            {
+                event->eventSubType = firstEvent->eventSubType;
+                event->used = static_cast<int64_t>(Utility::GetProcessVmRss());
+            }
         }
     }
 
     if (event->eventType == EventBaseType::MALLOC)
     {
-        if (statesMap.find(key) == statesMap.end())
-        {
-            statesMap[key] = MemoryState{event};
-            if (event->isShadowEvent)
-            {
-                statesMap[key].shadowState = ShadowState::SHADOW_CREATED;
-            }
-        }
-        else
+        if (stateIt != statesMap.end())
         {
             // 有一种情况会添加失败，malloc时仍有数据未释放
-            return false;
+            return nullptr;
         }
+        auto inserted = statesMap.emplace(key, MemoryState{event});
+        MemoryState& newState = inserted.first->second;
+        if (event->isShadowEvent)
+        {
+            newState.shadowState = ShadowState::SHADOW_CREATED;
+        }
+        return &newState;
     }
     else
     {
@@ -128,31 +130,34 @@ bool MemoryStateManager::AddEvent(std::shared_ptr<MemoryEvent>& event)
         if (state == nullptr)
         {
             // 当前事件没有匹配到已有的state，需要新建一个state表示新的内存块
-            statesMap[key] = MemoryState{event};
+            auto inserted = statesMap.emplace(key, MemoryState{event});
+            return &inserted.first->second;
         }
         else
         {
             state->events.push_back(event);
+            return state;
         }
     }
-    return true;
 }
 
 bool MemoryStateManager::DeteleState(const PoolType& poolType, const MemoryStateKey& key)
 {
     std::lock_guard<std::mutex> lock(mtx_);
-    if (poolsMap_.find(poolType) == poolsMap_.end())
+    auto poolIt = poolsMap_.find(poolType);
+    if (poolIt == poolsMap_.end())
     {
         // LOG_DEBUG
         return false;
     }
-    auto it = poolsMap_[poolType].statesMap.find(key);
-    if (it == poolsMap_[poolType].statesMap.end())
+    auto& statesMap = poolIt->second.statesMap;
+    auto it = statesMap.find(key);
+    if (it == statesMap.end())
     {
         // LOG_DEBUG
         return false;
     }
-    poolsMap_[poolType].statesMap.erase(it);
+    statesMap.erase(it);
     return true;
 }
 
@@ -167,35 +172,41 @@ MemoryState* MemoryStateManager::GetState(std::shared_ptr<EventBase>& event)
     std::lock_guard<std::mutex> lock(mtx_);
     auto poolType = event->poolType;
     auto key = MemoryStateKey{event->pid, event->addr};
-    if (poolsMap_.find(poolType) == poolsMap_.end())
+    auto poolIt = poolsMap_.find(poolType);
+    if (poolIt == poolsMap_.end())
     {
         // LOG_DEBUG
         return nullptr;
     }
-    if (poolsMap_[poolType].statesMap.find(key) == poolsMap_[poolType].statesMap.end())
+    auto& statesMap = poolIt->second.statesMap;
+    auto stateIt = statesMap.find(key);
+    if (stateIt == statesMap.end())
     {
         // LOG_DEBUG
         return nullptr;
     }
-    return &(poolsMap_[poolType].statesMap[key]);
+    return &stateIt->second;
 }
 
 MemoryState* MemoryStateManager::FindStateInPool(const PoolType& poolType, const MemoryStateKey& key, uint64_t size)
 {
-    if (poolsMap_.find(poolType) == poolsMap_.end())
+    auto poolIt = poolsMap_.find(poolType);
+    if (poolIt == poolsMap_.end())
     {
         return nullptr;
     }
-    auto& statesPool = poolsMap_[poolType];
-    auto& statesMap = statesPool.statesMap;
-    if (statesMap.find(key) != statesMap.end())
+    auto& statesMap = poolIt->second.statesMap;
+    auto stateIt = statesMap.find(key);
+    if (stateIt != statesMap.end())
     {
         // 直接匹配到相同起始地址
-        return &(statesMap[key]);
+        return &stateIt->second;
     }
 
     // 使用的地址空间位于某块已分配的内存内
     uint64_t addr = key.addr;
+    // addr和size在循环内不变，提前计算一次
+    uint64_t addrLimit = Utility::GetAddResult(addr, size);
     for (auto& pair : statesMap)
     {
         if (key.pid != pair.first.pid)
@@ -203,8 +214,7 @@ MemoryState* MemoryStateManager::FindStateInPool(const PoolType& poolType, const
             continue;
         }
         uint64_t startingAddr = pair.first.addr;
-        if (addr >= startingAddr &&
-            Utility::GetAddResult(addr, size) <= Utility::GetAddResult(startingAddr, pair.second.size))
+        if (addr >= startingAddr && addrLimit <= Utility::GetAddResult(startingAddr, pair.second.size))
         {
             return &(pair.second);
         }

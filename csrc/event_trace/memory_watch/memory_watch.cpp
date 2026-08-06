@@ -21,12 +21,13 @@ namespace MemScope {
 
 uint64_t MemoryWatch::CountOpName(const std::string& name)
 {
-    if (targetNameCnt_.find(name) == targetNameCnt_.end()) {
-        targetNameCnt_[name] = 1;
-    } else {
-        targetNameCnt_[name] += 1;
+    auto it = targetNameCnt_.find(name);
+    if (it == targetNameCnt_.end()) {
+        targetNameCnt_.emplace(name, 1);
+        return 1;
     }
-    return targetNameCnt_[name];
+    ++it->second;
+    return it->second;
 }
 
 void MemoryWatch::BeginExcute(aclrtStream stream, const std::string &rawItem)
@@ -115,11 +116,12 @@ void MemoryWatch::OpExcuteEnd(aclrtStream stream,
 void MemoryWatch::KernelExcuteBegin(aclrtStream stream, const std::string &rawKernel, bool isOuterLayer)
 {
     std::lock_guard<std::mutex> guard(mutex_);
+    uint64_t tid = Utility::GetTid();
     // 防止atb的kernel监控与python接口的kernel监控重复
     if (isOuterLayer) {
-        isRepeatWatch_[Utility::GetTid()] = true;
+        isRepeatWatch_[tid] = true;
     }
-    if (isRepeatWatch_[Utility::GetTid()] && !isOuterLayer) {
+    if (isRepeatWatch_[tid] && !isOuterLayer) {
         return ;
     }
     BeginExcute(stream, rawKernel);
@@ -129,12 +131,13 @@ void MemoryWatch::KernelExcuteEnd(aclrtStream stream, const std::string &rawKern
     const Mki::SVector<Mki::Tensor>& tensors)
 {
     std::lock_guard<std::mutex> guard(mutex_);
+    uint64_t tid = Utility::GetTid();
     // 防止atb的kernel监控与python接口的kernel监控重复
-    if (isRepeatWatch_[Utility::GetTid()] && !isOuterLayer) {
+    if (isRepeatWatch_[tid] && !isOuterLayer) {
         return ;
     }
     if (isOuterLayer) {
-        isRepeatWatch_[Utility::GetTid()] = false;
+        isRepeatWatch_[tid] = false;
     }
     std::string kernelDir = rawKernel.substr(rawKernel.find("/") + 1);
     if (!IsFirstWatchTarget(kernelDir)) {
@@ -165,7 +168,7 @@ void ATBKernelExcute(aclrtStream stream, char* rawKernel, const Mki::SVector<Mki
     MemScope::MemoryWatch::GetInstance().ATBKernelExcute(stream, str, tensors);
 }
 
-void MemoryWatch::ATBKernelExcute(aclrtStream stream, std::string rawKernel, const Mki::SVector<Mki::Tensor>& tensors)
+void MemoryWatch::ATBKernelExcute(aclrtStream stream, const std::string& rawKernel, const Mki::SVector<Mki::Tensor>& tensors)
 {
     auto beforPos = rawKernel.find("/before");
     auto afterPos = rawKernel.find("/after");

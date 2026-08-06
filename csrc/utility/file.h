@@ -42,26 +42,26 @@ namespace Utility {
 
     class FileCreateManager {
     public:
-        static FileCreateManager& GetInstance(const std::string outputDir);
+        static FileCreateManager& GetInstance(const std::string& outputDir);
 
         // 多线程情况下调用,需加锁保护,这里已经在内部进行加锁保护，外部调用无需加锁
-        bool CreateCsvFile(FILE **filefp, int32_t devId, std::string filePrefix, std::string taskDir,
-            std::string headers);
-        bool CreateDbFile(sqlite3 **filefp, int32_t devId, std::string filePrefix, std::string taskDir,
-            std::string tableName, std::string tableCreateSql);
+        bool CreateCsvFile(FILE **filefp, int32_t devId, const std::string& filePrefix, const std::string& taskDir,
+            const std::string& headers);
+        bool CreateDbFile(sqlite3 **filefp, int32_t devId, const std::string& filePrefix, const std::string& taskDir,
+            const std::string& tableName, const std::string& tableCreateSql);
         bool CreateLogFile(FILE **filefp, const char* taskDir, char* logFilePath, size_t size);
-        bool CreateConfigFile(FILE **filefp, std::string fileName, std::string& configFilePath);
+        bool CreateConfigFile(FILE **filefp, const std::string& fileName, std::string& configFilePath);
 
         /// 创建文件
         FILE* CreateFileWithUmask(const std::string &path, const std::string &mode, mode_t mask);
         FILE* CreateFile(const std::string &dir, const std::string &name, mode_t mask);
-        bool CreateDbTable(sqlite3 *filefp, std::string tableCreateSql);
+        bool CreateDbTable(sqlite3 *filefp, const std::string& tableCreateSql);
         bool CreateDir();
-        
+
         std::string GetProjectDir() const;
         void SetProjectDir(std::string dirPath);
     private:
-        explicit FileCreateManager(const std::string outputDir);
+        explicit FileCreateManager(const std::string& outputDir);
         std::string projectDir_;
         std::string dbDateStr_{""};
         std::mutex createCsvFileMutex_;

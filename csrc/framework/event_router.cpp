@@ -115,16 +115,16 @@ static MemoryState* UpdateMemoryEventState(std::shared_ptr<EventBase> event)
     }
 
     MemoryStateManager& manager = MemoryStateManager::GetInstance();
-    if (!manager.AddEvent(memEvent))
+    // AddEvent内部已定位到事件所属state并返回，避免调用方再GetState一次（二次加锁+二次查找）
+    MemoryState* state = manager.AddEvent(memEvent);
+    if (state == nullptr)
     {
         // 添加事件失败时，表明对应位置已存在事件，需先清空事件列表
         std::shared_ptr<EventBase> cleanUpEvent = std::make_shared<CleanUpEvent>(
             EventSubType::RESIDUAL_BLOCK, memEvent->poolType, memEvent->pid, memEvent->addr);
         EventHandler(cleanUpEvent);  // 最大递归深度为2，因为这里传入事件的类型为CLEAN_UP
-        manager.AddEvent(memEvent);  // 再次尝试添加
+        state = manager.AddEvent(memEvent);  // 再次尝试添加
     }
-
-    MemoryState* state = manager.GetState(memEvent);
 
     // 影子事件处理：不落盘、不分析，仅维护State
     if (memEvent->isShadowEvent)

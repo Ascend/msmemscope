@@ -50,7 +50,7 @@ class SanitizerOpHandler
     SanitizerOpHandler& operator=(const SanitizerOpHandler&) = delete;
 
     // 提取顶级字段值（按 ; 分隔，匹配 key=value）
-    bool ExtractField(const char* msg, const std::string& key, std::string& value);
+    bool ExtractField(const std::string& msg, const std::string& key, std::string& value);
     // 解析 read/write 列表: "alias:addr:size,alias:addr:size,..." → vector<MemoryAccessItem>
     std::vector<MemoryAccessItem> ParseAccessList(const std::string& listStr);
     // 解析单项 "alias:addr:size"

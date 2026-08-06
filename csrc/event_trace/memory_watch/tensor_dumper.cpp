@@ -169,10 +169,11 @@ void TensorDumper::Dump(aclrtStream stream, const std::string &op, bool isWatchS
 {
     SynchronizeStream(stream);
     std::unordered_map<uint64_t, MonitoredTensor> tensorsMap = TensorMonitor::GetInstance().GetCmdWatchedTensorsMap();
+    // 两个取值对全部tensor恒定，提到循环外只取一次
+    std::string watchedOpName = MemoryWatch::GetInstance().GetWatchedTargetName();
+    auto outputId = TensorMonitor::GetInstance().GetCmdWatchedOutputId();
     uint64_t index = 0;
     for (const auto& tensorPair : tensorsMap) {
-        std::string watchedOpName = MemoryWatch::GetInstance().GetWatchedTargetName();
-        auto outputId = TensorMonitor::GetInstance().GetCmdWatchedOutputId();
         auto fileName = GetFileName(op, watchedOpName, outputId != UINT32_MAX ? outputId : index, isWatchStart);
         auto result = DumpOneTensor(tensorPair.second, fileName);
         if (!result) {

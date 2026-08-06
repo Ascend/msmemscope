@@ -30,7 +30,7 @@ void OOMHandler::SetOOMStack(const CallStackString& stack) {
 CallStackString OOMHandler::GetOOMStack() {
     std::lock_guard<std::mutex> lock(oomStackMutex_);
     if (!oomStackQueue_.empty()) {
-        CallStackString stack = oomStackQueue_.front();
+        CallStackString stack = std::move(oomStackQueue_.front());
         oomStackQueue_.pop();
         return stack;
     }

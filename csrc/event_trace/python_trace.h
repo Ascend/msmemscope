@@ -44,18 +44,18 @@ public:
     PythonTrace(const PythonTrace&) = delete;
     PythonTrace& operator=(const PythonTrace&) = delete;
     void RecordPyCall(const std::string& funcHash, const std::string& funcInfo, uint64_t timestamp);
-    void RecordCCall(std::string funcHash, std::string funcInfo);
-    void RecordReturn(std::string funcHash, std::string funcInfo);
+    void RecordCCall(const std::string& funcHash, const std::string& funcInfo);
+    void RecordReturn(const std::string& funcHash, const std::string& funcInfo);
     // 自定义trace事件的回调
     void RecordFuncPyCall(const std::string& funcHash, const std::string& funcInfo, uint64_t timestamp);
-    void RecordFuncReturn(std::string funcHash, std::string funcInfo);
+    void RecordFuncReturn(const std::string& funcHash, const std::string& funcInfo);
     void Start();
     void Stop();
     bool IsTraceActive();
-    bool IsIgnoreRecordFunc(std::string funcHash);
+    bool IsIgnoreRecordFunc(const std::string& funcHash);
 private:
     void DumpTraceEvent(std::shared_ptr<TraceEvent>& event);
-    bool IsIgnore(std::string funcName) const;
+    bool IsIgnore(const std::string& funcName) const;
     PythonTrace() = default;
     ~PythonTrace() = default;
     std::unordered_map<uint64_t, std::stack<std::shared_ptr<TraceEvent>>> frameStack_;

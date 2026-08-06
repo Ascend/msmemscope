@@ -36,9 +36,7 @@ void EventDispatcher::Subscribe(const SubscriberId& id,
     Subscriber newSubscriber{id, priority, func};
 
     for (auto eventType : eventTypes) {
-        if (eventSubscribers_.find(eventType) == eventSubscribers_.end()) {
-            eventSubscribers_[eventType] = {};
-        }
+        // operator[]在缺失时默认构造空vector，一次查找完成
         auto& subscribers = eventSubscribers_[eventType];
         auto subscriberIt = std::find(subscribers.begin(), subscribers.end(), id);
         if (subscriberIt == subscribers.end()) {

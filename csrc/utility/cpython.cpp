@@ -173,8 +173,13 @@ void PythonCallstack(uint32_t pyDepth, std::string& pyStack)
             return;
         }
 
-        pyStack += std::string(fileNameCStr) + "(" + std::to_string(PyFrame_GetLineNumber(frame)) +
-                   "): " + std::string(funcNameCStr) + "\n";
+        // 逐段append，避免构造完整临时串（pyStack已reserve）
+        pyStack.append(fileNameCStr);
+        pyStack.append("(");
+        pyStack += std::to_string(PyFrame_GetLineNumber(frame));
+        pyStack.append("): ");
+        pyStack.append(funcNameCStr);
+        pyStack.push_back('\n');
 
         PyFrameObject* prevFrame = PyFrame_GetBack(frame);
         Py_DecRef(reinterpret_cast<PyObject*>(frame));

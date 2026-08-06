@@ -23,7 +23,7 @@
 namespace Utility {
     void GetCallstack(MemScope::CallStackString &stack)
     {
-        auto config = MemScope::GetConfig();
+        const auto& config = MemScope::GetConfig();
         if (config.enableCStack) {
             Utility::GetCCallstack(config.cStackDepth, stack.cStack, MemScope::SKIP_DEPTH);
         }
