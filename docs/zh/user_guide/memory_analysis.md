@@ -2,7 +2,7 @@
 
 ## 简介
 
-msMemScope工具基于采集的内存数据，提供泄漏、对比、监测、拆解，以及低效识别等分析能力，帮助开发者快速诊断和优化内存问题。
+msMemScope工具基于采集的内存数据，提供泄漏、对比、监测、拆解，低效内存识别以及OOM分析等分析能力，帮助开发者快速诊断和优化内存问题。
 
 |分析能力|说明|
 |--|--|
@@ -11,12 +11,13 @@ msMemScope工具基于采集的内存数据，提供泄漏、对比、监测、�
 |内存块监测|在大模型场景中，当遇到内存踩踏定位困难时，msMemScope工具支持通过Python接口和命令行两种方式，在算子执行前后对指定的内存块进行监测。根据内存块数据的变化，快速确定算子间内存踩踏的范围或具体位置。|
 |内存拆解|msMemScope工具提供内存拆解功能，支持对CANN层和Ascend for PyTorch框架的内存使用情况进行拆解，输出模型权重、激活值、梯度，以及优化器等组件的内存占用情况。|
 |低效内存识别|在训练推理模型过程中，可能存在部分内存块申请后未立即使用，或使用完毕后未及时释放的低效情况。msMemScope工具可帮助识别这种低效内存的使用现象，从而优化训练推理模型。|
+|OOM分析|当NPU训练/推理过程中发生OOM（Out of Memory，显存溢出）时，msMemScope工具可自动采集触发OOM的操作信息、最近未释放的内存分配记录和占用最大的内存分配记录，帮助快速定位OOM根因。|
 |一键分析|为了提高msMemScope内存分析的易用性，支持一键开启内存拆解和内存快照功能，对vLLM/FSDP/verl的核心函数自动打点，供用户快速分析。|
 |NPU Sanitizer自定义算子打点|对于开发者自行编写的自定义算子，msMemScope联动NPU Sanitizer提供了自定义算子打点功能。开发者通过MSTX接口上报一条格式化字符串，即可将自定义算子的显存读写信息送入Sanitizer分析管线，检测多流同步错误。|
 
 ## 使用前准备
 
-msMemScope工具的安装，请参见[《msMemScope工具安装说明》](../install_guide/install_guide.md)。
+msMemScope工具的安装，请参见《[msMemScope工具安装说明](../install_guide/install_guide.md)》。
 
 ## 内存泄漏分析功能介绍
 
@@ -349,6 +350,49 @@ msmemscope ${Application} --analysis=inefficient
 ### 输出说明
 
 低效内存识别的结果会保存在memscope_dump_{_timestamp_}.csv文件中，具体信息可参见[输出文件说明](./output_file_spec.md)。
+
+## OOM分析功能介绍
+
+### 功能说明
+
+在NPU训练/推理过程中，当发生OOM（Out of Memory，显存溢出）时，仅凭错误码难以定位是哪些内存分配占用了显存。msMemScope工具提供OOM分析功能，在OOM发生时自动采集诊断信息，包括：
+
+1. **触发信息**：哪个函数触发了OOM、申请了多大内存、返回码及调用栈。
+2. **最近未释放记录**：按时间排序的最近N条已申请但未释放的内存分配。
+3. **最大未释放记录**：按大小排序的最大N条已申请但未释放的内存分配。
+
+### 注意事项
+
+- OOM分析功能需配合`--analysis=oom`参数使用，会自动联动开启alloc/free事件采集，无需额外配置`--events`参数。
+- K值范围[1, 1000]，默认值为10。K值越大，采集的记录越多，OOM时刻的dump耗时也会相应增加。
+- OOM数据写入现有的`memscope_dump_{_timestamp_}.csv`文件中，不会创建新文件。
+
+### 使用示例
+
+执行以下命令，开启OOM分析功能。其中`K`为可选值，表示采集Top-K条记录，Application为用户脚本。
+
+```shell
+msmemscope ${Application} --analysis=oom:K
+```
+
+例如：
+
+```shell
+# 基础用法（默认K=10）
+msmemscope --analysis=oom python train.py
+
+# 自定义K值
+msmemscope --analysis=oom:50 python train.py
+
+# 叠加其他分析功能
+msmemscope --analysis=oom:30,leaks python train.py
+```
+
+命令执行完成后，OOM诊断信息会写入`memscope_dump_{_timestamp_}.csv`文件，可通过筛选`Event`=`OOM_DETAIL`查看所有OOM相关记录。
+
+### 输出说明
+
+OOM分析的结果会保存在memscope_dump_{_timestamp_}.csv文件中，按Event字段筛选OOM_DETAIL即可查看。具体字段说明可参见[输出文件说明](./output_file_spec.md)。
 
 ## 一键分析功能介绍
 
