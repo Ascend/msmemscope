@@ -838,6 +838,12 @@ bool EventReport::ReportAtenAccess(const std::string& name, const std::string& a
         return true;
     }
 
+    if (addr == 0)
+    {
+        LOG_ERROR("[mark] Aten access addr is 0, skip");
+        return true;
+    }
+
     std::shared_ptr<MemoryEvent> event = std::make_shared<MemoryEvent>();
     event->eventType = EventBaseType::ACCESS;
     event->eventSubType = type == AccessType::READ    ? EventSubType::ATEN_READ
@@ -1022,6 +1028,14 @@ bool EventReport::ReportAtbAccessMemory(const char* name, size_t nameSize, const
 
     if (IsNeedSkip(devId))
     {
+        return true;
+    }
+
+    if (addr == 0)
+    {
+        // tensor地址为空(0)的访问事件无法关联任何内存块，
+        // 直接丢弃，防止在MemoryStateManager中产生无MALLOC的幽灵内存块状态
+        LOG_ERROR("[mark] ATB access addr is 0, skip");
         return true;
     }
 
