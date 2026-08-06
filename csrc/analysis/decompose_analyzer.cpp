@@ -33,8 +33,8 @@ const std::string DecomposeAnalyzer::ptaWorkspaceStr = "PTA_WORKSPACE";
 const std::string DecomposeAnalyzer::atbStr = "ATB";
 const std::string DecomposeAnalyzer::mindsporeStr = "MINDSPORE";
 
-// ATEN 访问标记: 存放于细化分类2(DETAIL_2), 不带前导@(由GetOwnerStr按级别拼接)
-const std::string DecomposeAnalyzer::atenStr = "ops@aten";
+// 算子访问标记: 存放于细化分类2(DETAIL_2), 不带前导@(由GetOwnerStr按级别拼接)
+const std::string DecomposeAnalyzer::opsStr = "ops";
 
 DecomposeAnalyzer& DecomposeAnalyzer::GetInstance()
 {
@@ -152,7 +152,7 @@ void DecomposeAnalyzer::UpdateOwnerByAtenAccess(std::shared_ptr<MemoryEvent>& ev
     // ATEN 访问为弱标记: 细化分类2(DETAIL_2)为空时才写入, 不覆盖已有细化标签
     if (state->owner.GetLabel(OwnerLevel::DETAIL_2).empty())
     {
-        state->owner.AddLabel(OwnerLevel::DETAIL_2, atenStr);
+        state->owner.AddLabel(OwnerLevel::DETAIL_2, opsStr);
     }
 }
 
