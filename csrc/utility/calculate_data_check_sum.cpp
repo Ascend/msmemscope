@@ -15,6 +15,7 @@
  * -------------------------------------------------------------------------
  */
 
+#include <cstdio>
 #include <sstream>
 #include <iomanip>
 #include "calculate_data_check_sum.h"

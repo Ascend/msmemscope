@@ -18,6 +18,7 @@
 #include "inefficient_analyzer.h"
 
 #include <string>
+#include <tuple>
 
 #include "event_dispatcher.h"
 namespace MemScope
@@ -71,10 +72,10 @@ void InefficientAnalyzer::EventHandle(std::shared_ptr<EventBase>& event, MemoryS
     }
 }
 
-// 首次出现的pid插入初始状态并初始化，一次查找完成
 void InefficientAnalyzer::InitNewPidState(const uint64_t pid, std::unordered_map<uint64_t, PidState>& pidStatesMap)
 {
-    auto initResult = pidStatesMap.emplace(pid, PidState{});
+    auto initResult = pidStatesMap.emplace(std::piecewise_construct, std::forward_as_tuple(pid),
+                                           std::forward_as_tuple());
     if (initResult.second)
     {
         Init(initResult.first->second);
