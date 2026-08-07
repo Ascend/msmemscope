@@ -3,16 +3,13 @@
 # Copyright Huawei Technologies Co., Ltd. 2024-2024. All rights reserved.
 
 
-from termcolor import colored
-
-
 class ColorText:
-    border = colored("[----------]", "green")
-    run_test = colored("[ RUN      ]", "green")
-    run_ok = colored("[       OK ]", "green")
-    run_failed = colored("[  FAILED  ]", "red")
-    run_warn = colored("[   WARN   ]", "yellow")
-    run_list = colored("[   LIST   ]", "green")
+    border = "\033[32m[----------]\033[0m"
+    run_test = "\033[32m[ RUN      ]\033[0m"
+    run_ok = "\033[32m[       OK ]\033[0m"
+    run_failed = "\033[31m[  FAILED  ]\033[0m"
+    run_warn = "\033[33m[   WARN   ]\033[0m"
+    run_list = "\033[32m[   LIST   ]\033[0m"
 
 
 class PrintBorder:
