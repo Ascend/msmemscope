@@ -74,8 +74,8 @@ void InefficientAnalyzer::EventHandle(std::shared_ptr<EventBase>& event, MemoryS
 
 void InefficientAnalyzer::InitNewPidState(const uint64_t pid, std::unordered_map<uint64_t, PidState>& pidStatesMap)
 {
-    auto initResult = pidStatesMap.emplace(std::piecewise_construct, std::forward_as_tuple(pid),
-                                           std::forward_as_tuple());
+    auto initResult =
+        pidStatesMap.emplace(std::piecewise_construct, std::forward_as_tuple(pid), std::forward_as_tuple());
     if (initResult.second)
     {
         Init(initResult.first->second);
@@ -173,10 +173,7 @@ void InefficientAnalyzer::ClassifyEventsTmp(PidState& pidState)
     }
 }
 
-void InefficientAnalyzer::UpdateApiId(PidState& pidState)
-{
-    pidState.apiId.fetch_add(1, std::memory_order_relaxed);
-}
+void InefficientAnalyzer::UpdateApiId(PidState& pidState) { pidState.apiId.fetch_add(1, std::memory_order_relaxed); }
 
 void InefficientAnalyzer::AddEventToTmps(const std::shared_ptr<MemoryEvent>& event, PidState& pidState)
 {
@@ -259,8 +256,7 @@ void InefficientAnalyzer::EarlyAllocation(std::shared_ptr<MemoryEvent>& event, M
     }
 }
 
-void InefficientAnalyzer::LateDeallocation(std::shared_ptr<MemoryEvent>& event, MemoryState* state,
-                                           PidState& pidState)
+void InefficientAnalyzer::LateDeallocation(std::shared_ptr<MemoryEvent>& event, MemoryState* state, PidState& pidState)
 {
     // 1.找到LAST ACCESS。2.判断FREE API与LA API之间有无MALLOC API
     uint64_t eventsLen = state->events.size();

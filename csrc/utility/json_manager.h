@@ -18,31 +18,33 @@
 #ifndef JSON_MANAGER_H
 #define JSON_MANAGER_H
 
-#include "log.h"
 #include "config_info.h"
+#include "log.h"
 #include "nlohmann/json.hpp"
 #include "ustring.h"
 
-namespace Utility {
+namespace Utility
+{
 
 constexpr uint8_t JSON_INDENT = 4;  // 缩进4个空格
-constexpr const char *MSMEMSCOPE_CONFIG_ENV = "MSMEMSCOPE_CONFIG_PATH";
+constexpr const char* MSMEMSCOPE_CONFIG_ENV = "MSMEMSCOPE_CONFIG_PATH";
 
-class JsonManager {
-public:
+class JsonManager
+{
+   public:
     static JsonManager& GetInstance();
     bool SaveToFile(const std::string& configOutputDir);
     bool LoadFromFile(std::string filePath);
 
     // 设置基础类型
-    template<typename T>
+    template <typename T>
     void SetValue(const std::string& key, const T& value)
     {
         jsonConfig_[key] = value;
     }
 
     // 设置嵌套类型
-    template<typename T>
+    template <typename T>
     void SetNestedValue(const std::string& key, const T& value)
     {
         std::vector<std::string> parts;
@@ -51,9 +53,11 @@ public:
         nlohmann::json* curr = &jsonConfig_;
 
         // 遍历路径，创建中间节点
-        for (size_t i = 0; i < parts.size() - 1; ++i) {
+        for (size_t i = 0; i < parts.size() - 1; ++i)
+        {
             auto it = curr->find(parts[i]);
-            if (it == curr->end()) {
+            if (it == curr->end())
+            {
                 it = curr->emplace(parts[i], nlohmann::json::object()).first;
             }
             curr = &it.value();
@@ -68,22 +72,25 @@ public:
     void GetBoolValue(const std::string& key, bool& value);
     void GetVectorIntValue(const std::string& key, std::vector<int>& value);
     void GetUint32ListsValue(const std::string& key, uint32_t* lists, size_t length);
-private:
+
+   private:
     bool CheckKeyIsValid(const std::string& key, nlohmann::json& current);
-private:
+
+   private:
     nlohmann::json jsonConfig_;
     std::string jsonFilePath_;
-    FILE *fp_{nullptr};
+    FILE* fp_{nullptr};
 };
 
-class JsonConfig {
-public:
+class JsonConfig
+{
+   public:
     static JsonConfig& GetInstance();
     void SaveConfigToJson(const MemScope::Config& config);
     bool ReadJsonConfig(MemScope::Config& config);
     bool EnsureConfigPathConsistency(const std::string& configOutputDir);
 };
 
-}
+}  // namespace Utility
 
 #endif

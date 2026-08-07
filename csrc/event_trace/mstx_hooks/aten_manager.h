@@ -19,15 +19,18 @@
 
 #include <cstdint>
 #include <iostream>
-#include "utils.h"
-#include "event_report.h"
+
 #include "bit_field.h"
-#include "memory_watch/tensor_monitor.h"
+#include "event_report.h"
 #include "memory_watch/memory_watch.h"
+#include "memory_watch/tensor_monitor.h"
+#include "utils.h"
 
-namespace MemScope {
+namespace MemScope
+{
 
-struct AtenAccessTensorInfo {
+struct AtenAccessTensorInfo
+{
     std::string addr;
     std::string dtype;
     std::string shape;
@@ -38,25 +41,28 @@ struct AtenAccessTensorInfo {
     std::string isOutput;
 };
 
-class AtenManager {
-public:
+class AtenManager
+{
+   public:
     static AtenManager& GetInstance();
     void ProcessMsg(const char* msg, int32_t streamId);
     AtenManager();
-private:
+
+   private:
     ~AtenManager() = default;
     AtenManager(const AtenManager&) = delete;
     AtenManager& operator=(const AtenManager&) = delete;
     AtenManager(AtenManager&& other) = delete;
     AtenManager& operator=(AtenManager&& other) = delete;
 
-    bool ExtractTensorInfo(const std::string& msg, const std::string &key, std::string &value);
+    bool ExtractTensorInfo(const std::string& msg, const std::string& key, std::string& value);
     void ExtractTensorFields(const std::string& msg, AtenAccessTensorInfo& info);
     void ReportAtenLaunch(const char* msg, int32_t streamId, bool isAtenBegin);
     void ReportAtenAccess(const char* msg, int32_t streamId);
     bool IsFirstWatchedOp(const char* name);
     bool IsLastWatchedOp(const char* name);
-private:
+
+   private:
     std::vector<MonitoredTensor> outputTensors_ = {};
     bool isWatchEnable_ = false;
     bool isfirstWatchOpSet_ = false;
@@ -64,6 +70,6 @@ private:
     std::string lastWatchOp_ = {};
 };
 
-}
+}  // namespace MemScope
 
 #endif

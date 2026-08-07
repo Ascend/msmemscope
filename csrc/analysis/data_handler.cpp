@@ -136,10 +136,9 @@ bool CsvHandler::WriteDumpRecord(std::shared_ptr<EventBase>& event)
     {
         event->name = "\"" + event->name + "\"";
     }
-    if (!Utility::Fprintf(file_, "%lu,%s,%s,%s,%lu,%s,%s,%s,%s,%s,%s,%s", event->id, eventType,
-                          eventSubType, event->name.c_str(), event->timestamp, pid.c_str(), tid.c_str(),
-                          devId.c_str(), addr.c_str(), event->attr.c_str(), event->pyCallStack.c_str(),
-                          event->cCallStack.c_str()))
+    if (!Utility::Fprintf(file_, "%lu,%s,%s,%s,%lu,%s,%s,%s,%s,%s,%s,%s", event->id, eventType, eventSubType,
+                          event->name.c_str(), event->timestamp, pid.c_str(), tid.c_str(), devId.c_str(), addr.c_str(),
+                          event->attr.c_str(), event->pyCallStack.c_str(), event->cCallStack.c_str()))
     {
         return false;
     }

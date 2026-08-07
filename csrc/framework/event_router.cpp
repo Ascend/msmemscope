@@ -122,7 +122,7 @@ static MemoryState* UpdateMemoryEventState(std::shared_ptr<EventBase> event)
         // 添加事件失败时，表明对应位置已存在事件，需先清空事件列表
         std::shared_ptr<EventBase> cleanUpEvent = std::make_shared<CleanUpEvent>(
             EventSubType::RESIDUAL_BLOCK, memEvent->poolType, memEvent->pid, memEvent->addr);
-        EventHandler(cleanUpEvent);  // 最大递归深度为2，因为这里传入事件的类型为CLEAN_UP
+        EventHandler(cleanUpEvent);          // 最大递归深度为2，因为这里传入事件的类型为CLEAN_UP
         state = manager.AddEvent(memEvent);  // 再次尝试添加
     }
 
