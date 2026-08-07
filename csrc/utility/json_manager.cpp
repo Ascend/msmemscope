@@ -98,13 +98,14 @@ bool JsonManager::CheckKeyIsValid(const std::string& key, nlohmann::json& curren
 
     for (auto& part : parts)
     {
-        if (!current.contains(part))
+        auto it = current.find(part);
+        if (it == current.end())
         {
             std::cout << "[msmemscope] Error: Key path: " << part << "keyword not exist!" << std::endl;
             return false;
         }
 
-        current = current[part];
+        current = it.value();
     }
     return true;
 }

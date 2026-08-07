@@ -42,22 +42,21 @@ void SanitizerOpHandler::SetEnabled(bool enabled) { sanitizerEnabled_ = enabled;
 
 bool SanitizerOpHandler::IsEnabled() { return sanitizerEnabled_; }
 
-bool SanitizerOpHandler::ExtractField(const char* msg, const std::string& key, std::string& value)
+bool SanitizerOpHandler::ExtractField(const std::string& msg, const std::string& key, std::string& value)
 {
-    std::string msgString(msg);
     std::string searchKey = key + "=";
-    size_t startPos = msgString.find(searchKey);
+    size_t startPos = msg.find(searchKey);
     if (startPos == std::string::npos)
     {
         return false;
     }
     startPos += searchKey.length();
-    size_t endPos = msgString.find_first_of(";", startPos);
+    size_t endPos = msg.find_first_of(";", startPos);
     if (endPos == std::string::npos)
     {
-        endPos = msgString.length();
+        endPos = msg.length();
     }
-    value = msgString.substr(startPos, endPos - startPos);
+    value = msg.substr(startPos, endPos - startPos);
     return true;
 }
 
@@ -372,9 +371,12 @@ void SanitizerOpHandler::Handle(const char* msg, uint64_t stream)
         return;
     }
 
+    // 每条消息仅拷贝一次，供多个字段提取复用
+    std::string msgString(msg);
+
     // 提取 name 字段（必填）
     std::string name;
-    if (!ExtractField(msg, "name", name) || name.empty())
+    if (!ExtractField(msgString, "name", name) || name.empty())
     {
         LOG_WARN("[SanitizerOpHandler] Missing or empty 'name' field in message: %s", msg);
         return;
@@ -382,11 +384,11 @@ void SanitizerOpHandler::Handle(const char* msg, uint64_t stream)
 
     // 提取 read 字段（可选）
     std::string readStr;
-    ExtractField(msg, "read", readStr);
+    ExtractField(msgString, "read", readStr);
 
     // 提取 write 字段（可选）
     std::string writeStr;
-    ExtractField(msg, "write", writeStr);
+    ExtractField(msgString, "write", writeStr);
 
     // 解析读写列表
     auto reads = ParseAccessList(readStr);

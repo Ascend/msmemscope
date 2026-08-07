@@ -77,7 +77,7 @@ bool CsvHandler::Init()
         .CreateCsvFile(&file_, devId_, prefix_, DUMP_DIR, csvHeader_);
 }
 
-bool CsvHandler::Write(std::shared_ptr<DataBase> data)
+bool CsvHandler::Write(const std::shared_ptr<DataBase>& data)
 {
     if (!data)
     {
@@ -123,12 +123,10 @@ bool CsvHandler::WriteDumpRecord(std::shared_ptr<EventBase>& event)
     std::lock_guard<std::mutex> lock(dumpFileMutex_);
     std::string pid = event->pid == INVALID_PROCESSID ? "N/A" : std::to_string(event->pid);
     std::string tid = event->tid == INVALID_THREADID ? "N/A" : std::to_string(event->tid);
-    std::string eventType = EVENT_BASE_TYPE_MAP.find(event->eventType) == EVENT_BASE_TYPE_MAP.end()
-                                ? "N/A"
-                                : EVENT_BASE_TYPE_MAP.at(event->eventType);
-    std::string eventSubType = EVENT_SUB_TYPE_MAP.find(event->eventSubType) == EVENT_SUB_TYPE_MAP.end()
-                                   ? "N/A"
-                                   : EVENT_SUB_TYPE_MAP.at(event->eventSubType);
+    auto typeIt = EVENT_BASE_TYPE_MAP.find(event->eventType);
+    const char* eventType = typeIt == EVENT_BASE_TYPE_MAP.end() ? "N/A" : typeIt->second.c_str();
+    auto subTypeIt = EVENT_SUB_TYPE_MAP.find(event->eventSubType);
+    const char* eventSubType = subTypeIt == EVENT_SUB_TYPE_MAP.end() ? "N/A" : subTypeIt->second.c_str();
     std::string addr = (event->eventType == EventBaseType::MALLOC || event->eventType == EventBaseType::FREE ||
                         event->eventType == EventBaseType::ACCESS)
                            ? Uint64ToHexString(event->addr)
@@ -138,10 +136,9 @@ bool CsvHandler::WriteDumpRecord(std::shared_ptr<EventBase>& event)
     {
         event->name = "\"" + event->name + "\"";
     }
-    if (!Utility::Fprintf(file_, "%lu,%s,%s,%s,%lu,%s,%s,%s,%s,%s,%s,%s", event->id, eventType.c_str(),
-                          eventSubType.c_str(), event->name.c_str(), event->timestamp, pid.c_str(), tid.c_str(),
-                          devId.c_str(), addr.c_str(), event->attr.c_str(), event->pyCallStack.c_str(),
-                          event->cCallStack.c_str()))
+    if (!Utility::Fprintf(file_, "%lu,%s,%s,%s,%lu,%s,%s,%s,%s,%s,%s,%s", event->id, eventType, eventSubType,
+                          event->name.c_str(), event->timestamp, pid.c_str(), tid.c_str(), devId.c_str(), addr.c_str(),
+                          event->attr.c_str(), event->pyCallStack.c_str(), event->cCallStack.c_str()))
     {
         return false;
     }
@@ -251,7 +248,7 @@ bool DbHandler::Init()
         .CreateDbFile(&dataFileDb_, devId_, CSV_FILE_PREFIX, DUMP_DIR, tableName_, dbHeader_);
 }
 
-bool DbHandler::Write(std::shared_ptr<DataBase> data)
+bool DbHandler::Write(const std::shared_ptr<DataBase>& data)
 {
     if (!data)
     {
@@ -295,12 +292,10 @@ bool DbHandler::Write(std::shared_ptr<DataBase> data)
 bool DbHandler::WriteDumpRecord(std::shared_ptr<EventBase>& event)
 {
     std::lock_guard<std::mutex> lock(dumpFileMutex_);
-    std::string eventType = EVENT_BASE_TYPE_MAP.find(event->eventType) == EVENT_BASE_TYPE_MAP.end()
-                                ? "N/A"
-                                : EVENT_BASE_TYPE_MAP.at(event->eventType);
-    std::string eventSubType = EVENT_SUB_TYPE_MAP.find(event->eventSubType) == EVENT_SUB_TYPE_MAP.end()
-                                   ? "N/A"
-                                   : EVENT_SUB_TYPE_MAP.at(event->eventSubType);
+    auto typeIt = EVENT_BASE_TYPE_MAP.find(event->eventType);
+    const char* eventType = typeIt == EVENT_BASE_TYPE_MAP.end() ? "N/A" : typeIt->second.c_str();
+    auto subTypeIt = EVENT_SUB_TYPE_MAP.find(event->eventSubType);
+    const char* eventSubType = subTypeIt == EVENT_SUB_TYPE_MAP.end() ? "N/A" : subTypeIt->second.c_str();
     std::string addr = (event->eventType == EventBaseType::MALLOC || event->eventType == EventBaseType::FREE ||
                         event->eventType == EventBaseType::ACCESS)
                            ? Uint64ToHexString(event->addr)
@@ -318,8 +313,8 @@ bool DbHandler::WriteDumpRecord(std::shared_ptr<EventBase>& event)
         event->name = "\"" + event->name + "\"";
     }
     sqlite3_bind_int64(insertEventStmt_, paramIndex++, event->id);
-    sqlite3_bind_text(insertEventStmt_, paramIndex++, eventType.c_str(), -1, SQLITE_STATIC);
-    sqlite3_bind_text(insertEventStmt_, paramIndex++, eventSubType.c_str(), -1, SQLITE_STATIC);
+    sqlite3_bind_text(insertEventStmt_, paramIndex++, eventType, -1, SQLITE_STATIC);
+    sqlite3_bind_text(insertEventStmt_, paramIndex++, eventSubType, -1, SQLITE_STATIC);
     sqlite3_bind_text(insertEventStmt_, paramIndex++, event->name.c_str(), -1, SQLITE_STATIC);
     sqlite3_bind_int64(insertEventStmt_, paramIndex++, event->timestamp);
     sqlite3_bind_int(insertEventStmt_, paramIndex++, event->pid);
@@ -524,8 +519,8 @@ std::vector<std::string> ParserHeader(const std::vector<std::pair<std::string, s
 
 std::string Uint64ToHexString(uint64_t value)
 {
-    std::stringstream ss;
-    ss << "0x" << std::hex << std::setw(16) << std::setfill('0') << value;
-    return ss.str();
+    char buf[19];
+    snprintf(buf, sizeof(buf), "0x%016llx", static_cast<unsigned long long>(value));
+    return std::string(buf);
 }
 };  // namespace MemScope

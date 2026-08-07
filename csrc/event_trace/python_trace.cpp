@@ -15,29 +15,36 @@
  * -------------------------------------------------------------------------
  */
 #include "python_trace.h"
-#include <string>
+
 #include <iostream>
+#include <string>
 #include <vector>
-#include "kernel_hooks/runtime_hooks.h"
+
 #include "event_report.h"
+#include "kernel_hooks/runtime_hooks.h"
 #include "trace_manager/event_trace_manager.h"
 
-namespace MemScope {
-
-bool PythonTrace::IsIgnore(std::string funcName) const
+namespace MemScope
 {
-    for (auto s : ignorePyFunc_) {
-        if (s == funcName) {
+
+bool PythonTrace::IsIgnore(const std::string& funcName) const
+{
+    for (const auto& s : ignorePyFunc_)
+    {
+        if (s == funcName)
+        {
             return true;
         }
     }
     return false;
 }
 
-bool PythonTrace::IsIgnoreRecordFunc(std::string funcHash)
+bool PythonTrace::IsIgnoreRecordFunc(const std::string& funcHash)
 {
-    for (auto s : ignoreRecordFunc_) {
-        if (funcHash.find(s) != std::string::npos) {
+    for (const auto& s : ignoreRecordFunc_)
+    {
+        if (funcHash.find(s) != std::string::npos)
+        {
             return true;
         }
     }
@@ -47,11 +54,13 @@ bool PythonTrace::IsIgnoreRecordFunc(std::string funcHash)
 void PythonTrace::RecordPyCall(const std::string& funcHash, const std::string& funcInfo, uint64_t timestamp)
 {
     uint64_t tid = Utility::GetTid();
-    if (throw_[tid]) {
+    if (throw_[tid])
+    {
         return;
     }
     int32_t devId = GD_INVALID_NUM;
-    if (!GetDeviceInfo::Instance().GetDeviceId(devId) || devId == GD_INVALID_NUM) {
+    if (!GetDeviceInfo::Instance().GetDeviceId(devId) || devId == GD_INVALID_NUM)
+    {
         LOG_ERROR("[trace] RT_ERROR_INVALID_VALUE, %d", devId);
         return;
     }
@@ -63,7 +72,8 @@ void PythonTrace::RecordPyCall(const std::string& funcHash, const std::string& f
     event->tid = tid;
     event->device = devId;
     std::string funcName = funcHash.substr(funcHash.find(":") + 1);
-    if (IsIgnore(funcName) && !throw_[tid]) {
+    if (IsIgnore(funcName) && !throw_[tid])
+    {
         throw_[tid] = true;
     }
     frameStack_[tid].push(event);
@@ -71,31 +81,40 @@ void PythonTrace::RecordPyCall(const std::string& funcHash, const std::string& f
 
 void PythonTrace::DumpTraceEvent(std::shared_ptr<TraceEvent>& event)
 {
-    if (event->device == GD_INVALID_NUM) {
-        return ;
+    if (event->device == GD_INVALID_NUM)
+    {
+        return;
     }
     auto it = handlerMap_.find(event->device);
-    if (it == handlerMap_.end()) {
-        handlerMap_.insert({event->device, MakeDataHandler(GetConfig(), DataType::PYTHON_TRACE_EVENT, event->device)});
+    if (it == handlerMap_.end())
+    {
+        it = handlerMap_
+                 .insert({event->device, MakeDataHandler(GetConfig(), DataType::PYTHON_TRACE_EVENT, event->device)})
+                 .first;
     }
     // db文件需要文件锁
-    if (GetConfig().dataFormat == static_cast<uint8_t>(DataFormat::DB)) {
+    if (GetConfig().dataFormat == static_cast<uint8_t>(DataFormat::DB))
+    {
         auto& lock = Utility::FileWriteManager::GetInstance().GetLock(event->device);
         std::lock_guard<std::mutex> lock_guard(lock);
-        handlerMap_[event->device]->Write(event);
-    } else {
-        handlerMap_[event->device]->Write(event);
+        it->second->Write(event);
+    }
+    else
+    {
+        it->second->Write(event);
     }
 }
 
-void PythonTrace::RecordCCall(std::string funcHash, std::string funcInfo)
+void PythonTrace::RecordCCall(const std::string& funcHash, const std::string& funcInfo)
 {
     uint64_t tid = Utility::GetTid();
-    if (throw_[tid]) {
+    if (throw_[tid])
+    {
         return;
     }
     int32_t devId = GD_INVALID_NUM;
-    if (!GetDeviceInfo::Instance().GetDeviceId(devId) || devId == GD_INVALID_NUM) {
+    if (!GetDeviceInfo::Instance().GetDeviceId(devId) || devId == GD_INVALID_NUM)
+    {
         LOG_ERROR("[trace] RT_ERROR_INVALID_VALUE, %d", devId);
         return;
     }
@@ -109,19 +128,24 @@ void PythonTrace::RecordCCall(std::string funcHash, std::string funcInfo)
     frameStack_[tid].push(event);
 }
 
-void PythonTrace::RecordReturn(std::string funcHash, std::string funcInfo)
+void PythonTrace::RecordReturn(const std::string& funcHash, const std::string& funcInfo)
 {
     uint64_t tid = Utility::GetTid();
-    if (!frameStack_[tid].empty()) {
+    if (!frameStack_[tid].empty())
+    {
         auto event = frameStack_[tid].top();
-        if (funcHash == event->hash) {
+        if (funcHash == event->hash)
+        {
             throw_[tid] = false;
             event->endTs = Utility::GetTimeNanoseconds();
             DumpTraceEvent(event);
             frameStack_[tid].pop();
-        } else if (throw_[tid] == false) {
+        }
+        else if (throw_[tid] == false)
+        {
             int32_t devId = GD_INVALID_NUM;
-            if (!GetDeviceInfo::Instance().GetDeviceId(devId) || devId == GD_INVALID_NUM) {
+            if (!GetDeviceInfo::Instance().GetDeviceId(devId) || devId == GD_INVALID_NUM)
+            {
                 LOG_ERROR("[trace] RT_ERROR_INVALID_VALUE, %d", devId);
                 return;
             }
@@ -138,7 +162,8 @@ void PythonTrace::RecordFuncPyCall(const std::string& funcHash, const std::strin
     // record_function不涉及throw_tid的操作
     uint64_t tid = Utility::GetTid();
     int32_t devId = GD_INVALID_NUM;
-    if (!GetDeviceInfo::Instance().GetDeviceId(devId) || devId == GD_INVALID_NUM) {
+    if (!GetDeviceInfo::Instance().GetDeviceId(devId) || devId == GD_INVALID_NUM)
+    {
         LOG_ERROR("[trace] RT_ERROR_INVALID_VALUE, %d", devId);
     }
     std::shared_ptr<TraceEvent> event = std::make_shared<TraceEvent>();
@@ -152,44 +177,55 @@ void PythonTrace::RecordFuncPyCall(const std::string& funcHash, const std::strin
     frameStackRecordFunc_[tid].push(event);
 }
 
-void PythonTrace::RecordFuncReturn(std::string funcHash, std::string funcInfo)
+void PythonTrace::RecordFuncReturn(const std::string& funcHash, const std::string& funcInfo)
 {
     uint64_t tid = Utility::GetTid();
-    if (!frameStackRecordFunc_[tid].empty()) {
+    if (!frameStackRecordFunc_[tid].empty())
+    {
         auto event = frameStackRecordFunc_[tid].top();
-        if (funcHash == event->hash) {
+        if (funcHash == event->hash)
+        {
             event->endTs = Utility::GetTimeNanoseconds();
             DumpTraceEvent(event);
             frameStackRecordFunc_[tid].pop();
-        } else {
+        }
+        else
+        {
             LOG_ERROR("[trace] ERROR RECORD EVENT %s", funcHash.c_str());
         }
-    } 
+    }
 }
 
 void callback(const std::string& hash, const std::string& info, PyTraceType what, uint64_t timestamp)
 {
-    if (!EventTraceManager::Instance().IsTracingEnabled()) {
+    if (!EventTraceManager::Instance().IsTracingEnabled())
+    {
         return;
     }
     // 忽略record_func调用过程中自身的python_trace事件
-    if (PythonTrace::GetInstance().IsIgnoreRecordFunc(hash)) {
+    if (PythonTrace::GetInstance().IsIgnoreRecordFunc(hash))
+    {
         return;
     }
-    switch (what) {
-        case PyTraceType::PYCALL: {
+    switch (what)
+    {
+        case PyTraceType::PYCALL:
+        {
             PythonTrace::GetInstance().RecordPyCall(hash, info, timestamp);
             break;
         }
-        case PyTraceType::PYRETURN: {
+        case PyTraceType::PYRETURN:
+        {
             PythonTrace::GetInstance().RecordReturn(hash, info);
             break;
         }
-        case PyTraceType::CCALL: {
+        case PyTraceType::CCALL:
+        {
             PythonTrace::GetInstance().RecordCCall(hash, info);
             break;
         }
-        case PyTraceType::CRETURN: {
+        case PyTraceType::CRETURN:
+        {
             PythonTrace::GetInstance().RecordReturn(hash, info);
             break;
         }
@@ -201,21 +237,26 @@ void callback(const std::string& hash, const std::string& info, PyTraceType what
 void PythonTrace::Start()
 {
     // 命令行中events开启trackback暂不支持，因为此时python解释器并未初始化，无法开启。
-    if (!Utility::IsPyInterpRepeInited()) {
-        std::cout << "[msmemscope] Warn: Python interpreter is not initialized. Start python trace failed."<< std::endl;
+    if (!Utility::IsPyInterpRepeInited())
+    {
+        std::cout << "[msmemscope] Warn: Python interpreter is not initialized. Start python trace failed."
+                  << std::endl;
         return;
     }
 
-    if (Utility::GetPyVersion() < Utility::Version("3.9")) {
+    if (Utility::GetPyVersion() < Utility::Version("3.9"))
+    {
         std::cout << "[msmemscope] Warn: The current Python version is below 3.9, python trace cannot be enabled."
                   << std::endl;
         return;
     }
     bool expected{false};
     bool active = active_.compare_exchange_strong(expected, true);
-    if (!active) {
-        std::cout << "[msmemscope] Warn: There is already an active PythonTracer. Refusing to register profile functions."
-                  << std::endl;
+    if (!active)
+    {
+        std::cout
+            << "[msmemscope] Warn: There is already an active PythonTracer. Refusing to register profile functions."
+            << std::endl;
         return;
     }
     Utility::PyInterpGuard stat;
@@ -224,17 +265,21 @@ void PythonTrace::Start()
 
 void PythonTrace::Stop()
 {
-    if (!active_) {
+    if (!active_)
+    {
         std::cout << "[msmemscope] Warn: The tracer is not start." << std::endl;
         return;
     }
-    if (!Utility::IsPyInterpRepeInited()) {
+    if (!Utility::IsPyInterpRepeInited())
+    {
         return;
     }
     Utility::PyInterpGuard stat;
     Utility::UnRegisterTraceCb();
-    for (auto &p : frameStack_) {
-        while (!p.second.empty()) {
+    for (auto& p : frameStack_)
+    {
+        while (!p.second.empty())
+        {
             DumpTraceEvent(p.second.top());
             p.second.pop();
         }
@@ -242,9 +287,6 @@ void PythonTrace::Stop()
     active_ = false;
 }
 
-bool PythonTrace::IsTraceActive()
-{
-    return active_;
-}
+bool PythonTrace::IsTraceActive() { return active_; }
 
-}
+}  // namespace MemScope

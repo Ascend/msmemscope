@@ -418,13 +418,14 @@ void ParseAnalysis(const std::string &param, Config &config, bool &printHelpInfo
                     }
                 }
             }
-            else if (analysisMp.count(analysisMethod))
-            {
-                analysisTypeBit.setBit(static_cast<size_t>(analysisMp[analysisMethod]));
-            }
             else
             {
-                return parseFailed();
+                auto analysisIt = analysisMp.find(analysisMethod);
+                if (analysisIt == analysisMp.end())
+                {
+                    return parseFailed();
+                }
+                analysisTypeBit.setBit(static_cast<size_t>(analysisIt->second));
             }
         }
         it++;

@@ -19,23 +19,26 @@
 
 #include <atomic>
 #include <cstdint>
-#include <mutex>
-#include <unordered_map>
-#include <stack>
 #include <iostream>
-#include "cpython.h"
+#include <mutex>
+#include <stack>
+#include <unordered_map>
+
+#include "../analysis/data_handler.h"
 #include "config_info.h"
+#include "cpython.h"
+#include "event_report.h"
+#include "file.h"
+#include "file_write_manager.h"
 #include "record_info.h"
 #include "utils.h"
-#include "file.h"
-#include "event_report.h"
-#include "file_write_manager.h"
-#include "../analysis/data_handler.h"
 
-namespace MemScope {
+namespace MemScope
+{
 
-class PythonTrace {
-public:
+class PythonTrace
+{
+   public:
     static PythonTrace& GetInstance()
     {
         static PythonTrace instance;
@@ -44,18 +47,19 @@ public:
     PythonTrace(const PythonTrace&) = delete;
     PythonTrace& operator=(const PythonTrace&) = delete;
     void RecordPyCall(const std::string& funcHash, const std::string& funcInfo, uint64_t timestamp);
-    void RecordCCall(std::string funcHash, std::string funcInfo);
-    void RecordReturn(std::string funcHash, std::string funcInfo);
+    void RecordCCall(const std::string& funcHash, const std::string& funcInfo);
+    void RecordReturn(const std::string& funcHash, const std::string& funcInfo);
     // 自定义trace事件的回调
     void RecordFuncPyCall(const std::string& funcHash, const std::string& funcInfo, uint64_t timestamp);
-    void RecordFuncReturn(std::string funcHash, std::string funcInfo);
+    void RecordFuncReturn(const std::string& funcHash, const std::string& funcInfo);
     void Start();
     void Stop();
     bool IsTraceActive();
-    bool IsIgnoreRecordFunc(std::string funcHash);
-private:
+    bool IsIgnoreRecordFunc(const std::string& funcHash);
+
+   private:
     void DumpTraceEvent(std::shared_ptr<TraceEvent>& event);
-    bool IsIgnore(std::string funcName) const;
+    bool IsIgnore(const std::string& funcName) const;
     PythonTrace() = default;
     ~PythonTrace() = default;
     std::unordered_map<uint64_t, std::stack<std::shared_ptr<TraceEvent>>> frameStack_;
@@ -67,13 +71,13 @@ private:
     std::vector<std::string> ignorePyFunc_ = {"__torch_dispatch__"};
     std::vector<std::string> ignoreRecordFunc_ = {
         "msmemscope/record_function.py",
-        "record_start of _msmemscope._record_function", 
+        "record_start of _msmemscope._record_function",
         "record_end of _msmemscope._record_function",
     };
     std::unordered_map<int32_t, std::unique_ptr<DataHandler>> handlerMap_;
     std::vector<std::shared_ptr<TraceEvent>> sharedEventLists_;
 };
 void callback(const std::string& hash, const std::string& info, PyTraceType what, uint64_t timestamp);
-}
+}  // namespace MemScope
 
 #endif

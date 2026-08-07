@@ -91,13 +91,13 @@ bool TableExists(sqlite3* filefp, std::string tableName)
     return exists;
 }
 
-FileCreateManager& FileCreateManager::GetInstance(const std::string outputDir)
+FileCreateManager& FileCreateManager::GetInstance(const std::string& outputDir)
 {
     static FileCreateManager instance(outputDir);
     return instance;
 }
 
-FileCreateManager::FileCreateManager(const std::string outputDir)
+FileCreateManager::FileCreateManager(const std::string& outputDir)
 {
     projectDir_ = outputDir + "/" + "msmemscope_" + std::to_string(GetPid()) + "_" + GetDateStr() + "_ascend";
 }
@@ -141,8 +141,8 @@ bool FileCreateManager::CreateDir()
     return true;
 }
 
-bool FileCreateManager::CreateCsvFile(FILE** filefp, int32_t devId, std::string filePrefix, std::string taskDir,
-                                      std::string headers)
+bool FileCreateManager::CreateCsvFile(FILE** filefp, int32_t devId, const std::string& filePrefix,
+                                      const std::string& taskDir, const std::string& headers)
 {
     std::lock_guard<std::mutex> lock(createCsvFileMutex_);
     if (*filefp == nullptr)
@@ -180,8 +180,9 @@ bool FileCreateManager::CreateCsvFile(FILE** filefp, int32_t devId, std::string 
     return true;
 }
 
-bool FileCreateManager::CreateDbFile(sqlite3** filefp, int32_t devId, std::string filePrefix, std::string taskDir,
-                                     std::string tableName, std::string tableCreateSql)
+bool FileCreateManager::CreateDbFile(sqlite3** filefp, int32_t devId, const std::string& filePrefix,
+                                     const std::string& taskDir, const std::string& tableName,
+                                     const std::string& tableCreateSql)
 {
     std::lock_guard<std::mutex> lock(createDbFileMutex_);
     if (*filefp == nullptr)
@@ -275,7 +276,7 @@ bool FileCreateManager::CreateLogFile(FILE** filefp, const char* taskDir, char* 
     return true;
 }
 
-bool FileCreateManager::CreateConfigFile(FILE** filefp, std::string fileName, std::string& configFilePath)
+bool FileCreateManager::CreateConfigFile(FILE** filefp, const std::string& fileName, std::string& configFilePath)
 {
     std::lock_guard<std::mutex> lock(createConfigFileMutex_);
     if (*filefp == nullptr)
@@ -297,7 +298,7 @@ bool FileCreateManager::CreateConfigFile(FILE** filefp, std::string fileName, st
     return true;
 }
 
-bool FileCreateManager::CreateDbTable(sqlite3* filefp, std::string tableCreateSql)
+bool FileCreateManager::CreateDbTable(sqlite3* filefp, const std::string& tableCreateSql)
 {
     sqlite3_busy_timeout(filefp, MemScope::SQLITE_TIME_OUT);
     int rc = sqlite3_exec(filefp, tableCreateSql.c_str(), nullptr, nullptr, nullptr);

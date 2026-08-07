@@ -122,7 +122,9 @@ class MemoryStateManager : StateManager
    public:
     static MemoryStateManager& GetInstance();
 
-    bool AddEvent(std::shared_ptr<MemoryEvent>& event);
+    // 添加事件并返回事件所属的MemoryState（内部已定位，避免调用方二次查找）；
+    // 添加失败（poolType无效或MALLOC冲突）返回nullptr
+    MemoryState* AddEvent(std::shared_ptr<MemoryEvent>& event);
     bool DeteleState(const PoolType& poolType, const MemoryStateKey& key);
     MemoryState* GetState(std::shared_ptr<EventBase>& event);
     MemoryState* GetState(std::shared_ptr<MemoryEvent>& event);

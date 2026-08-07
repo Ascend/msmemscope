@@ -63,6 +63,12 @@ static void HandleShadowEvent(std::shared_ptr<EventBase> event, MemoryState* sta
     {
         // 正常分配/已转正影子块 + 影子释放 → 标记SHADOW_FREED待下次start或exit时处理
         state->shadowState = ShadowState::SHADOW_FREED;
+        // 影子释放事件时间戳刷为上次stop时间 + 1
+        uint64_t stopTs = MemoryStateManager::GetInstance().GetLastStopTimestamp();
+        if (stopTs > 0)
+        {
+            event->timestamp = stopTs + 1;
+        }
     }
 }
 
@@ -80,7 +86,10 @@ static void AppendCleanUpFreeEvent(std::shared_ptr<EventBase> event, MemoryState
     if (!state->events.empty())
     {
         freeEvent->device = state->events[0]->device;
-        freeEvent->eventSubType = state->events[0]->eventSubType;
+        if (state->events[0]->eventType == EventBaseType::MALLOC)
+        {
+            freeEvent->eventSubType = state->events[0]->eventSubType;
+        }
     }
 
     // 析构时补的FREE事件，若当前不在trace状态，时间戳改为上次stop时间+1，防止短暂采集场景有进程退出时的记录，大大拉长时间轴跨度
@@ -106,16 +115,16 @@ static MemoryState* UpdateMemoryEventState(std::shared_ptr<EventBase> event)
     }
 
     MemoryStateManager& manager = MemoryStateManager::GetInstance();
-    if (!manager.AddEvent(memEvent))
+    // AddEvent内部已定位到事件所属state并返回，避免调用方再GetState一次（二次加锁+二次查找）
+    MemoryState* state = manager.AddEvent(memEvent);
+    if (state == nullptr)
     {
         // 添加事件失败时，表明对应位置已存在事件，需先清空事件列表
         std::shared_ptr<EventBase> cleanUpEvent = std::make_shared<CleanUpEvent>(
             EventSubType::RESIDUAL_BLOCK, memEvent->poolType, memEvent->pid, memEvent->addr);
-        EventHandler(cleanUpEvent);  // 最大递归深度为2，因为这里传入事件的类型为CLEAN_UP
-        manager.AddEvent(memEvent);  // 再次尝试添加
+        EventHandler(cleanUpEvent);          // 最大递归深度为2，因为这里传入事件的类型为CLEAN_UP
+        state = manager.AddEvent(memEvent);  // 再次尝试添加
     }
-
-    MemoryState* state = manager.GetState(memEvent);
 
     // 影子事件处理：不落盘、不分析，仅维护State
     if (memEvent->isShadowEvent)

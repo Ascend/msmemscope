@@ -15,17 +15,18 @@
  * -------------------------------------------------------------------------
  */
 #include "aten_manager.h"
-#include <cstring>
-#include "securec.h"
-#include "call_stack.h"
-#include "ustring.h"
-#include "log.h"
 
+#include <cstring>
 #include <iostream>
 
+#include "call_stack.h"
+#include "log.h"
+#include "securec.h"
+#include "ustring.h"
 
-namespace MemScope {
-    
+namespace MemScope
+{
+
 AtenManager& AtenManager::GetInstance()
 {
     static AtenManager instance;
@@ -34,26 +35,28 @@ AtenManager& AtenManager::GetInstance()
 
 AtenManager::AtenManager()
 {
-    if (GetConfig().watchConfig.isWatched || TensorMonitor::GetInstance().IsInMonitoring()) {
+    if (GetConfig().watchConfig.isWatched || TensorMonitor::GetInstance().IsInMonitoring())
+    {
         isWatchEnable_ = true;
     }
     firstWatchOp_ = std::string(GetConfig().watchConfig.start);
     lastWatchOp_ = std::string(GetConfig().watchConfig.end);
 }
 
-bool AtenManager::ExtractTensorInfo(const char* msg, const std::string &key, std::string &value)
+bool AtenManager::ExtractTensorInfo(const std::string& msg, const std::string& key, std::string& value)
 {
-    std::string msgString(msg);
-    size_t startPos = msgString.find(key);
-    if (startPos == std::string::npos) {
+    size_t startPos = msg.find(key);
+    if (startPos == std::string::npos)
+    {
         return false;
     }
     startPos += key.length();
-    size_t endPos = msgString.find_first_of(";}", startPos);
-    if (endPos == std::string::npos) {
-        endPos = msgString.length();
+    size_t endPos = msg.find_first_of(";}", startPos);
+    if (endPos == std::string::npos)
+    {
+        endPos = msg.length();
     }
-    value = msgString.substr(startPos, endPos - startPos);
+    value = msg.substr(startPos, endPos - startPos);
     return true;
 }
 
@@ -61,17 +64,20 @@ void AtenManager::ProcessMsg(const char* msg, int32_t streamId)
 {
     // 根据标识判断是否为aten算子下发或者tensor信息
     bool isAtenBegin;
-    if (strncmp(msg, ATEN_BEGIN_MSG, strlen(ATEN_BEGIN_MSG)) == 0) {
+    if (strncmp(msg, ATEN_BEGIN_MSG, strlen(ATEN_BEGIN_MSG)) == 0)
+    {
         isAtenBegin = true;
         ReportAtenLaunch(msg, streamId, isAtenBegin);
         return;
     }
-    if (strncmp(msg, ATEN_END_MSG, strlen(ATEN_END_MSG)) == 0) {
+    if (strncmp(msg, ATEN_END_MSG, strlen(ATEN_END_MSG)) == 0)
+    {
         isAtenBegin = false;
         ReportAtenLaunch(msg, streamId, isAtenBegin);
         return;
     }
-    if (strncmp(msg, ACCESS_MSG, strlen(ACCESS_MSG)) == 0) {
+    if (strncmp(msg, ACCESS_MSG, strlen(ACCESS_MSG)) == 0)
+    {
         ReportAtenAccess(msg, streamId);
         return;
     }
@@ -79,59 +85,69 @@ void AtenManager::ProcessMsg(const char* msg, int32_t streamId)
 
 void AtenManager::ReportAtenLaunch(const char* msg, int32_t streamId, bool isAtenBegin)
 {
-    if (GetConfig().watchConfig.isWatched || TensorMonitor::GetInstance().IsInMonitoring()) {
+    if (GetConfig().watchConfig.isWatched || TensorMonitor::GetInstance().IsInMonitoring())
+    {
         isWatchEnable_ = true;
     }
+    // 每条消息仅拷贝一次，供字段提取复用
+    std::string msgString(msg);
     std::string name;
-    ExtractTensorInfo(msg, "name=", name);
+    ExtractTensorInfo(msgString, "name=", name);
     int32_t devId = GD_INVALID_NUM;
-    if (!GetDeviceInfo::Instance().GetDeviceId(devId) || devId == GD_INVALID_NUM) {
+    if (!GetDeviceInfo::Instance().GetDeviceId(devId) || devId == GD_INVALID_NUM)
+    {
         LOG_ERROR("get device id failed.");
     }
     uint64_t tid = Utility::GetTid();
 
-    std::string opName = std::to_string(devId) + "_" + std::to_string(tid) + "/" + name;
-    if (isWatchEnable_ && isAtenBegin) {
-        MemoryWatch::GetInstance().OpExcuteBegin(nullptr, opName);
-    }
-    if (isWatchEnable_ && !isAtenBegin) {
-        MemoryWatch::GetInstance().OpExcuteEnd(nullptr, opName, outputTensors_);
-        if (IsFirstWatchedOp(name.c_str()) && !isfirstWatchOpSet_) {
-            isfirstWatchOpSet_ = true;
+    if (isWatchEnable_)
+    {
+        // opName仅在watch使能时使用，避免无谓的临时串构造
+        std::string opName = std::to_string(devId) + "_" + std::to_string(tid) + "/" + name;
+        if (isAtenBegin)
+        {
+            MemoryWatch::GetInstance().OpExcuteBegin(nullptr, opName);
         }
-        if (IsLastWatchedOp(name.c_str())) {
-            outputTensors_.clear();
-            isfirstWatchOpSet_ = false;
+        else
+        {
+            MemoryWatch::GetInstance().OpExcuteEnd(nullptr, opName, outputTensors_);
+            if (IsFirstWatchedOp(name.c_str()) && !isfirstWatchOpSet_)
+            {
+                isfirstWatchOpSet_ = true;
+            }
+            if (IsLastWatchedOp(name.c_str()))
+            {
+                outputTensors_.clear();
+                isfirstWatchOpSet_ = false;
+            }
         }
     }
 
-    if (!EventTraceManager::Instance().IsNeedTrace(EventBaseType::OP_LAUNCH)) {
-        return ;
+    if (!EventTraceManager::Instance().IsNeedTrace(EventBaseType::OP_LAUNCH))
+    {
+        return;
     }
 
     std::string pyStack;
-    if (GetConfig().enablePyStack) {
+    if (GetConfig().enablePyStack)
+    {
         Utility::GetPythonCallstack(GetConfig().pyStackDepth, pyStack);
     }
 
-    if (!EventReport::Instance(MemScopeCommType::SHARED_MEMORY).ReportAtenLaunch(name, isAtenBegin, std::move(pyStack))) {
+    if (!EventReport::Instance(MemScopeCommType::SHARED_MEMORY).ReportAtenLaunch(name, isAtenBegin, std::move(pyStack)))
+    {
         LOG_ERROR("Report Aten Launch FAILED");
     }
     return;
 }
 
-bool AtenManager::IsFirstWatchedOp(const char* name)
-{
-    return firstWatchOp_ == std::string(name);
-}
+bool AtenManager::IsFirstWatchedOp(const char* name) { return firstWatchOp_ == std::string(name); }
 
-bool AtenManager::IsLastWatchedOp(const char* name)
-{
-    return lastWatchOp_ == std::string(name);
-}
+bool AtenManager::IsLastWatchedOp(const char* name) { return lastWatchOp_ == std::string(name); }
 
-void AtenManager::ExtractTensorFields(const char* msg, AtenAccessTensorInfo& info)
+void AtenManager::ExtractTensorFields(const std::string& msg, AtenAccessTensorInfo& info)
 {
+    // 同一消息的8个字段提取共享一次拷贝，避免每次字段提取都深拷贝整条消息
     ExtractTensorInfo(msg, "ptr=", info.addr);
     ExtractTensorInfo(msg, "dtype=", info.dtype);
     ExtractTensorInfo(msg, "shape=", info.shape);
@@ -144,56 +160,69 @@ void AtenManager::ExtractTensorFields(const char* msg, AtenAccessTensorInfo& inf
 
 void AtenManager::ReportAtenAccess(const char* msg, int32_t streamId)
 {
-    if (GetConfig().watchConfig.isWatched || TensorMonitor::GetInstance().IsInMonitoring()) {
+    if (GetConfig().watchConfig.isWatched || TensorMonitor::GetInstance().IsInMonitoring())
+    {
         isWatchEnable_ = true;
     }
+    // 每条消息仅拷贝一次，供8个字段提取复用
+    std::string msgString(msg);
     AtenAccessTensorInfo atenInfo;
-    ExtractTensorFields(msg, atenInfo);
+    ExtractTensorFields(msgString, atenInfo);
 
     // 组装attr属性
     std::ostringstream oss;
     oss << "dtype:" << atenInfo.dtype << ",shape:" << atenInfo.shape;
     std::string attr = oss.str();
     std::string pyStack;
-    if (GetConfig().enablePyStack) {
+    if (GetConfig().enablePyStack)
+    {
         Utility::GetPythonCallstack(GetConfig().pyStackDepth, pyStack);
     }
     AccessType type;
     uint64_t addr = 0;
     uint64_t size = 0;
 
-
-    if (atenInfo.isWrite == "False" && atenInfo.isRead == "False") {
+    if (atenInfo.isWrite == "False" && atenInfo.isRead == "False")
+    {
         type = AccessType::UNKNOWN;
-    } else if (atenInfo.isWrite == "True") {
+    }
+    else if (atenInfo.isWrite == "True")
+    {
         type = AccessType::WRITE;
-    } else {
+    }
+    else
+    {
         type = AccessType::READ;
     }
- 
-    if (!Utility::StrToUint64(addr, atenInfo.addr)) {
+
+    if (!Utility::StrToUint64(addr, atenInfo.addr))
+    {
         LOG_ERROR("Aten Tensor's addr StrToUint64 failed");
     }
-    if (!Utility::StrToUint64(size, atenInfo.size)) {
+    if (!Utility::StrToUint64(size, atenInfo.size))
+    {
         LOG_ERROR("Aten Tensor's memSize StrToUint64 failed");
     }
 
-    if (atenInfo.isOutput == "True" && isWatchEnable_ && IsFirstWatchedOp(atenInfo.name.c_str())
-        && !isfirstWatchOpSet_) {
+    if (atenInfo.isOutput == "True" && isWatchEnable_ && IsFirstWatchedOp(atenInfo.name.c_str()) && !isfirstWatchOpSet_)
+    {
         MonitoredTensor tensorInfo{};
-        tensorInfo.data =  reinterpret_cast<void*>(reinterpret_cast<std::uintptr_t>(addr));
+        tensorInfo.data = reinterpret_cast<void*>(reinterpret_cast<std::uintptr_t>(addr));
         tensorInfo.dataSize = size;
         outputTensors_.push_back(tensorInfo);
     }
 
-    if (!EventTraceManager::Instance().IsNeedTrace(EventBaseType::ACCESS)) {
-        return ;
+    if (!EventTraceManager::Instance().IsNeedTrace(EventBaseType::ACCESS))
+    {
+        return;
     }
-    
-    if (!EventReport::Instance(MemScopeCommType::SHARED_MEMORY).ReportAtenAccess(atenInfo.name, attr, type, addr, size, std::move(pyStack))) {
+
+    if (!EventReport::Instance(MemScopeCommType::SHARED_MEMORY)
+             .ReportAtenAccess(atenInfo.name, attr, type, addr, size, std::move(pyStack)))
+    {
         LOG_ERROR("Report Aten Access FAILED");
     }
     return;
 }
 
-}
+}  // namespace MemScope

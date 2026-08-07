@@ -22,7 +22,8 @@
 
 #include "utility/log.h"
 
-namespace MemScope {
+namespace MemScope
+{
 
 EventDispatcher& EventDispatcher::GetInstance()
 {
@@ -30,18 +31,18 @@ EventDispatcher& EventDispatcher::GetInstance()
     return dispatcher;
 }
 
-void EventDispatcher::Subscribe(const SubscriberId& id,
-    const std::vector<EventBaseType>& eventTypes, const Priority& priority, const HandlerFunc& func)
+void EventDispatcher::Subscribe(const SubscriberId& id, const std::vector<EventBaseType>& eventTypes,
+                                const Priority& priority, const HandlerFunc& func)
 {
     Subscriber newSubscriber{id, priority, func};
 
-    for (auto eventType : eventTypes) {
-        if (eventSubscribers_.find(eventType) == eventSubscribers_.end()) {
-            eventSubscribers_[eventType] = {};
-        }
+    for (auto eventType : eventTypes)
+    {
+        // operator[]在缺失时默认构造空vector，一次查找完成
         auto& subscribers = eventSubscribers_[eventType];
         auto subscriberIt = std::find(subscribers.begin(), subscribers.end(), id);
-        if (subscriberIt == subscribers.end()) {
+        if (subscriberIt == subscribers.end())
+        {
             // 按序插入
             auto it = std::lower_bound(subscribers.begin(), subscribers.end(), newSubscriber);
             subscribers.insert(it, newSubscriber);
@@ -51,10 +52,12 @@ void EventDispatcher::Subscribe(const SubscriberId& id,
 
 void EventDispatcher::UnSubscribe(const SubscriberId& id)
 {
-    for (auto& pair : eventSubscribers_) {
+    for (auto& pair : eventSubscribers_)
+    {
         auto& subscribers = pair.second;
         auto subIt = std::find(subscribers.begin(), subscribers.end(), id);
-        if (subIt != subscribers.end()) {
+        if (subIt != subscribers.end())
+        {
             subscribers.erase(subIt);
         }
     }
@@ -63,12 +66,14 @@ void EventDispatcher::UnSubscribe(const SubscriberId& id)
 void EventDispatcher::DispatchEvent(std::shared_ptr<EventBase>& event, MemoryState* state)
 {
     auto it = eventSubscribers_.find(event->eventType);
-    if (it != eventSubscribers_.end()) {
+    if (it != eventSubscribers_.end())
+    {
         auto& subscribers = it->second;
-        for (const auto& subscriber : subscribers) {
+        for (const auto& subscriber : subscribers)
+        {
             subscriber.handler(event, state);
         }
     }
 }
 
-}
+}  // namespace MemScope

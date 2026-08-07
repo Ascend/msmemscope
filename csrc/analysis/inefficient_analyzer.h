@@ -54,23 +54,20 @@ class InefficientAnalyzer : public AnalyzerBase
     InefficientAnalyzer(InefficientAnalyzer&& other) = delete;
     InefficientAnalyzer& operator=(InefficientAnalyzer&& other) = delete;
 
-    void InefficientAnalysis(std::shared_ptr<MemoryEvent>& event, MemoryState* state,
-                             std::unordered_map<uint64_t, PidState>& pidStatesMap);
+    // 辅助函数均直接传PidState&，避免每事件对同一pid反复哈希查找
+    void InefficientAnalysis(std::shared_ptr<MemoryEvent>& event, MemoryState* state, PidState& pidState);
     void HandleOpLaunchEvent(std::shared_ptr<EventBase>& event, std::unordered_map<uint64_t, PidState>& pidStatesMap);
     void HandleMemoryEvent(std::shared_ptr<EventBase>& event, MemoryState* state,
                            std::unordered_map<uint64_t, PidState>& pidStatesMap);
-    void EarlyAllocation(std::shared_ptr<MemoryEvent>& event, MemoryState* state,
-                         std::unordered_map<uint64_t, PidState>& pidStatesMap);
-    void LateDeallocation(std::shared_ptr<MemoryEvent>& event, MemoryState* state,
-                          std::unordered_map<uint64_t, PidState>& pidStatesMap);
+    void EarlyAllocation(std::shared_ptr<MemoryEvent>& event, MemoryState* state, PidState& pidState);
+    void LateDeallocation(std::shared_ptr<MemoryEvent>& event, MemoryState* state, PidState& pidState);
     void TemporaryIdleness(std::shared_ptr<MemoryEvent>& event, MemoryState* state);
-    void Init(const uint64_t pid, std::unordered_map<uint64_t, PidState>& pidStatesMap);
-    void AddEventToTmps(const std::shared_ptr<MemoryEvent>& event,
-                        std::unordered_map<uint64_t, PidState>& pidStatesMap);
-    void AddApiIdToState(std::shared_ptr<MemoryEvent>& event, MemoryState* state,
-                         std::unordered_map<uint64_t, PidState>& pidStatesMap);
-    void ClassifyEventsTmp(const uint64_t pid, std::unordered_map<uint64_t, PidState>& pidStatesMap);
-    void UpdateApiId(const uint64_t pid, std::unordered_map<uint64_t, PidState>& pidStatesMap);
+    void InitNewPidState(const uint64_t pid, std::unordered_map<uint64_t, PidState>& pidStatesMap);
+    void Init(PidState& pidState);
+    void AddEventToTmps(const std::shared_ptr<MemoryEvent>& event, PidState& pidState);
+    void AddApiIdToState(std::shared_ptr<MemoryEvent>& event, MemoryState* state, PidState& pidState);
+    void ClassifyEventsTmp(PidState& pidState);
+    void UpdateApiId(PidState& pidState);
 
     std::unordered_map<uint64_t, PidState> PTAPidStatesMap;
     std::unordered_map<uint64_t, PidState> ATBPidStatesMap;

@@ -120,15 +120,17 @@ uint64_t MstxManager::GetRangeId() { return rangeId_++; }
 // MSTX针对内存池的分析功能 这里进行代码重构 和上面的打点功能剥离
 mstxDomainHandle_t MstxManager::ReportDomainCreateA(char const* domainName)
 {
+    // 构造一次用于后续多次比较，避免重复构造临时string
+    const std::string domain(domainName ? domainName : "");
     // 后续收编所有通过MSTX打点的内存池trace
-    if (std::string(domainName) == "atb")
+    if (domain == "atb")
     {
         if (MemoryPoolTraceManager::GetInstance().RegisterMemoryPoolTracer("atb", &ATBMemoryPoolTrace::GetInstance()))
         {
             return MemoryPoolTraceManager::GetInstance().CreateDomain(domainName);
         }
     }
-    if (std::string(domainName) == "mindsporeMemPool")
+    if (domain == "mindsporeMemPool")
     {
         if (MemoryPoolTraceManager::GetInstance().RegisterMemoryPoolTracer("mindsporeMemPool",
                                                                            &MindsporeMemoryPoolTrace::GetInstance()))
@@ -137,7 +139,7 @@ mstxDomainHandle_t MstxManager::ReportDomainCreateA(char const* domainName)
         }
     }
     // PTA会进行多次内存池注册 已经注册过就返回之前注册的domain
-    if (std::string(domainName) == "ptaCaching" || std::string(domainName) == "msleaks")
+    if (domain == "ptaCaching" || domain == "msleaks")
     {
         MemoryPoolTraceManager::GetInstance().RegisterMemoryPoolTracer("ptaCaching",
                                                                        &PTACachingPoolTrace::GetInstance());
@@ -145,7 +147,7 @@ mstxDomainHandle_t MstxManager::ReportDomainCreateA(char const* domainName)
             "ptaCaching");  // 考虑到PTA的兼容性，目前不论接受到老的还是新的都统一为ptaCaching
     }
     // PTAWorkspace与PTACaching由不同的内存池进行管理
-    if (std::string(domainName) == "ptaWorkspace")
+    if (domain == "ptaWorkspace")
     {
         MemoryPoolTraceManager::GetInstance().RegisterMemoryPoolTracer("ptaWorkspace",
                                                                        &PTAWorkspacePoolTrace::GetInstance());

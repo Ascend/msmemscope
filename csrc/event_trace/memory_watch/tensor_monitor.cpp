@@ -27,7 +27,7 @@ void TensorMonitor::AddWatchTensor(MonitoredTensor& tensorInfo)
     auto it = pythonWatchedTensorsMap_.find(ptr);
     if (it != pythonWatchedTensorsMap_.end())
     {
-        pythonWatchedTensorsMap_[ptr] = tensorInfo;
+        it->second = tensorInfo;
     }
     else
     {
@@ -45,7 +45,7 @@ void TensorMonitor::AddWatchTensor(const std::vector<MonitoredTensor>& tensorInf
         auto it = cmdWatchedTensorsMap_.find(ptr);
         if (it != cmdWatchedTensorsMap_.end())
         {
-            cmdWatchedTensorsMap_[ptr] = tensorInfo;
+            it->second = tensorInfo;
         }
         else
         {
