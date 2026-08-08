@@ -11,6 +11,7 @@ msMemScope provides analysis capabilities such as leak detection, comparison, mo
 |Memory block monitoring|In foundation model scenarios, if it is difficult to locate memory corruption, msMemScope can monitor the specified memory blocks before and after operator execution through Python APIs and CLIs. Based on changes in the memory block data, it can quickly determine the scope or exact location of memory corruption between operators.|
 |Memory decomposition|msMemScope supports memory decomposition to analyze the memory usage of the CANN layer and Ascend Extension for PyTorch framework and outputs model weights, activations, gradients, and optimizer and other component memory usage.|
 |Identification of inefficient memory|During model training and inference, some memory blocks may not be used immediately after being allocated or may not be deallocated in a timely manner after being used. msMemScope identifies the inefficient memory usage to optimize model training and inference.|
+|OOM analysis|When an OOM (Out of Memory) event occurs during NPU training or inference, msMemScope automatically collects the triggering operation information, recently allocated but unreleased memory records, and the largest memory allocation records to help quickly locate the root cause of OOM.|
 |One-click analysis|msMemScope supports on-click memory decomposition and memory snapshot to improve memory analysis usability, allowing core functions of vLLM, FSDP, and verl to be automatically dotted for quick analysis.|
 
 ## Preparations
@@ -344,6 +345,49 @@ Inefficient memory can also be identified offline via custom APIs. For details, 
 ### Output Description
 
 The result is saved in the **memscope_dump_{_timestamp_}.csv** file. For details, see [Output File Specifications](./output_file_spec.md).
+
+## OOM Analysis
+
+### Function Description
+
+During NPU training or inference, when an OOM (Out of Memory) event occurs, it is difficult to identify which memory allocations are consuming the memory based on error codes alone. msMemScope provides OOM analysis to automatically collect diagnostic information when OOM occurs, including:
+
+1. **Trigger information**: which function triggered OOM, the requested memory size, return code, and call stack.
+2. **Recent allocation records**: the N most recently allocated but unreleased memory records sorted by time.
+3. **Largest allocation records**: the N largest allocated but unreleased memory records sorted by size.
+
+### Precautions
+
+- The OOM analysis function is enabled together with the `--analysis=oom` parameter, which automatically enables alloc/free event collection. You do not need to configure the `--events` parameter.
+- The value of K ranges from 1 to 1000, and the default value is 10. A larger K value indicates more records to be collected and longer dump time at the OOM moment.
+- OOM data is written to the existing `memscope_dump_{_timestamp_}.csv` file and no new file is created.
+
+### Usage Example
+
+Run the following command to enable OOM analysis. **K** is an optional value, indicating that the top K records are collected. **Application** indicates a user script.
+
+```shell
+msmemscope ${Application} --analysis=oom:K
+```
+
+Examples:
+
+```shell
+# Basic usage (default K=10)
+msmemscope --analysis=oom python train.py
+
+# Custom K value
+msmemscope --analysis=oom:50 python train.py
+
+# Stack with other analysis functions
+msmemscope --analysis=oom:30,leaks python train.py
+```
+
+After the command is executed, OOM diagnostic information is written to the `memscope_dump_{_timestamp_}.csv` file. You can filter `Event`=`OOM_DETAIL` to view all OOM-related records.
+
+### Output Description
+
+The OOM analysis result is saved in the `memscope_dump_{_timestamp_}.csv` file. You can filter records by **Event** = `OOM_DETAIL`. For details about the fields, see [Output File Specifications](./output_file_spec.md).
 
 ## One-Click Analysis
 
