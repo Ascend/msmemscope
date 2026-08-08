@@ -198,6 +198,30 @@ static PyObject* MsmemscopeEnableNpuSanitizer(PyObject* self, PyObject* args)
     Py_RETURN_NONE;
 }
 
+PyDoc_STRVAR(ReportCpuTensorDoc,
+"             \"_report_cpu_tensor(ptr, size, is_alloc, py_stack)\\n--\\n\\n\"
+"             \"Report a CPU tensor memory block alloc/free event.\\n\"
+"             \"Returns True if the event is accepted, False if deduplicated.\");
+static PyObject* MsmemscopeReportCpuTensor(PyObject* self, PyObject* args)
+{
+    unsigned long long ptr = 0;
+    long long size = 0;
+    int isAlloc = 0;
+    const char* pyStack = "";
+    if (!PyArg_ParseTuple(args, "KLi|s", &ptr, &size, &isAlloc, &pyStack))
+    {
+        return nullptr;
+    }
+    bool accepted = EventReport::Instance(MemScopeCommType::SHARED_MEMORY)
+                        .ReportCpuTensor(ptr, static_cast<uint64_t>(size), isAlloc != 0,
+                                         std::string(pyStack ? pyStack : ""));
+    if (accepted)
+    {
+        Py_RETURN_TRUE;
+    }
+    Py_RETURN_FALSE;
+}
+
 static PyMethodDef g_MsmemscopeMethods[] = {
     {"start", reinterpret_cast<PyCFunction>(MsmemscopeStart), METH_NOARGS, StartDoc},
     {"stop", reinterpret_cast<PyCFunction>(MsmemscopeStop), METH_NOARGS, StopDoc},
@@ -206,6 +230,8 @@ static PyMethodDef g_MsmemscopeMethods[] = {
     {"_take_snapshot", reinterpret_cast<PyCFunction>(MsmemscopeTakeSnapshot), METH_VARARGS, TakeSnapshotDoc},
     {"_enable_npu_sanitizer", reinterpret_cast<PyCFunction>(MsmemscopeEnableNpuSanitizer), METH_NOARGS,
      EnableNpuSanitizerDoc},
+    {"_report_cpu_tensor", reinterpret_cast<PyCFunction>(MsmemscopeReportCpuTensor), METH_VARARGS,
+     ReportCpuTensorDoc},
     {nullptr, nullptr, 0, nullptr}};
 
 static struct PyModuleDef g_MsmemscopeCModule = {

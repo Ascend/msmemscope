@@ -28,7 +28,7 @@ namespace MemScope
 const std::unordered_map<PoolType, std::string> PoolTypeMap = {
     {PoolType::PTA_CACHING, "PTA"}, {PoolType::PTA_WORKSPACE, "PTA_WORKSPACE"},
     {PoolType::ATB, "ATB"},         {PoolType::MINDSPORE, "MINDSPORE"},
-    {PoolType::HAL, "HAL"},
+    {PoolType::HAL, "HAL"}, {PoolType::HOST, "HOST"},
 };
 
 // Module id

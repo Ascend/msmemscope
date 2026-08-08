@@ -94,6 +94,7 @@ class EventReport
     void ReportMemorySnapshotOnOOM(const CallStackString& stack = CallStackString());
     bool ReportOOMTrigger(const OOMTriggerInfo& info);
     bool ReportOOMMemRecord(const OOMMemRecord& record, EventSubType subType);
+    bool ReportCpuTensor(uint64_t addr, uint64_t size, bool isAlloc, std::string&& pyStack);
     void UpdateAnalysisType();
 
    private:
@@ -114,6 +115,8 @@ class EventReport
     std::mutex mutex_;
 
     std::unordered_set<uint64_t> halPtrs_;
+    std::unordered_set<uint64_t> halHostPtrs_;  // HAL channel HOST-space addresses (to distinguish NPU vs HOST in halMemFree)
+    std::unordered_set<uint64_t> hostPtrs_;     // Cross-channel active HOST address book (first-come-first-served)
     std::atomic<bool> destroyed_{false};
 };
 

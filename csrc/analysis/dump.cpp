@@ -123,7 +123,7 @@ void Dump::DumpMemoryEvent(std::shared_ptr<MemoryEvent>& event, MemoryState* sta
     // 合成事件（影子转正/虚拟释放）没有total/used信息，跳过
     if (!event->isShadowEvent && event->eventType != EventBaseType::ACCESS && event->eventSubType != EventSubType::HAL)
     {
-        if (event->eventSubType != EventSubType::HOST_PINNED)
+        if (!event->isPinned)
         {
             attr += "total:" + std::to_string(event->total) + ",";
         }

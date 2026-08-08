@@ -105,6 +105,7 @@ class EventTraceManager
     void SetAclInitStatus(bool isInit);
     void HandleWithATenCollect();
     void HandleWithDecompose();
+    void HandleWithCpuTensorCollect();
     void CleanUpEventTraceManager();
 
    private:

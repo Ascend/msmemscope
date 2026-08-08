@@ -505,12 +505,13 @@ bool EventReport::ReportHalMalloc(uint64_t addr, uint64_t size, unsigned long lo
 
     int32_t moduleId = GetMallocModuleId(flag);
 
+    bool isHostSpace = (space == MemOpSpace::HOST);
     std::shared_ptr<MemoryEvent> event = std::make_shared<MemoryEvent>();
     event->eventType = EventBaseType::MALLOC;
-    event->eventSubType = space == MemOpSpace::HOST ? EventSubType::HOST_PINNED : EventSubType::HAL;
+    event->eventSubType = isHostSpace ? EventSubType::HOST : EventSubType::HAL;
     event->cCallStack = std::move(stack.cStack);
     event->pyCallStack = std::move(stack.pyStack);
-    event->poolType = PoolType::HAL;
+    event->poolType = isHostSpace ? PoolType::HOST : PoolType::HAL;
     event->addr = addr;
     event->name = "N/A";
     event->space = space;
@@ -519,8 +520,9 @@ bool EventReport::ReportHalMalloc(uint64_t addr, uint64_t size, unsigned long lo
     event->moduleId = moduleId;
     event->flag = flag;
     event->kernelIndex = kernelLaunchRecordIndex_;
-    if (space == MemOpSpace::HOST)
+    if (isHostSpace)
     {
+        event->isPinned = true;
         event->used = static_cast<int64_t>(Utility::GetProcessVmRss());
     }
 
@@ -529,6 +531,11 @@ bool EventReport::ReportHalMalloc(uint64_t addr, uint64_t size, unsigned long lo
         {
             std::lock_guard<std::mutex> lock(mutex_);
             halPtrs_.insert(addr);
+            if (isHostSpace)
+            {
+                halHostPtrs_.insert(addr);
+                hostPtrs_.insert(addr);
+            }
         }
     }
 
@@ -551,10 +558,11 @@ bool EventReport::ReportHalMalloc(uint64_t addr, uint64_t size, unsigned long lo
         return true;
     }
 
+    bool isHostSpace = (space == MemOpSpace::HOST);
     auto event = std::make_shared<MemoryEvent>();
     event->eventType = EventBaseType::MALLOC;
-    event->eventSubType = space == MemOpSpace::HOST ? EventSubType::HOST_PINNED : EventSubType::HAL;
-    event->poolType = PoolType::HAL;
+    event->eventSubType = isHostSpace ? EventSubType::HOST : EventSubType::HAL;
+    event->poolType = isHostSpace ? PoolType::HOST : PoolType::HAL;
     event->addr = addr;
     event->name = "N/A";
     event->size = static_cast<int64_t>(size);
@@ -562,6 +570,10 @@ bool EventReport::ReportHalMalloc(uint64_t addr, uint64_t size, unsigned long lo
     event->space = space;
     event->isShadowEvent = true;
     event->kernelIndex = kernelLaunchRecordIndex_;
+    if (isHostSpace)
+    {
+        event->isPinned = true;
+    }
     // No callstack, no moduleId, no pageType, no owner for shadow events
 
     {
@@ -569,6 +581,11 @@ bool EventReport::ReportHalMalloc(uint64_t addr, uint64_t size, unsigned long lo
         {
             std::lock_guard<std::mutex> lock(mutex_);
             halPtrs_.insert(addr);
+            if (isHostSpace)
+            {
+                halHostPtrs_.insert(addr);
+                hostPtrs_.insert(addr);
+            }
         }
     }
 
@@ -580,6 +597,7 @@ bool EventReport::ReportHalMalloc(uint64_t addr, uint64_t size, unsigned long lo
 // Shadow overload (no callstack): minimal event for NOT_IN_TRACING mode
 bool EventReport::ReportHalFree(uint64_t addr)
 {
+    bool isHostAddr = false;
     {
         if (destroyed_.load())
         {
@@ -591,16 +609,22 @@ bool EventReport::ReportHalFree(uint64_t addr)
         {
             return true;  // 未在halMemAlloc中注册过的地址，过滤掉
         }
+        isHostAddr = (halHostPtrs_.find(addr) != halHostPtrs_.end());
         halPtrs_.erase(it);
+        if (isHostAddr)
+        {
+            halHostPtrs_.erase(addr);
+            hostPtrs_.erase(addr);
+        }
     }
 
     auto event = std::make_shared<MemoryEvent>();
     event->eventType = EventBaseType::FREE;
-    event->eventSubType = EventSubType::HAL;
-    event->poolType = PoolType::HAL;
+    event->eventSubType = isHostAddr ? EventSubType::HOST : EventSubType::HAL;
+    event->poolType = isHostAddr ? PoolType::HOST : PoolType::HAL;
     event->addr = addr;
     event->name = "N/A";
-    event->device = GD_INVALID_NUM;  // 后续由MemoryStateManager::AddEvent根据addr匹配MALLOC回填
+    event->device = isHostAddr ? DEVICE_ID_CPU : GD_INVALID_NUM;  // 后续由MemoryStateManager::AddEvent根据addr匹配MALLOC回填
     event->isShadowEvent = true;
     event->kernelIndex = kernelLaunchRecordIndex_;
     // No callstack for shadow events
@@ -617,6 +641,7 @@ bool EventReport::ReportHalFree(uint64_t addr, CallStackString&& stack)
         return true;
     }
 
+    bool isHostAddr = false;
     {
         // 单例类析构之后不再访问其成员变量
         if (destroyed_.load())
@@ -629,19 +654,25 @@ bool EventReport::ReportHalFree(uint64_t addr, CallStackString&& stack)
         {
             return true;
         }
+        isHostAddr = (halHostPtrs_.find(addr) != halHostPtrs_.end());
         halPtrs_.erase(it);
+        if (isHostAddr)
+        {
+            halHostPtrs_.erase(addr);
+            hostPtrs_.erase(addr);
+        }
     }
 
     std::shared_ptr<MemoryEvent> event = std::make_shared<MemoryEvent>();
     event->eventType = EventBaseType::FREE;
-    event->eventSubType = EventSubType::HAL;
+    event->eventSubType = isHostAddr ? EventSubType::HOST : EventSubType::HAL;
     event->cCallStack = std::move(stack.cStack);
     event->pyCallStack = std::move(stack.pyStack);
-    event->poolType = PoolType::HAL;
+    event->poolType = isHostAddr ? PoolType::HOST : PoolType::HAL;
     event->addr = addr;
     event->name = "N/A";
-    event->space = MemOpSpace::INVALID;
-    event->device = GD_INVALID_NUM;
+    event->space = isHostAddr ? MemOpSpace::HOST : MemOpSpace::INVALID;
+    event->device = isHostAddr ? DEVICE_ID_CPU : GD_INVALID_NUM;
     event->size = 0;
     event->moduleId = INVALID_MODID;
     event->flag = FLAG_INVALID;
@@ -661,15 +692,16 @@ bool EventReport::ReportHostRegister(uint64_t addr, uint64_t size, CallStackStri
 
     std::shared_ptr<MemoryEvent> event = std::make_shared<MemoryEvent>();
     event->eventType = EventBaseType::MALLOC;
-    event->eventSubType = EventSubType::HOST_PINNED;
+    event->eventSubType = EventSubType::HOST;
     event->cCallStack = std::move(stack.cStack);
     event->pyCallStack = std::move(stack.pyStack);
-    event->poolType = PoolType::HAL;
+    event->poolType = PoolType::HOST;
     event->addr = addr;
     event->name = "N/A";
     event->space = MemOpSpace::HOST;
     event->device = DEVICE_ID_CPU;
     event->size = size;
+    event->isPinned = true;
     event->kernelIndex = kernelLaunchRecordIndex_;
     event->used = static_cast<int64_t>(Utility::GetProcessVmRss());
 
@@ -678,6 +710,8 @@ bool EventReport::ReportHostRegister(uint64_t addr, uint64_t size, CallStackStri
         {
             std::lock_guard<std::mutex> lock(mutex_);
             halPtrs_.insert(addr);
+            halHostPtrs_.insert(addr);
+            hostPtrs_.insert(addr);
         }
     }
 
@@ -706,14 +740,16 @@ bool EventReport::ReportHostUnregister(uint64_t addr, CallStackString&& stack)
             return true;
         }
         halPtrs_.erase(it);
+        halHostPtrs_.erase(addr);
+        hostPtrs_.erase(addr);
     }
 
     std::shared_ptr<MemoryEvent> event = std::make_shared<MemoryEvent>();
     event->eventType = EventBaseType::FREE;
-    event->eventSubType = EventSubType::HAL;
+    event->eventSubType = EventSubType::HOST;
     event->cCallStack = std::move(stack.cStack);
     event->pyCallStack = std::move(stack.pyStack);
-    event->poolType = PoolType::HAL;
+    event->poolType = PoolType::HOST;
     event->addr = addr;
     event->name = "N/A";
     event->space = MemOpSpace::HOST;
@@ -725,6 +761,50 @@ bool EventReport::ReportHostUnregister(uint64_t addr, CallStackString&& stack)
 
     Process::GetInstance().SendEvent(event);
 
+    return true;
+}
+
+bool EventReport::ReportCpuTensor(uint64_t addr, uint64_t size, bool isAlloc, std::string&& pyStack)
+{
+    if (IsNeedSkip(DEVICE_ID_CPU))
+    {
+        return false;
+    }
+
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (isAlloc)
+        {
+            if (hostPtrs_.count(addr) > 0)
+            {
+                return false;  // HAL channel already reported this address, silently reject
+            }
+            hostPtrs_.insert(addr);
+        }
+        else
+        {
+            if (hostPtrs_.count(addr) == 0)
+            {
+                return false;  // never reported, silently reject (prevent orphan FREE)
+            }
+            hostPtrs_.erase(addr);
+        }
+    }
+
+    std::shared_ptr<MemoryEvent> event = std::make_shared<MemoryEvent>();
+    event->eventType = isAlloc ? EventBaseType::MALLOC : EventBaseType::FREE;
+    event->eventSubType = EventSubType::HOST;
+    event->poolType = PoolType::HOST;
+    event->addr = addr;
+    event->name = "N/A";
+    event->space = MemOpSpace::HOST;
+    event->device = DEVICE_ID_CPU;
+    event->size = static_cast<int64_t>(size);
+    event->isPinned = false;
+    event->pyCallStack = std::move(pyStack);
+    event->kernelIndex = kernelLaunchRecordIndex_;
+
+    Process::GetInstance().SendEvent(event);
     return true;
 }
 

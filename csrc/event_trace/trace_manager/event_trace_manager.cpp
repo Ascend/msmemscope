@@ -153,6 +153,7 @@ bool ConfigManager::SetConfig(const std::unordered_map<std::string, std::string>
     Utility::JsonConfig::GetInstance().SaveConfigToJson(config_);
     EventTraceManager::Instance().HandleWithATenCollect();
     EventTraceManager::Instance().HandleWithDecompose();
+    EventTraceManager::Instance().HandleWithCpuTensorCollect();
     EventTraceManager::Instance().InitJudgeFuncTable();
     // 更新analysis参数
     EventReport::Instance(MemScopeCommType::SHARED_MEMORY).UpdateAnalysisType();
@@ -285,6 +286,7 @@ void EventTraceManager::SetTraceStatus(const EventTraceStatus status)
 
     HandleWithATenCollect();
     HandleWithDecompose();
+    HandleWithCpuTensorCollect();
     return;
 }
 
@@ -313,6 +315,19 @@ void EventTraceManager::HandleWithDecompose()
 
     Utility::MemScopePythonCall("msmemscope.optimizer_step_hook", "disable_optimizer_step_hook");
     Utility::MemScopePythonCall("msmemscope.hijacker.hijack_manager", "disable_decompose_hooks");
+
+    return;
+}
+
+void EventTraceManager::HandleWithCpuTensorCollect()
+{
+    if ((status_ == EventTraceStatus::IN_TRACING) && GetConfig().collectCpu)
+    {
+        Utility::MemScopePythonCall("msmemscope.cpu_tensor_collection", "enable_cpu_tensor_collect");
+        return;
+    }
+
+    Utility::MemScopePythonCall("msmemscope.cpu_tensor_collection", "disable_cpu_tensor_collect");
 
     return;
 }
