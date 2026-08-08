@@ -25,6 +25,7 @@ from src.test_suit.decompose_test import DecomposeTestSuite
 from src.test_suit.inefficient_test import InefficientTestSuite
 from src.test_suit.cli_base_test import CliBaseTestSuite
 from src.test_suit.oom_test import OOMTestSuite
+from src.test_suit.cpu_tensor_test import CpuTensorTestSuite
 from src.utils.env_checker import EnvChecker
 from src.utils.symbol_checker import SymbolChecker
 
@@ -110,6 +111,8 @@ def run_tests(working_dir: str, params) -> bool:
     inefficient_cmd_command = ["../../msmemscope/output/bin/msmemscope", "bash", "../../testfile/scripts/test_inefficient_cmd.sh",
         "--log-level=info", "--analysis=inefficient", "--level=0,1","--events=alloc,free,launch,access"]
     inefficient_api_command = ["bash", "../../testfile/scripts/test_inefficient_api.sh"]
+    cpu_tensor_cmd = ["../../msmemscope/output/bin/msmemscope", "python", "../../testfile/scripts/test_cpu_tensor_smoke.py",
+        "--device=npu,cpu", "--log-level=info", "--level=0,1"]
     oom_cmd = ["../../msmemscope/output/bin/msmemscope", "python", "../../testfile/scripts/test_oom_smoke.py",
         "--analysis=oom:5", "--log-level=info"]
 
@@ -131,6 +134,7 @@ def run_tests(working_dir: str, params) -> bool:
         InefficientTestSuite("msmemscope_inefficient_api_test", params, "check_inefficient_api", inefficient_api_command, 100),
         CliBaseTestSuite("cli_base_test", params, "cli_base", [], 100),
         OOMTestSuite("oom_cmd_test", params, "check_oom_cmd", oom_cmd, 60),
+        CpuTensorTestSuite("cpu_tensor_cmd_test", params, "check_cpu_tensor_cmd", cpu_tensor_cmd, 100),
     ]
     
     if params.llama2_7b:
