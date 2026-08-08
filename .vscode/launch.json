@@ -1,0 +1,122 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "GDB: Launch Main Program",
+      "type": "cppdbg",
+      "request": "launch",
+      "program": "${workspaceFolder}/output/bin/msmemscope.bin",
+      "args": [
+        "--events=alloc,free",
+        "python",
+        "example/example_cmd.py"
+      ],
+      "stopAtEntry": false,
+      "cwd": "${workspaceFolder}",
+      "environment": [
+        {
+          "name": "LD_LIBRARY_PATH",
+          "value": "${workspaceFolder}/output/lib64"
+        }
+      ],
+      "externalConsole": false,
+      "MIMode": "gdb",
+      "miDebuggerPath": "gdb",
+      "preLaunchTask": "Build: Debug Mode",
+      "setupCommands": [
+        {
+          "description": "为 gdb 启用整齐打印",
+          "text": "-enable-pretty-printing",
+          "ignoreFailures": true
+        },
+        {
+          "description": "设置反汇编风格为 Intel",
+          "text": "-gdb-set disassembly-flavor intel",
+          "ignoreFailures": true
+        },
+        {
+          "description": "允许挂起断点",
+          "text": "set breakpoint pending on",
+          "ignoreFailures": true
+        }
+      ],
+      "logging": {
+        "moduleLoad": false,
+        "trace": false,
+        "engineLogging": false,
+        "programOutput": true,
+        "exceptions": true
+      }
+    },
+    {
+      "name": "GDB: Debug Unit Test (UT)",
+      "type": "cppdbg",
+      "request": "launch",
+      "program": "${workspaceFolder}/build/test/memscope_test",
+      "args": [
+        "--gtest_filter=*"
+      ],
+      "stopAtEntry": false,
+      "cwd": "${workspaceFolder}",
+      "externalConsole": false,
+      "MIMode": "gdb",
+      "miDebuggerPath": "gdb",
+      "preLaunchTask": "Test: Build Unit Tests",
+      "setupCommands": [
+        {
+          "description": "为 gdb 启用整齐打印",
+          "text": "-enable-pretty-printing",
+          "ignoreFailures": true
+        },
+        {
+          "description": "设置反汇编风格为 Intel",
+          "text": "-gdb-set disassembly-flavor intel",
+          "ignoreFailures": true
+        },
+        {
+          "description": "允许挂起断点",
+          "text": "set breakpoint pending on",
+          "ignoreFailures": true
+        }
+      ],
+      "logging": {
+        "moduleLoad": false,
+        "trace": false,
+        "engineLogging": false,
+        "programOutput": true,
+        "exceptions": true
+      }
+    },
+    {
+      "name": "Python: Debug Active File",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${file}",
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}",
+      "env": {
+        "PYTHONPATH": "${workspaceFolder}",
+        "LD_LIBRARY_PATH": "${workspaceFolder}/output/lib64:${env:LD_LIBRARY_PATH}"
+      },
+      "justMyCode": false
+    },
+    {
+      "name": "Python: Debug Pytest Case",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "pytest",
+      "args": [
+        "${file}",
+        "-v",
+        "-s"
+      ],
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}",
+      "env": {
+        "PYTHONPATH": "${workspaceFolder}",
+        "LD_LIBRARY_PATH": "${workspaceFolder}/output/lib64:${env:LD_LIBRARY_PATH}"
+      },
+      "justMyCode": false
+    }
+  ]
+}

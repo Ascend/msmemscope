@@ -1,0 +1,72 @@
+{
+    "name": "msmemscope-dev",
+    "image": "swr.cn-north-4.myhuaweicloud.com/mindstudio-image/mindstudio-build:26.1.0-0701",
+    "workspaceFolder": "/workspace",
+    "workspaceMount": "source=${localWorkspaceFolder},target=/workspace,type=bind,consistency=cached",
+    "initializeCommand": "bash ${localWorkspaceFolder}/.devcontainer/initialize.sh",
+    "remoteUser": "mindstudio",
+    "updateRemoteUserUID": true,
+    "runArgs": [
+        "--network=host",
+        "--privileged",
+        "--ipc=host",
+        "--ulimit",
+        "nproc=65535:65535",
+        "--security-opt",
+        "seccomp=unconfined"
+    ],
+    "mounts": [
+        "source=/usr/local/sbin,target=/usr/local/sbin,type=bind,readonly",
+        "source=${localWorkspaceFolder}/.devcontainer/.host-gitconfig,target=/tmp/host-gitconfig,type=bind,readonly",
+        "source=${localEnv:HOME}/.cache/ccache,target=/home/mindstudio/.cache/ccache,type=bind",
+        "source=${localEnv:HOME}/.cache/uv,target=/home/mindstudio/.cache/uv,type=bind",
+        "source=pre-commit-cache,target=/home/mindstudio/.cache/pre-commit,type=volume"
+    ],
+    "containerEnv": {
+        "GCC11_NO_RPATH": "1",
+        "NPM_CONFIG_PREFIX": "/home/mindstudio/.local",
+        "CCACHE_DIR": "/home/mindstudio/.cache/ccache",
+        "UV_CACHE_DIR": "/home/mindstudio/.cache/uv",
+        "PRE_COMMIT_HOME": "/home/mindstudio/.cache/pre-commit"
+    },
+    "remoteEnv": {
+        "PATH": "/home/mindstudio/.local/bin:${containerEnv:PATH}"
+    },
+    "postCreateCommand": "bash -lc '/workspace/.devcontainer/post-create.sh'",
+    "customizations": {
+        "vscode": {
+            "extensions": [
+                "ms-vscode.cpptools",
+                "ms-vscode.cmake-tools",
+                "ms-python.python",
+                "ms-python.vscode-pylance",
+                "charliermarsh.ruff",
+                "xaver.clang-format",
+                "llvm-vs-code-extensions.vscode-clangd",
+                "shd101wyy.markdown-preview-enhanced"
+            ],
+            "settings": {
+                "terminal.integrated.defaultProfile.linux": "bash-login",
+                "terminal.integrated.profiles.linux": {
+                    "bash-login": {
+                        "path": "/bin/bash",
+                        "args": [
+                            "-l"
+                        ]
+                    }
+                },
+                "cmake.configureOnOpen": true,
+                "C_Cpp.clang_format_style": "file",
+                "C_Cpp.intelliSenseEngine": "disabled",
+                "clangd.onConfigChanged": "restart",
+                "clangd.arguments": [
+                    "--background-index",
+                    "--clang-tidy",
+                    "--completion-style=detailed",
+                    "--header-insertion=never",
+                    "--compile-commands-dir=${workspaceFolder}/build"
+                ]
+            }
+        }
+    }
+}

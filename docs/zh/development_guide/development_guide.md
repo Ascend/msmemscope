@@ -6,6 +6,33 @@
 
 > **说明：** 环境镜像的构建方法及配套软件版本由 MindStudio 统一镜像制作指南维护，本仓库不重复定义。
 
+### 1.1 容器化开发环境
+
+msMemScope 基于 [devcontainer](https://containers.dev/) 提供一致的容器化开发环境，在 VS Code 中打开仓库即可一键进入容器、一键构建、一键图形化调试，代码智能跳转开箱即用。
+
+**前置条件**：PC 安装 VS Code，并为 VS Code 安装 Dev Containers 和 Remote-SSH 插件；Linux 服务器提供 Docker 服务（含 Ascend 环境）。
+
+**进入容器**：VS Code 打开仓库 → 右下角提示 "Reopen in Container" → 等待 `post-create.sh` 自动完成初始化（Git 身份同步、Python 3.11、pre-commit Hook 安装、clangd 等，幂等且失败不阻塞）。
+
+**一键构建**（任务面板 `Terminal → Run Task`）：
+
+| 任务 | 功能 |
+| --- | --- |
+| `Build: Release Mode` | Release 全量构建（等价命令行 `python3 build.py`） |
+| `Build: Debug Mode` | 下载三方依赖后 Debug 编译（带 `-g -O0` 调试符号，不 strip） |
+| `Test: Build Unit Tests` | 仅编译单元测试（供调试用） |
+| `Test: Run Unit Tests` | 构建并运行单元测试（等价命令行 `python3 build.py test`） |
+| `Clean: All Workspace` | 清理构建产物 |
+
+**一键调试**（F5 选择配置）：`GDB: Launch Main Program` 调试 `output/bin/msmemscope.bin`；`GDB: Debug Unit Test (UT)` 调试 `build/test/memscope_test`。调试前会自动执行 Debug 构建。
+
+**代码跳转**：C++ 经 clangd 读取 `build/compile_commands.json`（首次构建后生成），Python 经 Pylance 提供语义跳转。
+
+**注意事项**：
+- 编译必须在容器内进行；容器外命令行入口（`python3 build.py`）保持可用。
+- Debug 与 Release 产物同路径覆盖，两种模式切换时请重新构建目标模式。
+- `.vscode/settings.json` 本地个人化修改不会进入 `git status`（skip-worktree 治理）。
+
 ## 2. 开发步骤
 
 ### 2.1 代码下载
@@ -33,12 +60,35 @@ python3 build.py local test
 当依赖成功下载之后，终端将会输出如下信息。
 
 ```shell
-============ download thirdparty done ============
+============ download third-party done ============
 ```
 
 当编译成功后，终端输出如下图所示。
 
 ![编译成功](./figures/build_success.png)
+
+#### 2.2.1 Debug 构建与 UT 调试
+
+默认构建为 Release（`-O2` + strip）。如需使用 GDB 断点调试，请执行 Debug 构建（`-g -O0`，不 strip）：
+
+```shell
+python3 build.py -e only_down_deps=true   # 仅下载三方依赖后退出
+cd build
+cmake .. -DCMAKE_BUILD_TYPE=Debug
+make -j$(nproc)
+```
+
+Debug 产物与 Release 产物同路径覆盖（`output/bin`、`output/lib64`），切换构建模式时请重新构建目标模式。
+
+单元测试调试：先执行 Debug 构建（`-DBUILD_TESTS=ON`），再对 `build/test/memscope_test` 设置断点调试：
+
+```shell
+cd build
+cmake .. -DBUILD_TESTS=ON -DCMAKE_BUILD_TYPE=Debug
+make -j8
+```
+
+> 使用 devcontainer 开发时无需手工执行上述命令，VS Code 任务面板提供 `Build: Debug Mode`、`Test: Build Unit Tests` 等一键入口，F5 可直接启动 GDB 调试。
 
 ### 2.3 开发功能
 
