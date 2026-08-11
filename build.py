@@ -38,6 +38,7 @@ class BuildManager:
         python build.py test local                  单元测试（跳过依赖拉取, Debug 编译 + 执行测试）
         python build.py --version/-v <version>      指定构建版本号（用于 run/exe/dmg 包）
         python build.py --extra/-e KEY=VALUE        指定额外构建选项，可多次使用
+        python build.py -e only_down_deps=true      仅下载三方依赖后退出（IDE Debug/UT 任务使用）
 
     参数说明:
         - 参数: command    : 构建动作: 为空时为全构建, local 为跳过依赖下载, test 为运行单元测试。
@@ -91,8 +92,16 @@ class BuildManager:
 
         # 在非 local 场景下按需更新依赖；在 local 场景下仅使用本地已有代码，不更新依赖。
         if 'local' not in self.args.command:
-            # 补充依赖下载处理
-            pass
+            self._execute_command(["bash", "build/download_thirdparty.sh"], cwd=self.project_root)
+
+        # 消费 -e only_down_deps=true：仅完成三方依赖准备即退出，供 IDE Debug/UT 任务直接调用 CMake。
+        extra_options = {}
+        for option in self.args.extra:
+            key, _, value = option.partition('=')
+            extra_options[key] = value
+        if extra_options.get('only_down_deps') == 'true':
+            logging.info("only_down_deps=true, exiting after dependency download.")
+            return
 
         if 'test' in self.args.command:
             # -------------------- 单元测试 --------------------
