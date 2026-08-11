@@ -245,7 +245,6 @@ EventReport::EventReport(MemScopeCommType type)
     HealthAnalyzer::GetInstance();
     LeakAnalyzer::GetInstance();
 
-    LOG_DEBUG("LOG INIT");
     RegisterRtProfileCallback();
 
     return;
