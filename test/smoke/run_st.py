@@ -24,6 +24,7 @@ from src.test_suit.llama2_7b_test import Llama2_7bTestSuite
 from src.test_suit.decompose_test import DecomposeTestSuite
 from src.test_suit.inefficient_test import InefficientTestSuite
 from src.test_suit.cli_base_test import CliBaseTestSuite
+from src.test_suit.oom_test import OOMTestSuite
 from src.utils.env_checker import EnvChecker
 from src.utils.symbol_checker import SymbolChecker
 
@@ -109,6 +110,8 @@ def run_tests(working_dir: str, params) -> bool:
     inefficient_cmd_command = ["../../msmemscope/output/bin/msmemscope", "bash", "../../testfile/scripts/test_inefficient_cmd.sh",
         "--log-level=info", "--analysis=inefficient", "--level=0,1","--events=alloc,free,launch,access"]
     inefficient_api_command = ["bash", "../../testfile/scripts/test_inefficient_api.sh"]
+    oom_cmd = ["../../msmemscope/output/bin/msmemscope", "python", "../../testfile/scripts/test_oom_smoke.py",
+        "--analysis=oom:5", "--log-level=info"]
 
     test_suites = [
         MultirankCsvTestSuite("multirank_cmd_test", params, "check_multirank_cmd", multirank_cmd_command, 100),
@@ -127,6 +130,7 @@ def run_tests(working_dir: str, params) -> bool:
         InefficientTestSuite("msmemscope_inefficient_cmd_test", params, "check_inefficient_cmd", inefficient_cmd_command, 100),
         InefficientTestSuite("msmemscope_inefficient_api_test", params, "check_inefficient_api", inefficient_api_command, 100),
         CliBaseTestSuite("cli_base_test", params, "cli_base", [], 100),
+        OOMTestSuite("oom_cmd_test", params, "check_oom_cmd", oom_cmd, 60),
     ]
     
     if params.llama2_7b:
