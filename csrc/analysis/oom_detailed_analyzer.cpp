@@ -18,6 +18,7 @@
 #include "oom_detailed_analyzer.h"
 
 #include "bit_field.h"
+#include "leak_analyzer.h"
 #include "utility/utils.h"
 
 namespace MemScope
@@ -48,13 +49,8 @@ bool OOMDetailedAnalyzer::ShouldDumpDetails()
 
 std::vector<OOMMemRecord> OOMDetailedAnalyzer::QueryRecentAllocs(int32_t deviceId, uint32_t clientId)
 {
-    std::vector<OOMMemRecord> allRecords;
-
-    auto npuRecords = StepInnerAnalyzer::GetInstance().QueryUnfreedRecords(deviceId);
-    allRecords.insert(allRecords.end(), npuRecords.begin(), npuRecords.end());
-
-    auto halRecords = HalAnalyzer::GetInstance().QueryUnfreedRecords(clientId);
-    allRecords.insert(allRecords.end(), halRecords.begin(), halRecords.end());
+    // 统一查询：LeakAnalyzer内部合并NPU（device过滤）+ HAL（clientId过滤）未释放块
+    auto allRecords = LeakAnalyzer::GetInstance().QueryUnfreedRecords(deviceId, clientId);
 
     uint16_t k = config_.oomTopK;
     if (k > allRecords.size())
@@ -69,13 +65,8 @@ std::vector<OOMMemRecord> OOMDetailedAnalyzer::QueryRecentAllocs(int32_t deviceI
 
 std::vector<OOMMemRecord> OOMDetailedAnalyzer::QueryTopAllocs(int32_t deviceId, uint32_t clientId)
 {
-    std::vector<OOMMemRecord> allRecords;
-
-    auto npuRecords = StepInnerAnalyzer::GetInstance().QueryUnfreedRecords(deviceId);
-    allRecords.insert(allRecords.end(), npuRecords.begin(), npuRecords.end());
-
-    auto halRecords = HalAnalyzer::GetInstance().QueryUnfreedRecords(clientId);
-    allRecords.insert(allRecords.end(), halRecords.begin(), halRecords.end());
+    // 统一查询：LeakAnalyzer内部合并NPU（device过滤）+ HAL（clientId过滤）未释放块
+    auto allRecords = LeakAnalyzer::GetInstance().QueryUnfreedRecords(deviceId, clientId);
 
     uint16_t k = config_.oomTopK;
     if (k > allRecords.size())

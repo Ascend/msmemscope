@@ -133,7 +133,8 @@ class EventBase : public DataBase
     uint64_t pid = 0;
     uint64_t tid = 0;
     uint64_t addr = 0;
-    int32_t device;
+    // 默认无效值：未显式赋值的设备字段（如CleanUpEvent）安全参与key(pid, device, addr)定位
+    int32_t device = GD_INVALID_NUM;
     std::string name;
     std::string attr;
     std::string cCallStack;

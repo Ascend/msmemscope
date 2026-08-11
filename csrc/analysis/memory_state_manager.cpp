@@ -17,6 +17,8 @@
 
 #include "memory_state_manager.h"
 
+#include <algorithm>
+
 #include "analysis/event_dispatcher.h"
 #include "framework/event_router.h"
 #include "log.h"
@@ -25,6 +27,37 @@
 
 namespace MemScope
 {
+
+namespace
+{
+// 按(pid, addr)遍历定位state：FREE事件device缺失（hal/host内存）时key无法哈希定位，
+// 遍历匹配已分配块（含地址区间containment）；key.device有效时限定同device（RFC 3.2.4：
+// containment扫描条件增加device匹配，不同device的块独立state，不跨卡误并入/误回填）
+MemoryState* FindStateByPidAndAddr(std::unordered_map<MemoryStateKey, MemoryState, MemoryStateKeyHasher>& statesMap,
+                                   const MemoryStateKey& key, const uint64_t& size)
+{
+    uint64_t addr = key.addr;
+    // addr和size在循环内不变，提前计算一次
+    uint64_t addrLimit = Utility::GetAddResult(addr, size);
+    for (auto& pair : statesMap)
+    {
+        if (key.pid != pair.first.pid)
+        {
+            continue;
+        }
+        if (key.device != GD_INVALID_NUM && pair.first.device != key.device)
+        {
+            continue;
+        }
+        uint64_t startingAddr = pair.first.addr;
+        if (addr >= startingAddr && addrLimit <= Utility::GetAddResult(startingAddr, pair.second.size))
+        {
+            return &(pair.second);
+        }
+    }
+    return nullptr;
+}
+}  // namespace
 
 void OwnerLabelManager::AddLabel(OwnerLevel level, std::string label)
 {
@@ -80,16 +113,31 @@ MemoryState* MemoryStateManager::AddEvent(std::shared_ptr<MemoryEvent>& event)
         return nullptr;
     }
     std::lock_guard<std::mutex> lock(mtx_);
-    MemoryStateKey key = MemoryStateKey{event->pid, event->addr};
     // operator[]在key缺失时插入默认Pool，一次查找完成
     auto& statesPool = poolsMap_[event->poolType];
     auto& statesMap = statesPool.statesMap;
 
-    // 若已有state，复用同一次查找补全device和size信息
+    // 定位事件所属state：
+    // - 先按key(pid, device, addr)精确哈希；未命中时对非MALLOC事件（FREE/ACCESS等）遍历匹配
+    //   （含地址区间containment）：device缺失的FREE事件（hal/host内存）借此回填device后再哈希
+    //   精确定位；ACCESS等地址落在已分配块区间内的事件并入所属块state
+    // - MALLOC事件不做模糊匹配（MALLOC冲突语义）
+    MemoryState* located = nullptr;
+    MemoryStateKey key{event->pid, event->device, event->addr};
     auto stateIt = statesMap.find(key);
-    if (stateIt != statesMap.end() && !stateIt->second.events.empty())
+    if (stateIt != statesMap.end())
     {
-        auto& firstEvent = stateIt->second.events[0];
+        located = &stateIt->second;
+    }
+    else if (event->eventType != EventBaseType::MALLOC)
+    {
+        located = FindStateByPidAndAddr(statesMap, key, static_cast<uint64_t>(event->size));
+    }
+
+    // 复用同一次查找补全device和size信息
+    if (located != nullptr && !located->events.empty())
+    {
+        auto& firstEvent = located->events[0];
         // 如果device信息是缺失的，尝试补全
         if (event->device == GD_INVALID_NUM)
         {
@@ -111,12 +159,13 @@ MemoryState* MemoryStateManager::AddEvent(std::shared_ptr<MemoryEvent>& event)
 
     if (event->eventType == EventBaseType::MALLOC)
     {
-        if (stateIt != statesMap.end())
+        if (located != nullptr)
         {
             // 有一种情况会添加失败，malloc时仍有数据未释放
             return nullptr;
         }
-        auto inserted = statesMap.emplace(key, MemoryState{event});
+        MemoryStateKey mallocKey{event->pid, event->device, event->addr};
+        auto inserted = statesMap.emplace(mallocKey, MemoryState{event});
         MemoryState& newState = inserted.first->second;
         if (event->isShadowEvent)
         {
@@ -126,18 +175,15 @@ MemoryState* MemoryStateManager::AddEvent(std::shared_ptr<MemoryEvent>& event)
     }
     else
     {
-        auto state = FindStateInPool(event->poolType, key, event->size);
-        if (state == nullptr)
+        if (located != nullptr)
         {
-            // 当前事件没有匹配到已有的state，需要新建一个state表示新的内存块
-            auto inserted = statesMap.emplace(key, MemoryState{event});
-            return &inserted.first->second;
+            located->events.push_back(event);
+            return located;
         }
-        else
-        {
-            state->events.push_back(event);
-            return state;
-        }
+        // 当前事件没有匹配到已有的state，需要新建一个state表示新的内存块
+        MemoryStateKey ghostKey{event->pid, event->device, event->addr};
+        auto inserted = statesMap.emplace(ghostKey, MemoryState{event});
+        return &inserted.first->second;
     }
 }
 
@@ -161,17 +207,17 @@ bool MemoryStateManager::DeteleState(const PoolType& poolType, const MemoryState
     return true;
 }
 
-MemoryState* MemoryStateManager::GetState(std::shared_ptr<MemoryEvent>& event)
+MemoryState* MemoryStateManager::GetState(const std::shared_ptr<MemoryEvent>& event)
 {
     std::lock_guard<std::mutex> lock(mtx_);
-    return FindStateInPool(event->poolType, MemoryStateKey{event->pid, event->addr}, event->size);
+    return FindStateInPool(event->poolType, MemoryStateKey{event->pid, event->device, event->addr}, event->size);
 }
 
-MemoryState* MemoryStateManager::GetState(std::shared_ptr<EventBase>& event)
+MemoryState* MemoryStateManager::GetState(const std::shared_ptr<EventBase>& event)
 {
     std::lock_guard<std::mutex> lock(mtx_);
     auto poolType = event->poolType;
-    auto key = MemoryStateKey{event->pid, event->addr};
+    auto key = MemoryStateKey{event->pid, event->device, event->addr};
     auto poolIt = poolsMap_.find(poolType);
     if (poolIt == poolsMap_.end())
     {
@@ -180,12 +226,18 @@ MemoryState* MemoryStateManager::GetState(std::shared_ptr<EventBase>& event)
     }
     auto& statesMap = poolIt->second.statesMap;
     auto stateIt = statesMap.find(key);
-    if (stateIt == statesMap.end())
+    if (stateIt != statesMap.end())
     {
-        // LOG_DEBUG
-        return nullptr;
+        return &stateIt->second;
     }
-    return &stateIt->second;
+    if (event->device == GD_INVALID_NUM)
+    {
+        // device缺失的事件（如MEMORY_OWNER直标）无法哈希定位，按(pid, addr)遍历匹配
+        // （key.device为GD_INVALID_NUM，过滤条件天然不生效）
+        return FindStateByPidAndAddr(statesMap, key, 0);
+    }
+    // LOG_DEBUG
+    return nullptr;
 }
 
 MemoryState* MemoryStateManager::FindStateInPool(const PoolType& poolType, const MemoryStateKey& key, uint64_t size)
@@ -213,6 +265,10 @@ MemoryState* MemoryStateManager::FindStateInPool(const PoolType& poolType, const
         {
             continue;
         }
+        if (key.device != GD_INVALID_NUM && pair.first.device != key.device)
+        {
+            continue;
+        }
         uint64_t startingAddr = pair.first.addr;
         if (addr >= startingAddr && addrLimit <= Utility::GetAddResult(startingAddr, pair.second.size))
         {
@@ -232,6 +288,59 @@ std::vector<std::pair<PoolType, MemoryStateKey>> MemoryStateManager::GetAllState
         for (auto& statePair : poolPair.second.statesMap)
         {
             result.push_back(std::make_pair(poolPair.first, statePair.first));
+        }
+    }
+    return result;
+}
+
+std::vector<LiveBlockInfo> MemoryStateManager::QueryLiveBlocks(const LiveBlockFilter& filter) const
+{
+    std::lock_guard<std::mutex> lock(mtx_);
+    std::vector<LiveBlockInfo> result;
+    for (const auto& poolPair : poolsMap_)
+    {
+        if (!filter.poolTypes.empty() &&
+            std::find(filter.poolTypes.begin(), filter.poolTypes.end(), poolPair.first) == filter.poolTypes.end())
+        {
+            continue;
+        }
+        for (const auto& statePair : poolPair.second.statesMap)
+        {
+            const auto& state = statePair.second;
+            // 跳过幽灵state（events中只有FREE事件，无对应MALLOC）
+            if (state.events.empty() || state.events[0]->eventType != EventBaseType::MALLOC)
+            {
+                continue;
+            }
+            // 排除影子期创建/已释放的块：未转正的影子块和影子期释放的块不参与存活判定
+            if (filter.excludeShadowCreated &&
+                (state.shadowState == ShadowState::SHADOW_CREATED || state.shadowState == ShadowState::SHADOW_FREED))
+            {
+                continue;
+            }
+            const auto& allocEvent = state.events[0];
+            if (filter.device != GD_INVALID_NUM && allocEvent->device != filter.device)
+            {
+                continue;
+            }
+            if (filter.pid != 0 && statePair.first.pid != filter.pid)
+            {
+                continue;
+            }
+            LiveBlockInfo info;
+            info.poolType = poolPair.first;
+            info.pid = statePair.first.pid;
+            info.device = allocEvent->device;
+            info.addr = statePair.first.addr;
+            info.size = state.size;
+            info.allocationId = state.allocationId;
+            info.allocTimestamp = allocEvent->timestamp;
+            info.allocEventId = allocEvent->id;
+            info.kernelIndex = allocEvent->kernelIndex;
+            info.shadowState = state.shadowState;
+            info.cCallStack = allocEvent->cCallStack;
+            info.pyCallStack = allocEvent->pyCallStack;
+            result.push_back(info);
         }
     }
     return result;
@@ -302,6 +411,8 @@ MemoryStateManager::~MemoryStateManager()
     {
         std::shared_ptr<EventBase> event =
             std::make_shared<CleanUpEvent>(EventSubType::PROC_EXIT, state.first, state.second.pid, state.second.addr);
+        // 从key回填device，保证DeteleState的key(pid, device, addr)一致
+        event->device = state.second.device;
         EventHandler(event);
     }
 }

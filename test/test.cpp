@@ -19,7 +19,7 @@
 #include "bit_field.h"
 #include "framework/command.h"
 #include "framework/client_parser.h"
-#include "analysis/hal_analyzer.h"
+#include "analysis/leak_analyzer.h"
 #include "event_trace/event_report.h"
 
 using namespace MemScope;

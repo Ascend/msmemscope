@@ -36,6 +36,8 @@ enum class SubscriberId : uint8_t
     INEFFICIENT_ANALYZER,
     LEAKS_ANALYZER,
     DUMP,
+    HEALTH_ANALYZER,  // 统计职责（原StepInnerAnalyzer的Gap/池状态）
+    // 废弃条目：HAL_ANALYZER/STEP_INNER_ANALYZER已合并进LEAKS_ANALYZER/HEALTH_ANALYZER，保留占位避免序号漂移
     HAL_ANALYZER,
     STEP_INNER_ANALYZER,
 };

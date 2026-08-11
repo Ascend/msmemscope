@@ -27,13 +27,13 @@
 #include "cpython.h"
 #include "decompose_analyzer.h"
 #include "describe_trace.h"
-#include "hal_analyzer.h"
+#include "health_analyzer.h"
 #include "inefficient_analyzer.h"
 #include "json_manager.h"
 #include "kernel_hooks/runtime_prof_api.h"
+#include "leak_analyzer.h"
 #include "log.h"
 #include "securec.h"
-#include "stepinner_analyzer.h"
 #include "umask_guard.h"
 #include "ustring.h"
 #include "utils.h"
@@ -228,8 +228,11 @@ EventReport::EventReport(MemScopeCommType type)
     Dump::GetInstance();
 
     // 注册通过EventDispatcher订阅的分析器（替代Process::SendEvent中的switch-case分发）
-    HalAnalyzer::GetInstance();
-    StepInnerAnalyzer::GetInstance();
+    // 构造顺序即派发顺序（同优先级下后插入的订阅者先收到事件）：
+    // 先HealthAnalyzer后LeakAnalyzer，保证MALLOC/FREE先经LeakAnalyzer（对应原StepInnerAnalyzer槽位），
+    // MSTX先经LeakAnalyzer::CheckNpuLeak再经HealthAnalyzer::CheckGap（保持原告警顺序）
+    HealthAnalyzer::GetInstance();
+    LeakAnalyzer::GetInstance();
 
     LOG_DEBUG("LOG INIT");
     RegisterRtProfileCallback();
@@ -439,7 +442,7 @@ bool EventReport::ReportHalCreate(uint64_t addr, uint64_t size, const drv_mem_pr
         if (!destroyed_.load())
         {
             std::lock_guard<std::mutex> lock(mutex_);
-            halPtrs_.insert(addr);
+            halPtrs_.emplace(addr, prop.devid);
         }
     }
 
@@ -454,6 +457,8 @@ bool EventReport::ReportHalRelease(uint64_t addr, CallStackString&& stack)
         return true;
     }
 
+    // 分配时记录的device，free事件据此回填（分配时语义）
+    int32_t devId = GD_INVALID_NUM;
     {
         // 单例类析构之后不再访问其成员变量
         if (destroyed_.load())
@@ -466,6 +471,7 @@ bool EventReport::ReportHalRelease(uint64_t addr, CallStackString&& stack)
         {
             return true;
         }
+        devId = it->second;
         halPtrs_.erase(it);
     }
 
@@ -478,7 +484,7 @@ bool EventReport::ReportHalRelease(uint64_t addr, CallStackString&& stack)
     event->addr = addr;
     event->name = "N/A";
     event->space = MemOpSpace::INVALID;
-    event->device = GD_INVALID_NUM;
+    event->device = devId;
     event->size = 0;
     event->moduleId = INVALID_MODID;
     event->flag = FLAG_INVALID;
@@ -528,7 +534,7 @@ bool EventReport::ReportHalMalloc(uint64_t addr, uint64_t size, unsigned long lo
         if (!destroyed_.load())
         {
             std::lock_guard<std::mutex> lock(mutex_);
-            halPtrs_.insert(addr);
+            halPtrs_.emplace(addr, devId);
         }
     }
 
@@ -568,7 +574,7 @@ bool EventReport::ReportHalMalloc(uint64_t addr, uint64_t size, unsigned long lo
         if (!destroyed_.load())
         {
             std::lock_guard<std::mutex> lock(mutex_);
-            halPtrs_.insert(addr);
+            halPtrs_.emplace(addr, devId);
         }
     }
 
@@ -580,6 +586,8 @@ bool EventReport::ReportHalMalloc(uint64_t addr, uint64_t size, unsigned long lo
 // Shadow overload (no callstack): minimal event for NOT_IN_TRACING mode
 bool EventReport::ReportHalFree(uint64_t addr)
 {
+    // 分配时记录的device，free事件据此回填（分配时语义）
+    int32_t devId = GD_INVALID_NUM;
     {
         if (destroyed_.load())
         {
@@ -591,6 +599,7 @@ bool EventReport::ReportHalFree(uint64_t addr)
         {
             return true;  // 未在halMemAlloc中注册过的地址，过滤掉
         }
+        devId = it->second;
         halPtrs_.erase(it);
     }
 
@@ -600,7 +609,7 @@ bool EventReport::ReportHalFree(uint64_t addr)
     event->poolType = PoolType::HAL;
     event->addr = addr;
     event->name = "N/A";
-    event->device = GD_INVALID_NUM;  // 后续由MemoryStateManager::AddEvent根据addr匹配MALLOC回填
+    event->device = devId;  // 分配时语义：与MALLOC事件flag解析同源
     event->isShadowEvent = true;
     event->kernelIndex = kernelLaunchRecordIndex_;
     // No callstack for shadow events
@@ -617,6 +626,8 @@ bool EventReport::ReportHalFree(uint64_t addr, CallStackString&& stack)
         return true;
     }
 
+    // 分配时记录的device，free事件据此回填（分配时语义）
+    int32_t devId = GD_INVALID_NUM;
     {
         // 单例类析构之后不再访问其成员变量
         if (destroyed_.load())
@@ -629,6 +640,7 @@ bool EventReport::ReportHalFree(uint64_t addr, CallStackString&& stack)
         {
             return true;
         }
+        devId = it->second;
         halPtrs_.erase(it);
     }
 
@@ -641,7 +653,7 @@ bool EventReport::ReportHalFree(uint64_t addr, CallStackString&& stack)
     event->addr = addr;
     event->name = "N/A";
     event->space = MemOpSpace::INVALID;
-    event->device = GD_INVALID_NUM;
+    event->device = devId;
     event->size = 0;
     event->moduleId = INVALID_MODID;
     event->flag = FLAG_INVALID;
@@ -677,7 +689,8 @@ bool EventReport::ReportHostRegister(uint64_t addr, uint64_t size, CallStackStri
         if (!destroyed_.load())
         {
             std::lock_guard<std::mutex> lock(mutex_);
-            halPtrs_.insert(addr);
+            // HOST_PINNED映射到CPU设备（DEVICE_ID_CPU），与事件device一致
+            halPtrs_.emplace(addr, DEVICE_ID_CPU);
         }
     }
 

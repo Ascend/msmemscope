@@ -148,13 +148,13 @@ TEST(ShadowCollectionTest, shadow_malloc_creates_marked_state)
     event->size = 1024;
     event->isShadowEvent = true;
 
-    EXPECT_TRUE(MemoryStateManager::GetInstance().AddEvent(event));
+    EXPECT_NE(MemoryStateManager::GetInstance().AddEvent(event), nullptr);
     MemoryState* state = MemoryStateManager::GetInstance().GetState(event);
     ASSERT_NE(state, nullptr);
     EXPECT_EQ(state->shadowState, ShadowState::SHADOW_CREATED);
 
     // Cleanup
-    MemoryStateManager::GetInstance().DeteleState(PoolType::HAL, MemoryStateKey{12345, 0x1000});
+    MemoryStateManager::GetInstance().DeteleState(PoolType::HAL, MemoryStateKey{12345, event->device, 0x1000});
 }
 
 // =============================================================================
@@ -236,7 +236,7 @@ TEST(ShadowCollectionTest, normal_malloc_then_shadow_free_is_marked)
     EXPECT_EQ(state->shadowState, ShadowState::SHADOW_FREED);
 
     // Cleanup
-    MemoryStateManager::GetInstance().DeteleState(PoolType::HAL, MemoryStateKey{12345, 0x3000});
+    MemoryStateManager::GetInstance().DeteleState(PoolType::HAL, MemoryStateKey{12345, GD_INVALID_NUM, 0x3000});
 }
 
 // =============================================================================
@@ -266,7 +266,7 @@ TEST(ShadowCollectionTest, analyzer_skips_shadow_events)
     // dispatching to analyzers when UpdateMemoryState returns nullptr for shadow events.
 
     // Cleanup
-    MemoryStateManager::GetInstance().DeteleState(PoolType::PTA_CACHING, MemoryStateKey{12345, 0x4000});
+    MemoryStateManager::GetInstance().DeteleState(PoolType::PTA_CACHING, MemoryStateKey{12345, 0, 0x4000});
 }
 
 // =============================================================================
@@ -288,7 +288,7 @@ TEST(EventHandlerTest, update_memory_state_returns_state_for_malloc)
     EXPECT_EQ(state->size, 256u);
 
     // Cleanup
-    MemoryStateManager::GetInstance().DeteleState(PoolType::PTA_CACHING, MemoryStateKey{99999, 0x5000});
+    MemoryStateManager::GetInstance().DeteleState(PoolType::PTA_CACHING, MemoryStateKey{99999, GD_INVALID_NUM, 0x5000});
 }
 
 TEST(EventHandlerTest, update_memory_state_returns_nullptr_for_shadow_event)
@@ -306,7 +306,7 @@ TEST(EventHandlerTest, update_memory_state_returns_nullptr_for_shadow_event)
     EXPECT_EQ(state, nullptr);  // Shadow events return nullptr to skip dispatch
 
     // Cleanup
-    MemoryStateManager::GetInstance().DeteleState(PoolType::HAL, MemoryStateKey{99999, 0x6000});
+    MemoryStateManager::GetInstance().DeteleState(PoolType::HAL, MemoryStateKey{99999, GD_INVALID_NUM, 0x6000});
 }
 
 TEST(EventHandlerTest, cleanup_memory_state_deletes_on_free)
@@ -370,5 +370,5 @@ TEST(EventRouterTest, route_dispatches_to_event_handler)
     EXPECT_EQ(state->size, 64u);
 
     // Cleanup
-    MemoryStateManager::GetInstance().DeteleState(PoolType::PTA_CACHING, MemoryStateKey{88888, 0x8000});
+    MemoryStateManager::GetInstance().DeteleState(PoolType::PTA_CACHING, MemoryStateKey{88888, GD_INVALID_NUM, 0x8000});
 }
