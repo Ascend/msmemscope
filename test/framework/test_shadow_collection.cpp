@@ -134,6 +134,66 @@ TEST(ShadowCollectionTest, determine_trace_mode_skip)
 }
 
 // =============================================================================
+// UT-1b: 事件上报抑制机制（GetDeviceMemInfo 等真实运行时调用窗口）
+// =============================================================================
+
+TEST(ShadowCollectionTest, suppression_guard_initial_not_suppressed)
+{
+    EXPECT_FALSE(IsEventReportSuppressed());
+}
+
+TEST(ShadowCollectionTest, determine_trace_mode_suppressed_skips_normal_mode)
+{
+    // NORMAL可采集配置 + 抑制窗口 → SKIP；守卫离开窗口后恢复 NORMAL
+    Config config{};
+    BitField<decltype(config.eventType)> eventBit;
+    eventBit.setBit(static_cast<size_t>(EventType::ALLOC_EVENT));
+    eventBit.setBit(static_cast<size_t>(EventType::FREE_EVENT));
+    config.eventType = eventBit.getValue();
+    config.collectMode = static_cast<uint8_t>(CollectMode::IMMEDIATE);
+    ConfigManager::Instance().SetConfig(config);
+    EventTraceManager::Instance().SetTraceStatus(EventTraceStatus::IN_TRACING);
+
+    {
+        EventReportSuppressor suppressor;
+        EXPECT_EQ(DetermineTraceMode(), TraceMode::SKIP);
+    }
+    EXPECT_EQ(DetermineTraceMode(), TraceMode::NORMAL);
+}
+
+TEST(ShadowCollectionTest, determine_trace_mode_suppressed_skips_shadow_mode)
+{
+    // SHADOW可采集配置 + 抑制窗口 → SKIP；守卫离开窗口后恢复 SHADOW
+    Config config{};
+    BitField<decltype(config.eventType)> eventBit;
+    eventBit.setBit(static_cast<size_t>(EventType::ALLOC_EVENT));
+    config.eventType = eventBit.getValue();
+    config.collectMode = static_cast<uint8_t>(CollectMode::DEFERRED);
+    ConfigManager::Instance().SetConfig(config);
+    EventTraceManager::Instance().SetTraceStatus(EventTraceStatus::NOT_IN_TRACING);
+
+    {
+        EventReportSuppressor suppressor;
+        EXPECT_EQ(DetermineTraceMode(), TraceMode::SKIP);
+    }
+    EXPECT_EQ(DetermineTraceMode(), TraceMode::SHADOW);
+}
+
+TEST(ShadowCollectionTest, suppression_guard_supports_nesting)
+{
+    // 嵌套置位：内层析构不影响外层抑制，最外层离开后恢复
+    {
+        EventReportSuppressor outer;
+        {
+            EventReportSuppressor inner;
+            EXPECT_TRUE(IsEventReportSuppressed());
+        }
+        EXPECT_TRUE(IsEventReportSuppressed());
+    }
+    EXPECT_FALSE(IsEventReportSuppressed());
+}
+
+// =============================================================================
 // UT-2: 影子 MALLOC 创建 SHADOW_CREATED 的 State
 // =============================================================================
 

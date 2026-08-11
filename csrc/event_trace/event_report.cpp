@@ -34,6 +34,7 @@
 #include "leak_analyzer.h"
 #include "log.h"
 #include "securec.h"
+#include "trace_manager/event_trace_manager.h"
 #include "umask_guard.h"
 #include "ustring.h"
 #include "utils.h"
@@ -143,6 +144,9 @@ bool GetDeviceInfo::GetDeviceId(int32_t& devId)
             return false;
         }
 
+        // 进入真实运行时调用窗口：运行时内部的内存申请会被hook捕获并尝试上报，
+        // 抑制期间直接跳过，防止递归上报与幻影事件
+        EventReportSuppressor suppressor;
         rtError_t ret = l_vallina(&devId);
         if (ret == RT_ERROR_INVALID_VALUE)
         {
@@ -151,6 +155,9 @@ bool GetDeviceInfo::GetDeviceId(int32_t& devId)
         return true;
     }
 
+    // 进入真实运行时调用窗口：运行时内部的内存申请会被hook捕获并尝试上报，
+    // 抑制期间直接跳过，防止递归上报与幻影事件
+    EventReportSuppressor suppressor;
     aclError ret = vallina(&devId);
     if (ret != ACL_SUCCESS)
     {
@@ -187,6 +194,10 @@ bool GetDeviceInfo::GetDeviceMemInfo(size_t& freeMem, size_t& totalMem)
         return false;
     }
 
+    // 进入真实运行时调用窗口：aclrtGetMemInfo内部会做临时内存申请（halMemAlloc），
+    // 会被hook捕获并尝试上报（若此处位于事件上报路径内还会递归重入SendEvent），
+    // 抑制期间直接跳过上报，防止递归上报与幻影事件
+    EventReportSuppressor suppressor;
     int ret = vallina(ACL_HBM_MEM, &freeMem, &totalMem);
     if (ret != ACL_SUCCESS)
     {
