@@ -104,7 +104,7 @@ class LeakAnalyzer
     StepTracker stepTracker_;  // step边界维护组件，回调触发CheckNpuLeak
     std::unordered_map<DeviceId, LeakSumsTable> leakMemSums_{};
     std::set<ClientId> halClients_{};  // 见过的HAL事件client，析构时逐client检查（原memtables_分表语义）
-    uint64_t durationThreshold_ = 1;   // 设置警告阈值, 可由用户更改
+    uint64_t durationThreshold_ = 1;  // 设置警告阈值, 可由用户更改
     uint64_t skipSteps_ = 1;
     mutable std::mutex mutex_;  // 保护共享数据的互斥锁
 };

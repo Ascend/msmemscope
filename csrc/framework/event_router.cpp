@@ -57,7 +57,8 @@ static void HandleShadowEvent(std::shared_ptr<EventBase> event, MemoryState* sta
     if (state->shadowState == ShadowState::SHADOW_CREATED)
     {
         // 影子分配 + 影子释放 = 直接消亡，不留痕迹
-        MemoryStateManager::GetInstance().DeteleState(event->poolType, MemoryStateKey{event->pid, event->device, event->addr});
+        MemoryStateManager::GetInstance().DeteleState(event->poolType,
+                                                      MemoryStateKey{event->pid, event->device, event->addr});
     }
     else if (state->shadowState == ShadowState::NORMAL || state->shadowState == ShadowState::SHADOW_PROMOTED)
     {
@@ -237,7 +238,8 @@ void CleanupMemoryState(std::shared_ptr<EventBase> event)
                 return;
             }
         }
-        MemoryStateManager::GetInstance().DeteleState(event->poolType, MemoryStateKey{event->pid, event->device, event->addr});
+        MemoryStateManager::GetInstance().DeteleState(event->poolType,
+                                                      MemoryStateKey{event->pid, event->device, event->addr});
     }
 }
 

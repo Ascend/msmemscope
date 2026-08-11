@@ -33,9 +33,8 @@ namespace
 // 按(pid, addr)遍历定位state：FREE事件device缺失（hal/host内存）时key无法哈希定位，
 // 遍历匹配已分配块（含地址区间containment）；key.device有效时限定同device（RFC 3.2.4：
 // containment扫描条件增加device匹配，不同device的块独立state，不跨卡误并入/误回填）
-MemoryState* FindStateByPidAndAddr(
-    std::unordered_map<MemoryStateKey, MemoryState, MemoryStateKeyHasher>& statesMap, const MemoryStateKey& key,
-    const uint64_t& size)
+MemoryState* FindStateByPidAndAddr(std::unordered_map<MemoryStateKey, MemoryState, MemoryStateKeyHasher>& statesMap,
+                                   const MemoryStateKey& key, const uint64_t& size)
 {
     uint64_t addr = key.addr;
     // addr和size在循环内不变，提前计算一次

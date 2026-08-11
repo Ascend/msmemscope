@@ -39,8 +39,8 @@ LeakAnalyzer& LeakAnalyzer::GetInstance()
     return analyzer;
 }
 
-LeakAnalyzer::LeakAnalyzer() : stepTracker_(std::bind(&LeakAnalyzer::CheckNpuLeak, this, std::placeholders::_1,
-                                                      std::placeholders::_2))
+LeakAnalyzer::LeakAnalyzer()
+    : stepTracker_(std::bind(&LeakAnalyzer::CheckNpuLeak, this, std::placeholders::_1, std::placeholders::_2))
 {
     Subscribe();
 }
@@ -54,10 +54,7 @@ void LeakAnalyzer::Subscribe()
                                              func);
 }
 
-void LeakAnalyzer::UnSubscribe() const
-{
-    EventDispatcher::GetInstance().UnSubscribe(SubscriberId::LEAKS_ANALYZER);
-}
+void LeakAnalyzer::UnSubscribe() const { EventDispatcher::GetInstance().UnSubscribe(SubscriberId::LEAKS_ANALYZER); }
 
 bool LeakAnalyzer::IsNpuAnalysisEnable()
 {
@@ -240,8 +237,8 @@ void LeakAnalyzer::HandleResidualBlock(std::shared_ptr<EventBase>& event, Memory
         }
         // 原RecordNpuMalloc的double malloc告警文案
         std::string poolName = GetMemoryPoolName(event->poolType);
-        LOG_WARN("[npu%d malloc][client %u]:!!! ------double malloc in %s------!!!, ptr: %llu", event->device,
-                 clientId, poolName.c_str(), ptr);
+        LOG_WARN("[npu%d malloc][client %u]:!!! ------double malloc in %s------!!!, ptr: %llu", event->device, clientId,
+                 poolName.c_str(), ptr);
     }
     else if (event->poolType == PoolType::HAL)
     {

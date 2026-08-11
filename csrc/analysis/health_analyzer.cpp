@@ -50,14 +50,11 @@ void HealthAnalyzer::Subscribe()
     auto func = std::bind(&HealthAnalyzer::EventHandle, this, std::placeholders::_1, std::placeholders::_2);
     std::vector<EventBaseType> eventList{EventBaseType::MALLOC, EventBaseType::FREE, EventBaseType::MSTX,
                                          EventBaseType::SYSTEM};
-    EventDispatcher::GetInstance().Subscribe(SubscriberId::HEALTH_ANALYZER, eventList,
-                                             EventDispatcher::Priority::High, func);
+    EventDispatcher::GetInstance().Subscribe(SubscriberId::HEALTH_ANALYZER, eventList, EventDispatcher::Priority::High,
+                                             func);
 }
 
-void HealthAnalyzer::UnSubscribe() const
-{
-    EventDispatcher::GetInstance().UnSubscribe(SubscriberId::HEALTH_ANALYZER);
-}
+void HealthAnalyzer::UnSubscribe() const { EventDispatcher::GetInstance().UnSubscribe(SubscriberId::HEALTH_ANALYZER); }
 
 bool HealthAnalyzer::IsAnalysisEnable()
 {
@@ -197,8 +194,7 @@ void HealthAnalyzer::OnStepStart(const DeviceId& deviceId, const StepId& stepId)
     }
 }
 
-void HealthAnalyzer::UpdateAllocated(const DeviceId& deviceId, const PoolType& poolType,
-                                     const int64_t& totalAllocated)
+void HealthAnalyzer::UpdateAllocated(const DeviceId& deviceId, const PoolType& poolType, const int64_t& totalAllocated)
 {
     // 当step为0和1时，allocated尚未稳定不进行更新
     if (stepTracker_.GetCurrentStep(deviceId) <= skipSteps_)

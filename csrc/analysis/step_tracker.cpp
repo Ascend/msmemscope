@@ -84,10 +84,9 @@ bool StepTracker::HandleMstxRangeStart(const std::shared_ptr<MstxEvent>& mstxEve
     // 事件可能乱序到达（同device多stream），按(timestamp, eventId)字典序升序插入，
     // 保证GetAllocStep"边界有序+break"语义的正确性
     StepBoundary boundary{stepId, mstxEvent->timestamp, mstxEvent->id, mstxEvent->rangeId};
-    auto pos = std::lower_bound(state.boundaries.begin(), state.boundaries.end(), boundary,
-                                [](const StepBoundary& lhs, const StepBoundary& rhs) {
-                                    return std::tie(lhs.timestamp, lhs.eventId) < std::tie(rhs.timestamp, rhs.eventId);
-                                });
+    auto pos = std::lower_bound(
+        state.boundaries.begin(), state.boundaries.end(), boundary, [](const StepBoundary& lhs, const StepBoundary& rhs)
+        { return std::tie(lhs.timestamp, lhs.eventId) < std::tie(rhs.timestamp, rhs.eventId); });
     state.boundaries.insert(pos, boundary);
     if (onStepStart_)
     {
@@ -150,10 +149,9 @@ bool StepTracker::HandlePyStep(const std::shared_ptr<EventBase>& event)
     // 处理(step+1)的开始（与MSTX路径一致，按(timestamp, eventId)升序插入）
     auto& state = deviceStates_[deviceId];
     StepBoundary boundary{stepId + 1, event->timestamp, event->id, 0};
-    auto pos = std::lower_bound(state.boundaries.begin(), state.boundaries.end(), boundary,
-                                [](const StepBoundary& lhs, const StepBoundary& rhs) {
-                                    return std::tie(lhs.timestamp, lhs.eventId) < std::tie(rhs.timestamp, rhs.eventId);
-                                });
+    auto pos = std::lower_bound(
+        state.boundaries.begin(), state.boundaries.end(), boundary, [](const StepBoundary& lhs, const StepBoundary& rhs)
+        { return std::tie(lhs.timestamp, lhs.eventId) < std::tie(rhs.timestamp, rhs.eventId); });
     state.boundaries.insert(pos, boundary);
     if (onStepStart_)
     {

@@ -178,7 +178,7 @@ class MemoryStateManager : StateManager
     MemoryState* FindStateInPool(const PoolType& poolType, const MemoryStateKey& key, uint64_t size);
     ~MemoryStateManager() override;
     std::unordered_map<PoolType, Pool> poolsMap_;
-    mutable std::mutex mtx_;  // QueryLiveBlocks 等 const 成员函数需加锁
+    mutable std::mutex mtx_;          // QueryLiveBlocks 等 const 成员函数需加锁
     uint64_t lastStopTimestamp_ = 0;  // 最后一次TRACE_STOP的时间戳，0表示无效
 };
 
