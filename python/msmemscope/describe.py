@@ -47,7 +47,7 @@ def undescribe_label(label: str, level: int) -> None:
 
 def describe_addr(addr: int, labels: list) -> None:
     """
-    内部接口: 地址直标(一次携带多级标签), labels 为 [(level:int, label:str), ...]。
+    内部接口: 地址直标(一次携带多级标签), labels 为 [(label:str, level:int), ...]。
     直接更新目标内存块的 owner, 同级别重复时以地址标签为准。
     """
     _describer.describe_addr(addr, labels)
@@ -64,7 +64,7 @@ class Describe:
                 address = obj
             else:
                 address = self._get_address(obj)
-            _describer.describe_addr(address, [(USER_DEFINED_1, owner)])
+            _describer.describe_addr(address, [(owner, USER_DEFINED_1)])
             return None
         else:
             return DescribeContext(owner)
