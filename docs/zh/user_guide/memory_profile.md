@@ -38,9 +38,9 @@ msMemScope工具的安装，请参见《[msMemScope工具安装指南](../instal
     source msmemscope --load-api-env
     ```
 
-    > [!NOTE]
+    > [!WARNING]
     >
-    > 当使用完毕msMemScope工具后，请及时使用命令`source msmemscope --unload-api-env`清除该环境变量。该命令仅移除msMemScope相关的条目，不会影响其他工具的配置。
+    > 当使用完毕msMemScope工具后，请及时使用命令`source msmemscope --unload-api-env`清除该环境变量，避免与后续操作产生冲突。若未及时清除该环境变量，后续执行set_env类操作，或手动设置`LD_PRELOAD`、`LD_LIBRARY_PATH`等LD类环境变量时，可能产生不可预知的错误。
 
     **表 1**  参数说明<a id="参数说明"></a>
 
