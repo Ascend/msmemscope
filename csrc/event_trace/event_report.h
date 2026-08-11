@@ -23,7 +23,7 @@
 #include <mutex>
 #include <string>
 #include <thread>
-#include <unordered_set>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -113,7 +113,9 @@ class EventReport
     MstxStepInfo stepInfo_;
     std::mutex mutex_;
 
-    std::unordered_set<uint64_t> halPtrs_;
+    // 已分配的HAL块地址 → 分配时device映射：FREE事件据此过滤未注册地址，
+    // 并回填device（分配时语义，与MALLOC事件flag解析同源），保证FREE事件能按key(pid, device, addr)定位
+    std::unordered_map<uint64_t, int32_t> halPtrs_;
     std::atomic<bool> destroyed_{false};
 };
 

@@ -57,7 +57,7 @@ static void HandleShadowEvent(std::shared_ptr<EventBase> event, MemoryState* sta
     if (state->shadowState == ShadowState::SHADOW_CREATED)
     {
         // 影子分配 + 影子释放 = 直接消亡，不留痕迹
-        MemoryStateManager::GetInstance().DeteleState(event->poolType, MemoryStateKey{event->pid, event->addr});
+        MemoryStateManager::GetInstance().DeteleState(event->poolType, MemoryStateKey{event->pid, event->device, event->addr});
     }
     else if (state->shadowState == ShadowState::NORMAL || state->shadowState == ShadowState::SHADOW_PROMOTED)
     {
@@ -120,8 +120,10 @@ static MemoryState* UpdateMemoryEventState(std::shared_ptr<EventBase> event)
     if (state == nullptr)
     {
         // 添加事件失败时，表明对应位置已存在事件，需先清空事件列表
+        // MALLOC冲突命中key(pid, device, addr)，memEvent->device即冲突块的device，供DeteleState定位
         std::shared_ptr<EventBase> cleanUpEvent = std::make_shared<CleanUpEvent>(
             EventSubType::RESIDUAL_BLOCK, memEvent->poolType, memEvent->pid, memEvent->addr);
+        cleanUpEvent->device = memEvent->device;
         EventHandler(cleanUpEvent);          // 最大递归深度为2，因为这里传入事件的类型为CLEAN_UP
         state = manager.AddEvent(memEvent);  // 再次尝试添加
     }
@@ -151,7 +153,7 @@ static MemoryState* HandleCleanUpEvent(std::shared_ptr<EventBase> event)
     if (state->shadowState == ShadowState::SHADOW_CREATED)
     {
         // 影子申请未转正 + CLEAN_UP → 直接消亡，不留痕迹
-        manager.DeteleState(event->poolType, MemoryStateKey{event->pid, event->addr});
+        manager.DeteleState(event->poolType, MemoryStateKey{event->pid, event->device, event->addr});
         return nullptr;  // 跳过dispatch和cleanup
     }
 
@@ -235,7 +237,7 @@ void CleanupMemoryState(std::shared_ptr<EventBase> event)
                 return;
             }
         }
-        MemoryStateManager::GetInstance().DeteleState(event->poolType, MemoryStateKey{event->pid, event->addr});
+        MemoryStateManager::GetInstance().DeteleState(event->poolType, MemoryStateKey{event->pid, event->device, event->addr});
     }
 }
 

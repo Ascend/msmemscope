@@ -71,7 +71,7 @@ inline std::string GetDateStr()
 
 // a + b
 template <typename T>
-T inline GetAddResult(T &a, T &b)
+T inline GetAddResult(const T &a, const T &b)
 {
     if ((b > 0 && a > std::numeric_limits<T>::max() - b) || (b < 0 && a < std::numeric_limits<T>::min() - b))
     {
