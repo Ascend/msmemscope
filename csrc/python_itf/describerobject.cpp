@@ -177,7 +177,7 @@ static PyObject *PyMemScopeUnDescribeLabel(PyObject *self, PyObject *args)
 }
 
 PyDoc_STRVAR(DescribeAddrDoc,
-             "describe_addr($self, addr, labels)\n--\n\nEnable debug. labels: [(level:int, label:str), ...]");
+             "describe_addr($self, addr, labels)\n--\n\nEnable debug. labels: [(label:str, level:int), ...]");
 static PyObject *PyMemScopeDescribeAddr(PyObject *self, PyObject *args)
 {
     PyObject *addrObj = nullptr;

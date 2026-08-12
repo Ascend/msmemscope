@@ -140,7 +140,7 @@ void ShowHelpInfo()
               << "  msmemscope --compare --input-path=./baseline,./target" << std::endl
               << std::endl
               << "Output:" << std::endl
-              << "  Results are written to <output-path> (default: ./memscopeDumpResults/dump/)." << std::endl;
+              << "  Results are written to <output-path> (default: ./memscopeDumpResults)." << std::endl;
 }
 
 void ShowVersion()

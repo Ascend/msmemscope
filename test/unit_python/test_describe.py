@@ -106,11 +106,11 @@ class TestUserInterface(unittest.TestCase):
 
     def test_addr_mark_defaults_user_defined_1(self):
         _mod.describer(0x2000, "my_tensor")
-        _describer_mock().describe_addr.assert_called_once_with(0x2000, [(_mod.USER_DEFINED_1, "my_tensor")])
+        _describer_mock().describe_addr.assert_called_once_with(0x2000, [("my_tensor", _mod.USER_DEFINED_1)])
 
     def test_int_addr_direct(self):
         _mod.describer(0x3000, "direct")
-        _describer_mock().describe_addr.assert_called_once_with(0x3000, [(_mod.USER_DEFINED_1, "direct")])
+        _describer_mock().describe_addr.assert_called_once_with(0x3000, [("direct", _mod.USER_DEFINED_1)])
 
 
 if __name__ == "__main__":
