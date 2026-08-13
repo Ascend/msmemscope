@@ -129,7 +129,7 @@ void Dump::DumpMemoryEvent(std::shared_ptr<MemoryEvent>& event, MemoryState* sta
         if (event->poolType == PoolType::HAL && event->device != DEVICE_ID_CPU)
         {
             // HAL事件（DEVICE空间）：本进程HAL维度使用量（used，MSM累计回填）
-            // + 本进程用量（process_used，本次aclrtGetMemInfo查询值；查询失败/未知时省略）
+            // + 本进程用量（process_used，本次dcmi_get_npu_proc_mem_info查询值；查询失败/未知时省略）
             // + 整卡用量（device_used，本次dcmi_get_device_hbm_info查询值；查询失败/未知时省略）
             attr += "used:" + std::to_string(event->used) + ",";
             if (event->processUsed >= 0)
@@ -156,7 +156,7 @@ void Dump::DumpMemoryEvent(std::shared_ptr<MemoryEvent>& event, MemoryState* sta
             attr += "total:" + std::to_string(event->total) + ",";  // 池总大小（totalReserved，键名/值不变）
             if (event->processUsed >= 0)
             {
-                attr += "process_used:" + std::to_string(event->processUsed) + ",";  // 本进程用量（最近一次aclrtGetMemInfo查询缓存值）
+                attr += "process_used:" + std::to_string(event->processUsed) + ",";  // 本进程用量（最近一次dcmi_get_npu_proc_mem_info查询缓存值）
             }
             if (event->deviceUsed >= 0)
             {

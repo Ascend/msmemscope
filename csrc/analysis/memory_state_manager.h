@@ -184,7 +184,7 @@ class MemoryStateManager : StateManager
     // 整卡用量缓存：EventReport 查询成功后写入（QueryDeviceUsed），池事件按设备读取（GetDeviceUsed）
     void UpdateDeviceUsedCache(int32_t devId, int64_t used);
     int64_t GetDeviceUsed(int32_t devId) const;  // 无缓存值/越界返回 -1
-    // 本进程用量缓存（aclrtGetMemInfo 查询值）：EventReport 查询成功后写入（QueryProcessUsed），
+    // 本进程用量缓存（dcmi_get_npu_proc_mem_info 查询值）：EventReport 查询成功后写入（QueryProcessUsed），
     // 池事件按设备读取（GetProcessUsed）
     void UpdateProcessUsedCache(int32_t devId, int64_t used);
     int64_t GetProcessUsed(int32_t devId) const;  // 无缓存值/越界返回 -1
@@ -206,7 +206,7 @@ class MemoryStateManager : StateManager
         cache.fill(-1);
         return cache;
     }();
-    // per-device 本进程用量缓存（aclrtGetMemInfo 查询值，初始 -1=未知）：同上
+    // per-device 本进程用量缓存（dcmi_get_npu_proc_mem_info 查询值，初始 -1=未知）：同上
     std::array<int64_t, 16> processUsedCache_ = []() {
         std::array<int64_t, 16> cache{};
         cache.fill(-1);

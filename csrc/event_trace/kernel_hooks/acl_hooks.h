@@ -52,6 +52,12 @@ struct dcmi_hbm_info {
     int temp;
     unsigned int bandwith_util_rate;
 };
+
+// 进程显存占用（与驱动 dcmi_interface_api.h 对齐；手动声明保持仓库自包含）
+struct dcmi_proc_mem_info {
+    int proc_id;                // 进程号（pid）
+    unsigned long proc_mem_usage;  // 该进程在设备上的显存占用（字节，内核 malloc+sharepool+alloc_page 累计）
+};
 }
 
 #ifdef __cplusplus
@@ -82,27 +88,11 @@ typedef enum aclrtMemcpyKind {
     ACL_MEMCPY_DEVICE_TO_DEVICE,
 } aclrtMemcpyKind;
 
-typedef enum aclrtMemAttr {
-    ACL_DDR_MEM,             // 大页内存+普通内存
-    ACL_HBM_MEM,             // 大页内存+普通内存
-    ACL_DDR_MEM_HUGE,        // 大页内存
-    ACL_DDR_MEM_NORMAL,      // 普通内存
-    ACL_HBM_MEM_HUGE,        // 大页内存，内存申请粒度为2M，不足2M的倍数，向上2M对齐
-    ACL_HBM_MEM_NORMAL,      // 普通内存
-    ACL_DDR_MEM_P2P_HUGE,    // 用于Device间数据复制的大页内存
-    ACL_DDR_MEM_P2P_NORMAL,  // 用于Device间数据复制的普通内存
-    ACL_HBM_MEM_P2P_HUGE,    // 用于Device间数据复制的大页内存，内存申请粒度为2M，不足2M的倍数，向上2M对齐
-    ACL_HBM_MEM_P2P_NORMAL,  // 用于Device间数据复制的普通内存
-    ACL_HBM_MEM_HUGE1G,      // 大页内存，内存申请粒度为1G，不足1G的倍数，向上1G对齐，当前版本不支持该选项
-    ACL_HBM_MEM_P2P_HUGE1G   // 用于Device间数据复制的大页内存，内存申请粒度为1G，不足1G的倍数，向上1G对齐，当前版本不支持该选项
-} aclrtMemAttr;
-
 ACL_FUNC_VISIBILITY aclError aclInit(const char *configPath);
 ACL_FUNC_VISIBILITY aclError aclFinalize();
 
 aclError aclrtMemcpy(void *dst, size_t destMax, const void *src, size_t count, aclrtMemcpyKind kind);
 aclError aclrtSynchronizeStream(aclrtStream stream);
-aclError aclrtGetMemInfo(aclrtMemAttr attr, size_t *free, size_t *total);
 
 #ifdef __cplusplus
 }

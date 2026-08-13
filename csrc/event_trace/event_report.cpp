@@ -53,6 +53,7 @@ using DcmiGetCardListFunc = int (*)(int*, int*, int);
 using DcmiGetDeviceNumInCardFunc = int (*)(int, int*);
 using DcmiGetDeviceLogicIdFunc = int (*)(int*, int, int);
 using DcmiGetHbmInfoFunc = int (*)(int, int, struct dcmi_hbm_info*);
+using DcmiProcMemInfoFunc = int (*)(int, int, struct dcmi_proc_mem_info*, int*);
 
 constexpr uint64_t MEM_MODULE_ID_BIT = 56;
 constexpr uint64_t MEM_VIRT_BIT = 10;
@@ -311,43 +312,66 @@ bool GetDeviceInfo::GetDeviceHbmInfo(int32_t devId, uint64_t& usedMb, uint64_t& 
     return true;
 }
 
-bool GetDeviceInfo::GetDeviceMemInfo(size_t& freeMem, size_t& totalMem)
+bool GetDeviceInfo::GetDeviceProcMemInfo(int32_t devId, uint64_t& usedBytes)
 {
-    using func = decltype(&aclrtGetMemInfo);
-    static auto vallina = VallinaSymbol<AclLibLoader>::Instance().Get<func>("aclrtGetMemInfo");
-    if (vallina == nullptr)
+    if (!EnsureDcmiInit() || !BuildDeviceMap())
     {
-        LOG_ERROR("Get aclrtGetMemInfo func ptr failed");
         return false;
     }
-
-    // 进入真实运行时调用窗口：aclrtGetMemInfo内部会做临时内存申请（halMemAlloc），
-    // 会被hook捕获并尝试上报（若此处位于事件上报路径内还会递归重入SendEvent），
-    // 抑制期间直接跳过上报，防止递归上报与幻影事件
-    EventReportSuppressor suppressor;
-    int ret = vallina(ACL_HBM_MEM, &freeMem, &totalMem);
-    if (ret != ACL_SUCCESS)
+    auto it = devIdToDcmiMap_.find(devId);
+    if (it == devIdToDcmiMap_.end())
     {
-        LOG_ERROR("Get device mem info failed, ret is %d", ret);
+        // 未在设备映射中的逻辑号（如 HOST 设备 DEVICE_ID_CPU）无进程占用可查
+        LOG_DEBUG("devId %d not in dcmi device map", devId);
         return false;
     }
-    return true;
+    static auto getProcMemInfo =
+        VallinaSymbol<DcmiLibLoader>::Instance().Get<DcmiProcMemInfoFunc>("dcmi_get_npu_proc_mem_info");
+    if (getProcMemInfo == nullptr)
+    {
+        LOG_ERROR("Get dcmi_get_npu_proc_mem_info func ptr failed");
+        return false;
+    }
+    // 驱动按 DCMI_MAX_PROC_NUM_IN_DEVICE(64) 枚举该卡进程列表，输出数组需预留同等容量
+    struct dcmi_proc_mem_info procInfo[64]{};
+    int procNum = 0;
+    {
+        // 驱动查询内部可能有临时内存申请，抑制期间跳过上报，防止递归上报与幻影事件
+        EventReportSuppressor suppressor;
+        if (getProcMemInfo(it->second.first, it->second.second, procInfo, &procNum) != DCMI_OK)
+        {
+            LOG_ERROR("dcmi_get_npu_proc_mem_info failed, devId %d", devId);
+            return false;
+        }
+    }
+    // 进程列表按 pid 过滤本进程：proc_mem_usage 即 npu-smi Process memory 同源值（字节）
+    const uint64_t selfPid = Utility::GetPid();
+    for (int i = 0; i < procNum; i++)
+    {
+        if (static_cast<uint64_t>(procInfo[i].proc_id) == selfPid)
+        {
+            usedBytes = static_cast<uint64_t>(procInfo[i].proc_mem_usage);
+            return true;
+        }
+    }
+    // 本进程在该卡无显存占用记录（未申请过内存/已退出），按查询失败处理
+    LOG_DEBUG("pid %llu not in device %d proc mem list", static_cast<unsigned long long>(selfPid), devId);
+    return false;
 }
 
 int64_t EventReport::QueryProcessUsed(int32_t devId)
 {
-    size_t freeMem = 0;
-    size_t totalMem = 0;
-    if (!GetDeviceInfo::Instance().GetDeviceMemInfo(freeMem, totalMem))
+    uint64_t usedBytes = 0;
+    if (!GetDeviceInfo::Instance().GetDeviceProcMemInfo(devId, usedBytes))
     {
         // 查询失败：不更新缓存（保留最近一次成功值），限频告警一次后静默
         if (!processUsedQueryWarned_.exchange(true))
         {
-            LOG_WARN("Query device mem info failed, process_used will be -1");
+            LOG_WARN("Query device proc mem info failed, process_used will be -1");
         }
         return -1;
     }
-    int64_t used = static_cast<int64_t>(totalMem - freeMem);
+    int64_t used = static_cast<int64_t>(usedBytes);
     // 缓存数据在 MemoryStateManager（槽位与事件 device 同源，与 QueryDeviceUsed 一致），
     // EventReport 仅负责查询动作
     MemoryStateManager::GetInstance().UpdateProcessUsedCache(devId, used);

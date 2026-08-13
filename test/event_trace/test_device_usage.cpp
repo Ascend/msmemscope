@@ -116,7 +116,7 @@ TEST_F(DeviceUsageTest, query_failed_returns_negative_one)
     EXPECT_TRUE(report.deviceUsedQueryWarned_);  // 首次失败告警
     // 连续失败：仍返回 -1（告警已限频，不重复输出）
     EXPECT_EQ(report.QueryDeviceUsed(DEVICE_ID_CPU), -1);
-    // 本进程用量查询同样失败（DEVICE_ID_CPU 无 ACL 设备上下文）：-1、不写缓存、限频告警
+    // 本进程用量查询同样失败（DEVICE_ID_CPU 不在 dcmi 设备映射）：-1、不写缓存、限频告警
     EXPECT_EQ(report.QueryProcessUsed(DEVICE_ID_CPU), -1);
     EXPECT_EQ(MemoryStateManager::GetInstance().processUsedCache_[0], -1);
     EXPECT_TRUE(report.processUsedQueryWarned_);

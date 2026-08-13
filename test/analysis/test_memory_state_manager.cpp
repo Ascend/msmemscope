@@ -411,7 +411,7 @@ TEST_F(MemoryStateManagerTest, pool_events_preserve_used_total_and_fill_process_
 {
     auto pool = CreatePoolEvent(EventBaseType::MALLOC, 0x2000, 0, 1024, 512, 2048, PoolType::PTA_CACHING);
     pool->deviceUsed = 42;    // 报告层预置值，统计累计不得改写
-    pool->processUsed = 300;  // 报告层预置值（aclrtGetMemInfo 查询缓存），统计累计不得改写
+    pool->processUsed = 300;  // 报告层预置值（dcmi_get_npu_proc_mem_info 查询缓存），统计累计不得改写
     Handle(pool);
     EXPECT_EQ(pool->used, 512);  // 未动
     EXPECT_EQ(pool->total, 2048);  // 未动

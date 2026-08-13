@@ -109,9 +109,10 @@ class EventReport
     // MemoryStateManager（槽位与事件 device 同源：HAL 事件 flag 解析/池事件 TransDeviceId
     // 均归一为物理卡号）；HOST（DEVICE_ID_CPU）/无效（GD_INVALID_NUM）devId 不写缓存
     int64_t QueryDeviceUsed(int32_t devId);
-    // 查询本进程显存用量（aclrtGetMemInfo(ACL_HBM_MEM) 的 total - free，ACL 池视角，
-    // 与 npu-smi Process memory 对齐；内部已有 EventReportSuppressor 防递归上报）；
-    // 失败返回 -1（不更新缓存，限频告警一次），缓存机制与 QueryDeviceUsed 一致
+    // 查询本进程在该设备上的显存占用（dcmi_get_npu_proc_mem_info 按 (card_id, device_id)
+    // 查该卡所有进程列表后按本进程 pid 过滤，与 npu-smi Process memory 同源；内部已有
+    // EventReportSuppressor 防递归上报）；失败返回 -1（不更新缓存，限频告警一次），
+    // 缓存机制与 QueryDeviceUsed 一致
     int64_t QueryProcessUsed(int32_t devId);
 
    private:
@@ -142,8 +143,9 @@ class GetDeviceInfo
     // 查询设备 HBM 用量（dcmi_get_device_hbm_info，与 npu-smi 同源，单位 MB 转出）；
     // 成功返回 true 并填写 usedMb/totalMb，失败（未 init/未建表/查询失败）返回 false
     bool GetDeviceHbmInfo(int32_t devId, uint64_t& usedMb, uint64_t& totalMb);
-    // 查询当前设备上下文的 ACL 池显存信息（aclrtGetMemInfo(ACL_HBM_MEM)，字节单位）
-    bool GetDeviceMemInfo(size_t& freeMem, size_t& totalMem);
+    // 查询本进程在该设备上的显存占用（dcmi_get_npu_proc_mem_info，按 pid 过滤本进程，字节单位）
+    // 成功返回 true 并填写 usedBytes；失败（未 init/未建表/本进程不在该卡进程列表）返回 false
+    bool GetDeviceProcMemInfo(int32_t devId, uint64_t& usedBytes);
 
    private:
     // dcmi_init 一次性初始化（失败则本进程内永久降级，不再重试）

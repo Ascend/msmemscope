@@ -225,7 +225,7 @@ void MemoryStateManager::UpdateUsage(const std::shared_ptr<MemoryEvent>& event)
         event->processUsed = static_cast<int64_t>(Utility::GetProcessVmRss());
     }
     // 池事件：used/total/processUsed 均不动——used/total 报告时已填（HealthAnalyzer 依赖），
-    // processUsed 由报告层按设备读 aclrtGetMemInfo 查询缓存（QueryProcessUsed 写入）填值
+    // processUsed 由报告层按设备读 dcmi_get_npu_proc_mem_info 查询缓存（QueryProcessUsed 写入）填值
 }
 
 void MemoryStateManager::ResetUsageBaseline()
