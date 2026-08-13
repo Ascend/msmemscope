@@ -11,6 +11,8 @@
   <br><br>
 </div>
 
+[简体中文](./README.md) | English
+
 ## 📢 What's New
 
 - **[2026.2.02]** 🎉 **MindStudio MemScope 26.0.0-alpha.1 launched!** It supports data collection via Python APIs, memory snapshot collection in the PyTorch framework, identification of memory page table attributes and flushing, and new memory allocation API of the driver.

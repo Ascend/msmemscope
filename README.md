@@ -11,6 +11,8 @@
   <br><br>
 </div>
 
+[English](./README_EN.md) | 简体中文
+
 ## 📢 最新消息
 
 - **[2026.2.02]** 🎉 **MindStudio Memscope 26.0.0-alpha.1版本上线！** 支持**Python API采集**方式使用、支持PyTorch框架下**采集内存快照**、支持**识别显存页表属性**并进行落盘、支持获取Driver新增的显存分配接口。
