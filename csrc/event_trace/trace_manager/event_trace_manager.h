@@ -84,7 +84,7 @@ enum class TraceMode : uint8_t
 
 TraceMode DetermineTraceMode();
 
-// 事件上报抑制机制：仪器自身调用真实运行时接口（如aclrtGetMemInfo）期间，
+// 事件上报抑制机制：仪器自身调用真实运行时接口（如dcmi_get_device_hbm_info）期间，
 // 运行时内部的内存申请会被hook捕获并尝试上报，形成递归上报/幻影事件。
 // 检查点为DetermineTraceMode（所有内存事件上报的咽喉），置位窗口见EventReportSuppressor
 bool IsEventReportSuppressed();

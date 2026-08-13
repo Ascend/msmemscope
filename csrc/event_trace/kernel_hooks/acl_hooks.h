@@ -35,6 +35,23 @@ struct AclLibLoader {
         return LibLoad("libascendcl.so");
     }
 };
+
+// DCMI 设备管理库加载器：libdcmi.so 由 LD_LIBRARY_PATH 提供（driver lib64），直接 dlopen
+struct DcmiLibLoader {
+    static void *Load(void)
+    {
+        return dlopen("libdcmi.so", RTLD_NOW | RTLD_GLOBAL);
+    }
+};
+
+// DCMI HBM 信息（与驱动 dcmi_interface_api.h 对齐，单位 MB；手动声明保持仓库自包含）
+struct dcmi_hbm_info {
+    unsigned long long memory_size;   // HBM 总容量（MB）
+    unsigned int freq;
+    unsigned long long memory_usage;  // HBM 已使用（MB）
+    int temp;
+    unsigned int bandwith_util_rate;
+};
 }
 
 #ifdef __cplusplus

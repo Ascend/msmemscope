@@ -120,18 +120,49 @@ void Dump::DumpMemoryEvent(std::shared_ptr<MemoryEvent>& event, MemoryState* sta
     attr += "allocation_id:" + std::to_string(state->allocationId) + ",";
     attr += "addr:" + Uint64ToHexString(event->addr) + ",";
     attr += "size:" + std::to_string(event->size) + ",";
-    // 合成事件（影子转正/虚拟释放）没有total/used信息，跳过
-    if (!event->isShadowEvent && event->eventType != EventBaseType::ACCESS && event->eventSubType != EventSubType::HAL)
+    // 统计键按事件类别输出（值<0 表示无统计值，对应字段直接省略）：
+    // 合成事件（影子转正/虚拟释放）isShadowEvent=true，无事件时刻的累计/查询语义，不输出统计键
+    // HOST内存事件在事件模型上属于HAL池（poolType=HAL、eventSubType=HOST_PINNED、device=DEVICE_ID_CPU），
+    // 故HAL池内按device区分DEVICE空间与HOST_PINNED，而非依赖PoolType::HOST（无使用者）
+    if (!event->isShadowEvent && event->eventType != EventBaseType::ACCESS)
     {
-        if (event->eventSubType != EventSubType::HOST_PINNED)
+        if (event->poolType == PoolType::HAL && event->device != DEVICE_ID_CPU)
         {
-            attr += "total:" + std::to_string(event->total) + ",";
+            // HAL事件（DEVICE空间）：本进程HAL维度使用量（used，MSM累计回填）
+            // + 本进程用量（process_used，本次aclrtGetMemInfo查询值；查询失败/未知时省略）
+            // + 整卡用量（device_used，本次dcmi_get_device_hbm_info查询值；查询失败/未知时省略）
+            attr += "used:" + std::to_string(event->used) + ",";
+            if (event->processUsed >= 0)
+            {
+                attr += "process_used:" + std::to_string(event->processUsed) + ",";
+            }
+            if (event->deviceUsed >= 0)
+            {
+                attr += "device_used:" + std::to_string(event->deviceUsed) + ",";
+            }
         }
-        else
+        else if (event->poolType == PoolType::HAL && event->device == DEVICE_ID_CPU)  // HOST_PINNED
         {
             attr += "pinned:true,";
+            attr += "used:" + std::to_string(event->used) + ",";  // host块活跃累计（原VmRSS语义迁移至process_used）
+            if (event->processUsed >= 0)
+            {
+                attr += "process_used:" + std::to_string(event->processUsed) + ",";  // 进程VmRSS
+            }
         }
-        attr += "used:" + std::to_string(event->used) + ",";
+        else if (IsMemoryPool(event->poolType))  // PTA_CACHING/PTA_WORKSPACE/ATB/MINDSPORE
+        {
+            attr += "used:" + std::to_string(event->used) + ",";  // 池内已分配（totalAllocated，报告时已填）
+            attr += "total:" + std::to_string(event->total) + ",";  // 池总大小（totalReserved，键名/值不变）
+            if (event->processUsed >= 0)
+            {
+                attr += "process_used:" + std::to_string(event->processUsed) + ",";  // 本进程用量（最近一次aclrtGetMemInfo查询缓存值）
+            }
+            if (event->deviceUsed >= 0)
+            {
+                attr += "device_used:" + std::to_string(event->deviceUsed) + ",";  // 整卡用量（最近一次HAL查询缓存值）
+            }
+        }
     }
 
     if (event->isShadowEvent)
@@ -213,11 +244,15 @@ void Dump::DumpSystemEvent(std::shared_ptr<SystemEvent>& event)
     // 在开始采集数据之前，落盘一次设备显存信息供可视化
     if (event->eventSubType == EventSubType::TRACE_START)
     {
-        size_t freeMem = 0;
-        size_t totalMem = 0;
-        if (GetDeviceInfo::Instance().GetDeviceMemInfo(freeMem, totalMem))
+        // dcmi 数据源（与事件 device_used 同源）；SystemEvent 无设备维度，记录 0 号设备
+        uint64_t usedMb = 0;
+        uint64_t totalMb = 0;
+        if (GetDeviceInfo::Instance().GetDeviceHbmInfo(0, usedMb, totalMb))
         {
-            std::string attr = "free:" + std::to_string(freeMem) + ",total:" + std::to_string(totalMem);
+            // 保持 free/total 键语义：free = total - used，字节单位
+            uint64_t freeBytes = (totalMb - usedMb) * 1024 * 1024;
+            uint64_t totalBytes = totalMb * 1024 * 1024;
+            std::string attr = "free:" + std::to_string(freeBytes) + ",total:" + std::to_string(totalBytes);
             event->attr = "\"{" + attr + "}\"";
         }
     }

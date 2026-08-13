@@ -32,6 +32,14 @@ enum class PoolType : uint8_t {
     INVALID,
 };
 
+// 内存池（PTA/ATB/MindSpore）判断：池事件有 used/total 语义（报告时已填 totalAllocated/totalReserved），
+// 与 HAL/HOST 区分（dump 统计键映射依赖）
+inline bool IsMemoryPool(PoolType type)
+{
+    return type == PoolType::PTA_CACHING || type == PoolType::PTA_WORKSPACE || type == PoolType::ATB ||
+           type == PoolType::MINDSPORE;
+}
+
 class StateKey {
 public:
     virtual ~StateKey() {};
