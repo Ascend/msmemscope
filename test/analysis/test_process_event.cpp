@@ -141,6 +141,9 @@ protected:
         ClearDescribeState();
         // 初始化单例类的参数
         ResetSingleton();
+        // 清理统计累计的跨用例残留，保证attr断言的统计键值确定
+        MemoryStateManager::GetInstance().halUsed_.clear();
+        MemoryStateManager::GetInstance().hostUsed_ = 0;
 
         // 设置dumpEventType包含所有事件类型，使ShouldDumpEvent允许所有事件落盘
         {
@@ -184,6 +187,8 @@ protected:
         ConfigManager::Instance().SetConfig(Config{});
         Dump::GetInstance().handlerMap_.clear();
         Dump::GetInstance().sharedEventLists_.clear();
+        MemoryStateManager::GetInstance().halUsed_.clear();
+        MemoryStateManager::GetInstance().hostUsed_ = 0;
         std::unordered_map<std::string, std::shared_ptr<EventBase>>().swap(eventMap);
         Utility::FileCreateManager::GetInstance("./testmsmemscope").SetProjectDir("");
         MemoryStateManager::GetInstance().poolsMap_.clear();
@@ -750,8 +755,8 @@ TEST_F(TestProcess, process_hal_device_memory_event)
  
     std::string result = "ID,Event,Event Type,Name,Timestamp(ns),Process Id,Thread Id,Device Id,Ptr,Attr"
 ",Call Stack(Python),Call Stack(C)\n"
-"3,MALLOC,HAL,N/A,3,123,1234,0,0x0000000000003039,\"{allocation_id:1,addr:0x0000000000003039,size:10,page_type:normal,alloc_type:create}\",,\n"
-"54,FREE,HAL,N/A,54,123,1234,0,0x0000000000003039,\"{allocation_id:1,addr:0x0000000000003039,size:10}\",,\n";
+"3,MALLOC,HAL,N/A,3,123,1234,0,0x0000000000003039,\"{allocation_id:1,addr:0x0000000000003039,size:10,used:10,page_type:normal,alloc_type:create}\",,\n"
+"54,FREE,HAL,N/A,54,123,1234,0,0x0000000000003039,\"{allocation_id:1,addr:0x0000000000003039,size:10,used:0}\",,\n";
     std::string fileContent;
     Dump::GetInstance().handlerMap_[testdDevId].reset();
     bool hasReadFile = ReadFile(path, fileContent);
@@ -777,10 +782,10 @@ TEST_F(TestProcess, process_pta_caching_memory_event)
  
     std::string result = "ID,Event,Event Type,Name,Timestamp(ns),Process Id,Thread Id,Device Id,Ptr,Attr"
 ",Call Stack(Python),Call Stack(C)\n"
-"3,MALLOC,PTA,N/A,3,123,1234,0,0x0000000000003039,\"{allocation_id:1,addr:0x0000000000003039,size:10,total:10,used:10}\",,\n"
+"3,MALLOC,PTA,N/A,3,123,1234,0,0x0000000000003039,\"{allocation_id:1,addr:0x0000000000003039,size:10,used:10,total:10}\",,\n"
 "13,ACCESS,UNKNOWN,aten.add,13,123,1234,0,0x0000000000003039,\"{allocation_id:1,addr:0x0000000000003039,size:10,type:PTA,"
 "dtype:torch.float16,shape:torch.Size([1,5])}\",,\n"
-"54,FREE,PTA,N/A,54,123,1234,0,0x0000000000003039,\"{allocation_id:1,addr:0x0000000000003039,size:10,total:0,used:0}\",,\n";
+"54,FREE,PTA,N/A,54,123,1234,0,0x0000000000003039,\"{allocation_id:1,addr:0x0000000000003039,size:10,used:0,total:0}\",,\n";
     std::string fileContent;
     Dump::GetInstance().handlerMap_[testdDevId].reset();
     bool hasReadFile = ReadFile(path, fileContent);
@@ -803,8 +808,8 @@ TEST_F(TestProcess, process_pta_workspace_memory_event)
  
     std::string result = "ID,Event,Event Type,Name,Timestamp(ns),Process Id,Thread Id,Device Id,Ptr,Attr"
 ",Call Stack(Python),Call Stack(C)\n"
-"3,MALLOC,PTA,N/A,3,123,1234,0,0x0000000000003039,\"{allocation_id:1,addr:0x0000000000003039,size:10,total:10,used:10}\",,\n"
-"54,FREE,PTA,N/A,54,123,1234,0,0x0000000000003039,\"{allocation_id:1,addr:0x0000000000003039,size:10,total:0,used:0}\",,\n";
+"3,MALLOC,PTA,N/A,3,123,1234,0,0x0000000000003039,\"{allocation_id:1,addr:0x0000000000003039,size:10,used:10,total:10}\",,\n"
+"54,FREE,PTA,N/A,54,123,1234,0,0x0000000000003039,\"{allocation_id:1,addr:0x0000000000003039,size:10,used:0,total:0}\",,\n";
     std::string fileContent;
     Dump::GetInstance().handlerMap_[testdDevId].reset();
     bool hasReadFile = ReadFile(path, fileContent);
@@ -836,10 +841,10 @@ TEST_F(TestProcess, process_atb_memory_event)
  
     std::string result = "ID,Event,Event Type,Name,Timestamp(ns),Process Id,Thread Id,Device Id,Ptr,Attr"
 ",Call Stack(Python),Call Stack(C)\n"
-"3,MALLOC,ATB,N/A,3,123,1234,0,0x0000000000003039,\"{allocation_id:1,addr:0x0000000000003039,size:10,total:10,used:10}\",,\n"
+"3,MALLOC,ATB,N/A,3,123,1234,0,0x0000000000003039,\"{allocation_id:1,addr:0x0000000000003039,size:10,used:10,total:10}\",,\n"
 "14,ACCESS,UNKNOWN,addOperation,14,123,1234,0,0x000000000000303e,\"{allocation_id:1,addr:0x000000000000303e,size:5,type:ATB,"
 "dtype:FLOAT,format:NZD,shape:[1,5,]}\",,\n"
-"54,FREE,ATB,N/A,54,123,1234,0,0x0000000000003039,\"{allocation_id:1,addr:0x0000000000003039,size:10,total:0,used:0}\",,\n"
+"54,FREE,ATB,N/A,54,123,1234,0,0x0000000000003039,\"{allocation_id:1,addr:0x0000000000003039,size:10,used:0,total:0}\",,\n"
 "15,ACCESS,UNKNOWN,addOperation,14,1234,1234,0,0x000000000000303e,\"{allocation_id:2,addr:0x000000000000303e,size:5,type:ATB,"
 "dtype:FLOAT,format:NZD,shape:[1,5,]}\",,\n";
     std::string fileContent;
@@ -864,8 +869,8 @@ TEST_F(TestProcess, process_mindspore_memory_event)
  
     std::string result = "ID,Event,Event Type,Name,Timestamp(ns),Process Id,Thread Id,Device Id,Ptr,Attr"
     ",Call Stack(Python),Call Stack(C)\n"
-"3,MALLOC,MINDSPORE,N/A,3,123,1234,0,0x0000000000003039,\"{allocation_id:1,addr:0x0000000000003039,size:10,total:10,used:10}\",,\n"
-"54,FREE,MINDSPORE,N/A,54,123,1234,0,0x0000000000003039,\"{allocation_id:1,addr:0x0000000000003039,size:10,total:0,used:0}\",,\n";
+"3,MALLOC,MINDSPORE,N/A,3,123,1234,0,0x0000000000003039,\"{allocation_id:1,addr:0x0000000000003039,size:10,used:10,total:10}\",,\n"
+"54,FREE,MINDSPORE,N/A,54,123,1234,0,0x0000000000003039,\"{allocation_id:1,addr:0x0000000000003039,size:10,used:0,total:0}\",,\n";
     std::string fileContent;
     Dump::GetInstance().handlerMap_[testdDevId].reset();
     bool hasReadFile = ReadFile(path, fileContent);
@@ -1025,7 +1030,7 @@ TEST_F(TestProcess, process_clean_up_event)
  
     std::string result = "ID,Event,Event Type,Name,Timestamp(ns),Process Id,Thread Id,Device Id,Ptr,Attr"
 ",Call Stack(Python),Call Stack(C)\n"
-"3,MALLOC,PTA,N/A,3,123,1234,0,0x0000000000003039,\"{allocation_id:1,addr:0x0000000000003039,size:10,total:10,used:10}\",,\n"
+"3,MALLOC,PTA,N/A,3,123,1234,0,0x0000000000003039,\"{allocation_id:1,addr:0x0000000000003039,size:10,used:10,total:10}\",,\n"
 "13,ACCESS,UNKNOWN,aten.add,13,123,1234,0,0x0000000000003039,\"{allocation_id:1,addr:0x0000000000003039,size:10,type:PTA,"
 "dtype:torch.float16,shape:torch.Size([1,5])}\",,\n";
     std::string fileContent;
@@ -1054,8 +1059,8 @@ TEST_F(TestProcess, dump_event_before_malloc)
  
     std::string result = "ID,Event,Event Type,Name,Timestamp(ns),Process Id,Thread Id,Device Id,Ptr,Attr"
 ",Call Stack(Python),Call Stack(C)\n"
-"0,MALLOC,HAL,N/A,0,123,1234,0,0x0000000000003039,\"{allocation_id:1,addr:0x0000000000003039,size:10,page_type:normal,alloc_type:create}\",,\n"
-"3,MALLOC,HAL,N/A,3,123,1234,0,0x0000000000003039,\"{allocation_id:2,addr:0x0000000000003039,size:10,page_type:normal,alloc_type:create}\",,\n";
+"0,MALLOC,HAL,N/A,0,123,1234,0,0x0000000000003039,\"{allocation_id:1,addr:0x0000000000003039,size:10,used:10,page_type:normal,alloc_type:create}\",,\n"
+"3,MALLOC,HAL,N/A,3,123,1234,0,0x0000000000003039,\"{allocation_id:2,addr:0x0000000000003039,size:10,used:20,page_type:normal,alloc_type:create}\",,\n";
     std::string fileContent;
     Dump::GetInstance().handlerMap_[testdDevId].reset();
     bool hasReadFile = ReadFile(path, fileContent);
@@ -1085,9 +1090,9 @@ TEST_F(TestProcess, dump_two_malloc_event)
  
     std::string result = "ID,Event,Event Type,Name,Timestamp(ns),Process Id,Thread Id,Device Id,Ptr,Attr"
 ",Call Stack(Python),Call Stack(C)\n"
-"3,MALLOC,HAL,N/A,3,123,1234,0,0x0000000000003039,\"{allocation_id:1,addr:0x0000000000003039,size:10,page_type:normal,alloc_type:create}\",,\n"
-"54,FREE,HAL,N/A,54,123,1234,0,0x0000000000003039,\"{allocation_id:1,addr:0x0000000000003039,size:10}\",,\n"
-"0,MALLOC,HAL,N/A,0,123,1234,0,0x0000000000003039,\"{allocation_id:2,addr:0x0000000000003039,size:10,page_type:normal,alloc_type:create}\",,\n";
+"3,MALLOC,HAL,N/A,3,123,1234,0,0x0000000000003039,\"{allocation_id:1,addr:0x0000000000003039,size:10,used:10,page_type:normal,alloc_type:create}\",,\n"
+"54,FREE,HAL,N/A,54,123,1234,0,0x0000000000003039,\"{allocation_id:1,addr:0x0000000000003039,size:10,used:0}\",,\n"
+"0,MALLOC,HAL,N/A,0,123,1234,0,0x0000000000003039,\"{allocation_id:2,addr:0x0000000000003039,size:10,used:10,page_type:normal,alloc_type:create}\",,\n";
     std::string fileContent;
     Dump::GetInstance().handlerMap_[testdDevId].reset();
     bool hasReadFile = ReadFile(path, fileContent);
@@ -1140,11 +1145,11 @@ TEST_F(TestProcess, process_memory_owner_event)
  
     std::string result = "ID,Event,Event Type,Name,Timestamp(ns),Process Id,Thread Id,Device Id,Ptr,Attr"
 ",Call Stack(Python),Call Stack(C)\n"
-"3,MALLOC,PTA,N/A,3,123,1234,0,0x0000000000003039,\"{allocation_id:1,addr:0x0000000000003039,size:10,total:10,used:10,"
+"3,MALLOC,PTA,N/A,3,123,1234,0,0x0000000000003039,\"{allocation_id:1,addr:0x0000000000003039,size:10,used:10,total:10,"
 "owner:PTA@gradient@ops@memscope}\",,\n"
 "13,ACCESS,UNKNOWN,aten.add,13,123,1234,0,0x0000000000003039,\"{allocation_id:1,addr:0x0000000000003039,size:10,type:PTA,"
 "dtype:torch.float16,shape:torch.Size([1,5])}\",,\n"
-"54,FREE,PTA,N/A,54,123,1234,0,0x0000000000003039,\"{allocation_id:1,addr:0x0000000000003039,size:10,total:0,used:0}\",,\n";
+"54,FREE,PTA,N/A,54,123,1234,0,0x0000000000003039,\"{allocation_id:1,addr:0x0000000000003039,size:10,used:0,total:0}\",,\n";
     std::string fileContent;
     Dump::GetInstance().handlerMap_[testdDevId].reset();
     bool hasReadFile = ReadFile(path, fileContent);
@@ -1174,9 +1179,9 @@ TEST_F(TestProcess, process_memory_owner_event_in_torch_step)
  
     std::string result = "ID,Event,Event Type,Name,Timestamp(ns),Process Id,Thread Id,Device Id,Ptr,Attr"
 ",Call Stack(Python),Call Stack(C)\n"
-"3,MALLOC,PTA,N/A,3,123,1234,0,0x0000000000003039,\"{allocation_id:1,addr:0x0000000000003039,size:10,total:10,used:10,"
+"3,MALLOC,PTA,N/A,3,123,1234,0,0x0000000000003039,\"{allocation_id:1,addr:0x0000000000003039,size:10,used:10,total:10,"
 "owner:PTA@gradient}\",,\n"
-"54,FREE,PTA,N/A,54,123,1234,0,0x0000000000003039,\"{allocation_id:1,addr:0x0000000000003039,size:10,total:0,used:0}\",,\n";
+"54,FREE,PTA,N/A,54,123,1234,0,0x0000000000003039,\"{allocation_id:1,addr:0x0000000000003039,size:10,used:0,total:0}\",,\n";
     std::string fileContent;
     Dump::GetInstance().handlerMap_[testdDevId].reset();
     bool hasReadFile = ReadFile(path, fileContent);
@@ -1209,7 +1214,7 @@ TEST_F(TestProcess, process_memory_owner_event_without_malloc)
 ",Call Stack(Python),Call Stack(C)\n"
 "13,ACCESS,UNKNOWN,aten.add,13,123,1234,0,0x0000000000003039,\"{allocation_id:1,addr:0x0000000000003039,size:10,type:PTA,"
 "dtype:torch.float16,shape:torch.Size([1,5])}\",,\n"
-"54,FREE,PTA,N/A,54,123,1234,0,0x0000000000003039,\"{allocation_id:1,addr:0x0000000000003039,size:10,total:0,used:0}\",,\n";
+"54,FREE,PTA,N/A,54,123,1234,0,0x0000000000003039,\"{allocation_id:1,addr:0x0000000000003039,size:10,used:0,total:0}\",,\n";
     std::string fileContent;
     Dump::GetInstance().handlerMap_[testdDevId].reset();
     bool hasReadFile = ReadFile(path, fileContent);
@@ -1246,17 +1251,17 @@ TEST_F(TestProcess, init_memory_owner)
 
     std::string result = "ID,Event,Event Type,Name,Timestamp(ns),Process Id,Thread Id,Device Id,Ptr,Attr"
 ",Call Stack(Python),Call Stack(C)\n"
-"3,MALLOC,PTA,N/A,3,123,1234,0,0x0000000000003039,\"{allocation_id:1,addr:0x0000000000003039,size:10,total:10,used:10,owner:PTA}\",,\n"
-"54,FREE,PTA,N/A,54,123,1234,0,0x0000000000003039,\"{allocation_id:1,addr:0x0000000000003039,size:10,total:0,used:0}\",,\n"
-"3,MALLOC,PTA,N/A,3,123,1234,0,0x0000000000003039,\"{allocation_id:2,addr:0x0000000000003039,size:10,total:10,used:10,"
+"3,MALLOC,PTA,N/A,3,123,1234,0,0x0000000000003039,\"{allocation_id:1,addr:0x0000000000003039,size:10,used:10,total:10,owner:PTA}\",,\n"
+"54,FREE,PTA,N/A,54,123,1234,0,0x0000000000003039,\"{allocation_id:1,addr:0x0000000000003039,size:10,used:0,total:0}\",,\n"
+"3,MALLOC,PTA,N/A,3,123,1234,0,0x0000000000003039,\"{allocation_id:2,addr:0x0000000000003039,size:10,used:10,total:10,"
 "owner:PTA_WORKSPACE}\",,\n"
-"54,FREE,PTA,N/A,54,123,1234,0,0x0000000000003039,\"{allocation_id:2,addr:0x0000000000003039,size:10,total:0,used:0}\",,\n"
-"3,MALLOC,ATB,N/A,3,123,1234,0,0x0000000000003039,\"{allocation_id:3,addr:0x0000000000003039,size:10,total:10,used:10,owner:ATB}\",,\n"
-"54,FREE,ATB,N/A,54,123,1234,0,0x0000000000003039,\"{allocation_id:3,addr:0x0000000000003039,size:10,total:0,used:0}\",,\n"
-"3,MALLOC,MINDSPORE,N/A,3,123,1234,0,0x0000000000003039,\"{allocation_id:4,addr:0x0000000000003039,size:10,total:10,used:10,owner:MINDSPORE}\",,\n"
-"54,FREE,MINDSPORE,N/A,54,123,1234,0,0x0000000000003039,\"{allocation_id:4,addr:0x0000000000003039,size:10,total:0,used:0}\",,\n"
-"3,MALLOC,HAL,N/A,3,123,1234,0,0x0000000000003039,\"{allocation_id:5,addr:0x0000000000003039,size:10,owner:CANN@IDEDD,page_type:normal,alloc_type:create}\",,\n"
-"54,FREE,HAL,N/A,54,123,1234,0,0x0000000000003039,\"{allocation_id:5,addr:0x0000000000003039,size:10}\",,\n";
+"54,FREE,PTA,N/A,54,123,1234,0,0x0000000000003039,\"{allocation_id:2,addr:0x0000000000003039,size:10,used:0,total:0}\",,\n"
+"3,MALLOC,ATB,N/A,3,123,1234,0,0x0000000000003039,\"{allocation_id:3,addr:0x0000000000003039,size:10,used:10,total:10,owner:ATB}\",,\n"
+"54,FREE,ATB,N/A,54,123,1234,0,0x0000000000003039,\"{allocation_id:3,addr:0x0000000000003039,size:10,used:0,total:0}\",,\n"
+"3,MALLOC,MINDSPORE,N/A,3,123,1234,0,0x0000000000003039,\"{allocation_id:4,addr:0x0000000000003039,size:10,used:10,total:10,owner:MINDSPORE}\",,\n"
+"54,FREE,MINDSPORE,N/A,54,123,1234,0,0x0000000000003039,\"{allocation_id:4,addr:0x0000000000003039,size:10,used:0,total:0}\",,\n"
+"3,MALLOC,HAL,N/A,3,123,1234,0,0x0000000000003039,\"{allocation_id:5,addr:0x0000000000003039,size:10,used:10,owner:CANN@IDEDD,page_type:normal,alloc_type:create}\",,\n"
+"54,FREE,HAL,N/A,54,123,1234,0,0x0000000000003039,\"{allocation_id:5,addr:0x0000000000003039,size:10,used:0}\",,\n";
     std::string fileContent;
     Dump::GetInstance().handlerMap_[testdDevId].reset();
     bool hasReadFile = ReadFile(path, fileContent);
@@ -1286,10 +1291,10 @@ TEST_F(TestProcess, updata_owner_by_access_event)
  
     std::string result = "ID,Event,Event Type,Name,Timestamp(ns),Process Id,Thread Id,Device Id,Ptr,Attr"
 ",Call Stack(Python),Call Stack(C)\n"
-"3,MALLOC,PTA,N/A,3,123,1234,0,0x0000000000003039,\"{allocation_id:1,addr:0x0000000000003039,size:10,total:10,used:10,owner:PTA@ops}\",,\n"
+"3,MALLOC,PTA,N/A,3,123,1234,0,0x0000000000003039,\"{allocation_id:1,addr:0x0000000000003039,size:10,used:10,total:10,owner:PTA@ops}\",,\n"
 "13,ACCESS,UNKNOWN,aten.add,13,123,1234,0,0x0000000000003039,\"{allocation_id:1,addr:0x0000000000003039,size:10,type:PTA,dtype:torch.float16,"
 "shape:torch.Size([1,5])}\",,\n"
-"54,FREE,PTA,N/A,54,123,1234,0,0x0000000000003039,\"{allocation_id:1,addr:0x0000000000003039,size:10,total:0,used:0}\",,\n";
+"54,FREE,PTA,N/A,54,123,1234,0,0x0000000000003039,\"{allocation_id:1,addr:0x0000000000003039,size:10,used:0,total:0}\",,\n";
     std::string fileContent;
     Dump::GetInstance().handlerMap_[testdDevId].reset();
     bool hasReadFile = ReadFile(path, fileContent);
@@ -1319,10 +1324,10 @@ TEST_F(TestProcess, updata_owner_failed_by_atb_access_event)
  
     std::string result = "ID,Event,Event Type,Name,Timestamp(ns),Process Id,Thread Id,Device Id,Ptr,Attr"
 ",Call Stack(Python),Call Stack(C)\n"
-"3,MALLOC,ATB,N/A,3,123,1234,0,0x0000000000003039,\"{allocation_id:1,addr:0x0000000000003039,size:10,total:10,used:10,owner:ATB}\",,\n"
+"3,MALLOC,ATB,N/A,3,123,1234,0,0x0000000000003039,\"{allocation_id:1,addr:0x0000000000003039,size:10,used:10,total:10,owner:ATB}\",,\n"
 "14,ACCESS,UNKNOWN,addOperation,14,123,1234,0,0x000000000000303e,\"{allocation_id:1,addr:0x000000000000303e,size:5,type:ATB,"
 "dtype:FLOAT,format:NZD,shape:[1,5,]}\",,\n"
-"54,FREE,ATB,N/A,54,123,1234,0,0x0000000000003039,\"{allocation_id:1,addr:0x0000000000003039,size:10,total:0,used:0}\",,\n";
+"54,FREE,ATB,N/A,54,123,1234,0,0x0000000000003039,\"{allocation_id:1,addr:0x0000000000003039,size:10,used:0,total:0}\",,\n";
     std::string fileContent;
     Dump::GetInstance().handlerMap_[testdDevId].reset();
     bool hasReadFile = ReadFile(path, fileContent);
@@ -1350,10 +1355,10 @@ TEST_F(TestProcess, get_different_allocation_id_with_trace_start_and_stop_event)
  
     std::string result = "ID,Event,Event Type,Name,Timestamp(ns),Process Id,Thread Id,Device Id,Ptr,Attr"
 ",Call Stack(Python),Call Stack(C)\n"
-"3,MALLOC,PTA,N/A,3,123,1234,0,0x0000000000003039,\"{allocation_id:1,addr:0x0000000000003039,size:10,total:10,used:10}\",,\n"
+"3,MALLOC,PTA,N/A,3,123,1234,0,0x0000000000003039,\"{allocation_id:1,addr:0x0000000000003039,size:10,used:10,total:10}\",,\n"
 "13,ACCESS,UNKNOWN,aten.add,13,123,1234,0,0x0000000000003039,\"{allocation_id:1,addr:0x0000000000003039,size:10,type:PTA,"
 "dtype:torch.float16,shape:torch.Size([1,5])}\",,\n"
-"54,FREE,PTA,N/A,54,123,1234,0,0x0000000000003039,\"{allocation_id:1,addr:0x0000000000003039,size:10,total:0,used:0}\",,\n"
+"54,FREE,PTA,N/A,54,123,1234,0,0x0000000000003039,\"{allocation_id:1,addr:0x0000000000003039,size:10,used:0,total:0}\",,\n"
 "1,SYSTEM,START_TRACE,N/A,12,123,1234,N/A,N/A,,,\n"
 "2,SYSTEM,STOP_TRACE,N/A,13,123,1234,N/A,N/A,,,\n";
     std::string fileContent;
@@ -1383,10 +1388,10 @@ TEST_F(TestProcess, get_the_same_allocation_id_with_trace_start_and_stop_event)
  
     std::string result = "ID,Event,Event Type,Name,Timestamp(ns),Process Id,Thread Id,Device Id,Ptr,Attr"
 ",Call Stack(Python),Call Stack(C)\n"
-"3,MALLOC,PTA,N/A,3,123,1234,0,0x0000000000003039,\"{allocation_id:1,addr:0x0000000000003039,size:10,total:10,used:10}\",,\n"
+"3,MALLOC,PTA,N/A,3,123,1234,0,0x0000000000003039,\"{allocation_id:1,addr:0x0000000000003039,size:10,used:10,total:10}\",,\n"
 "13,ACCESS,UNKNOWN,aten.add,13,123,1234,0,0x0000000000003039,\"{allocation_id:1,addr:0x0000000000003039,size:10,type:PTA,"
 "dtype:torch.float16,shape:torch.Size([1,5])}\",,\n"
-"54,FREE,PTA,N/A,54,123,1234,0,0x0000000000003039,\"{allocation_id:1,addr:0x0000000000003039,size:10,total:0,used:0}\",,\n"
+"54,FREE,PTA,N/A,54,123,1234,0,0x0000000000003039,\"{allocation_id:1,addr:0x0000000000003039,size:10,used:0,total:0}\",,\n"
 "1,SYSTEM,START_TRACE,N/A,12,123,1234,N/A,N/A,,,\n"
 "2,SYSTEM,STOP_TRACE,N/A,13,123,1234,N/A,N/A,,,\n";
     std::string fileContent;
@@ -1416,10 +1421,10 @@ TEST_F(TestProcess, add_memory_event_into_state)
  
     std::string result = "ID,Event,Event Type,Name,Timestamp(ns),Process Id,Thread Id,Device Id,Ptr,Attr"
 ",Call Stack(Python),Call Stack(C)\n"
-"3,MALLOC,PTA,N/A,3,123,1234,0,0x0000000000003039,\"{allocation_id:1,addr:0x0000000000003039,size:10,total:10,used:10}\",,\n"
+"3,MALLOC,PTA,N/A,3,123,1234,0,0x0000000000003039,\"{allocation_id:1,addr:0x0000000000003039,size:10,used:10,total:10}\",,\n"
 "13,ACCESS,UNKNOWN,aten.add,13,123,1234,0,0x0000000000003039,\"{allocation_id:1,addr:0x0000000000003039,size:10,type:PTA,"
 "dtype:torch.float16,shape:torch.Size([1,5])}\",,\n"
-"54,FREE,PTA,N/A,54,123,1234,0,0x0000000000003039,\"{allocation_id:1,addr:0x0000000000003039,size:10,total:0,used:0}\",,\n"
+"54,FREE,PTA,N/A,54,123,1234,0,0x0000000000003039,\"{allocation_id:1,addr:0x0000000000003039,size:10,used:0,total:0}\",,\n"
 "1,SYSTEM,START_TRACE,N/A,12,123,1234,N/A,N/A,,,\n"
 "2,SYSTEM,STOP_TRACE,N/A,13,123,1234,N/A,N/A,,,\n";
     std::string fileContent;

@@ -134,7 +134,7 @@ TEST(ShadowCollectionTest, determine_trace_mode_skip)
 }
 
 // =============================================================================
-// UT-1b: 事件上报抑制机制（GetDeviceMemInfo 等真实运行时调用窗口）
+// UT-1b: 事件上报抑制机制（dcmi 查询等真实运行时调用窗口）
 // =============================================================================
 
 TEST(ShadowCollectionTest, suppression_guard_initial_not_suppressed)
