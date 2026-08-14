@@ -291,3 +291,38 @@ msMemScope工具可以结合mstx打点能力进行内存采集，同时msMemScop
 ### 输出说明
 
 内存采集的输出结果请参见《[输出文件说明](./output_file_spec.md)》。
+
+## 输出数据解读
+
+内存采集的输出文件记录了内存事件及事件时刻的显存统计信息，可用于绘制显存使用曲线。输出文件字段说明可参见《[输出文件说明](./output_file_spec.md)》。
+
+### 统计字段说明
+
+内存事件（MALLOC/FREE）的Attr字段中，除allocation_id、addr、size等基本属性外，还包含以下显存统计字段：
+
+|字段|含义|
+|--|--|
+|used|内存使用量。Event Type为HAL时，为本进程HAL维度显存使用量（工具采集到的HAL申请/释放累计值）；Event Type为PTA、MindSpore、ATB或PTA_WORKSPACE时，为内存池内已分配大小；Event Type为HOST_PINNED时，为采集到的HOST内存块使用量。|
+|total|内存池总大小，仅内存池事件（Event Type为PTA、MindSpore、ATB或PTA_WORKSPACE）存在。|
+|process_used|本进程显存占用。Event Type为HAL时，为本进程在该设备上的显存占用，与npu-smi info的Process memory(MB)一致；内存池事件含义相同；Event Type为HOST_PINNED时，为本进程物理内存使用量（VmRSS）。|
+|device_used|整卡显存占用。Event Type为HAL时，为整卡显存占用，与npu-smi info的HBM-Usage(MB)一致；内存池事件含义相同；Event Type为HOST_PINNED时不输出。|
+
+> [!NOTE]
+>
+> - 程序初始化阶段，设备上下文还未完成初始化，process_used和device_used可能采集不到（字段省略），属正常现象，初始化完成后可正常采集。
+> - 采集不到该值时（无卡、无驱动环境、权限不足等），process_used和device_used字段将被省略，不输出。
+
+### 整卡显存曲线
+
+取HAL事件（或内存池事件）的device_used字段对Timestamp(ns)绘图，即可得到整卡显存使用曲线。
+
+- device_used为事件时刻的整卡显存占用，与npu-smi info回显的HBM-Usage(MB)一致，可用于对照验证采集数据。
+- 曲线为事件驱动，无显存事件的空闲时间段无采样点。
+
+### 本进程显存曲线
+
+取HAL事件的process_used字段对Timestamp(ns)绘图，即可得到本进程在设备上的显存使用曲线。
+
+- process_used为本进程在该设备上的显存占用，与npu-smi info回显的Process memory(MB)一致，可用于对照验证采集数据。
+- 曲线反映本进程申请/释放显存后的实际占用变化；与used曲线（工具采集的HAL维度累计）对照，可区分工具采集不完整的部分。
+- 曲线数量级关系：HAL事件的used（工具采集累计）≤ process_used（驱动统计，含分配器碎片/缓存）≤ device_used（整卡，含其他进程及片上侧占用）。
