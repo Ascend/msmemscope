@@ -170,6 +170,7 @@ struct OOMMemRecord
     uint64_t allocTimestamp = 0;
     std::string cCallStack;
     std::string pyCallStack;
+    int32_t deviceId = GD_INVALID_NUM;
 };
 
 struct OOMTriggerInfo

@@ -1202,14 +1202,24 @@ bool EventReport::ReportOOMTrigger(const OOMTriggerInfo& info)
 
 bool EventReport::ReportOOMMemRecord(const OOMMemRecord& record, EventSubType subType)
 {
-    if (IsNeedSkip(GD_INVALID_NUM))
+    int32_t devId = record.deviceId;
+    if (devId == GD_INVALID_NUM)
+    {
+        if (!GetDeviceInfo::Instance().GetDeviceId(devId) || devId == GD_INVALID_NUM)
+        {
+            LOG_ERROR("Failed to get device ID for OOM mem record event");
+            return false;
+        }
+    }
+
+    if (IsNeedSkip(devId))
     {
         return true;
     }
 
     std::shared_ptr<OOMMemRecordEvent> event = std::make_shared<OOMMemRecordEvent>();
     event->eventSubType = subType;
-    event->device = GD_INVALID_NUM;
+    event->device = devId;
     event->poolType = record.poolType;
     event->addr = record.ptr;
     event->memSize = record.memSize;

@@ -379,7 +379,7 @@ msmemscope ${Application} --analysis=inefficient
 ### 注意事项
 
 - OOM分析功能需配合`--analysis=oom`参数使用，会自动联动开启alloc/free事件采集，无需额外配置`--events`参数。
-- K值范围[1, 1000]，默认值为10。K值越大，采集的记录越多，OOM时刻的dump耗时也会相应增加。
+- K值范围[1, 1000]，默认值为10，超出范围或非法取值时报错。K值越大，采集的记录越多，OOM时刻的dump耗时也会相应增加。
 - OOM数据写入现有的`memscope_dump_{_timestamp_}.csv`文件中，不会创建新文件。
 
 ### 使用示例
