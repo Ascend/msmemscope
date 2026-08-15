@@ -289,6 +289,7 @@ void JsonConfig::SaveConfigToJson(const MemScope::Config& config)
     Utility::JsonManager::GetInstance().SetValue("eventType", config.eventType);
     Utility::JsonManager::GetInstance().SetValue("dumpEventType", config.dumpEventType);
     Utility::JsonManager::GetInstance().SetValue("analysisType", config.analysisType);
+    Utility::JsonManager::GetInstance().SetValue("oomTopK", config.oomTopK);
     Utility::JsonManager::GetInstance().SetValue("collectMode", config.collectMode);
     Utility::JsonManager::GetInstance().SetValue("outputDir", config.outputDir);
     Utility::JsonManager::GetInstance().SetValue("dataFormat", config.dataFormat);
@@ -342,6 +343,9 @@ bool JsonConfig::ReadJsonConfig(MemScope::Config& config)
 
     Utility::JsonManager::GetInstance().GetCharListValue("outputDir", config.outputDir, sizeof(config.outputDir));
     Utility::JsonManager::GetInstance().GetUint8Value("analysisType", config.analysisType);
+    uint32_t oomTopK = config.oomTopK;
+    Utility::JsonManager::GetInstance().GetUint32Value("oomTopK", oomTopK);
+    config.oomTopK = static_cast<uint16_t>(oomTopK);
     Utility::JsonManager::GetInstance().GetUint8Value("collectMode", config.collectMode);
     Utility::JsonManager::GetInstance().GetUint8Value("dataFormat", config.dataFormat);
     Utility::JsonManager::GetInstance().GetUint8Value("eventType", config.eventType);
