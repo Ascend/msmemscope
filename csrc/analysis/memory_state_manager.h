@@ -201,13 +201,15 @@ class MemoryStateManager : StateManager
     std::unordered_map<int32_t, int64_t> halUsed_;
     int64_t hostUsed_ = 0;
     // per-device 整卡用量缓存（初始 -1=未知）：采集层查询成功后写入、池事件读取（mtx_ 保护）
-    std::array<int64_t, 16> deviceUsedCache_ = []() {
+    std::array<int64_t, 16> deviceUsedCache_ = []()
+    {
         std::array<int64_t, 16> cache{};
         cache.fill(-1);
         return cache;
     }();
     // per-device 本进程用量缓存（dcmi_get_npu_proc_mem_info 查询值，初始 -1=未知）：同上
-    std::array<int64_t, 16> processUsedCache_ = []() {
+    std::array<int64_t, 16> processUsedCache_ = []()
+    {
         std::array<int64_t, 16> cache{};
         cache.fill(-1);
         return cache;

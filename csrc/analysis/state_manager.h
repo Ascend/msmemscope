@@ -20,9 +20,11 @@
 
 #include <cstdint>
 
-namespace MemScope {
+namespace MemScope
+{
 
-enum class PoolType : uint8_t {
+enum class PoolType : uint8_t
+{
     HOST = 0,
     HAL,
     PTA_CACHING,
@@ -40,16 +42,18 @@ inline bool IsMemoryPool(PoolType type)
            type == PoolType::MINDSPORE;
 }
 
-class StateKey {
-public:
+class StateKey
+{
+   public:
     virtual ~StateKey() {};
 };
 
-class StateManager {
-public:
+class StateManager
+{
+   public:
     virtual ~StateManager() {};
 };
 
-}
+}  // namespace MemScope
 
 #endif

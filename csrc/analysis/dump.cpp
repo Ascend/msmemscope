@@ -156,7 +156,8 @@ void Dump::DumpMemoryEvent(std::shared_ptr<MemoryEvent>& event, MemoryState* sta
             attr += "total:" + std::to_string(event->total) + ",";  // 池总大小（totalReserved，键名/值不变）
             if (event->processUsed >= 0)
             {
-                attr += "process_used:" + std::to_string(event->processUsed) + ",";  // 本进程用量（最近一次dcmi_get_npu_proc_mem_info查询缓存值）
+                attr += "process_used:" + std::to_string(event->processUsed) +
+                        ",";  // 本进程用量（最近一次dcmi_get_npu_proc_mem_info查询缓存值）
             }
             if (event->deviceUsed >= 0)
             {

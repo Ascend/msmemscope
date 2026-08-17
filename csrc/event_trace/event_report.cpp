@@ -199,23 +199,25 @@ bool GetDeviceInfo::EnsureDcmiInit()
 {
     // dcmi_init 只尝试一次：失败（权限/驱动问题）后本进程内永久降级，
     // 重试无意义且每次失败都走一次驱动初始化会拖慢查询路径
-    std::call_once(dcmiInitFlag_, [this]() {
-        static auto initFunc = VallinaSymbol<DcmiLibLoader>::Instance().Get<DcmiInitFunc>("dcmi_init");
-        if (initFunc == nullptr)
-        {
-            LOG_ERROR("Get dcmi_init func ptr failed");
-            return;
-        }
-        // 进入真实驱动调用窗口：驱动初始化内部的内存申请/上报会被hook捕获，
-        // 抑制期间直接跳过，防止递归上报与幻影事件
-        EventReportSuppressor suppressor;
-        if (initFunc() != DCMI_OK)
-        {
-            LOG_ERROR("dcmi_init failed");
-            return;
-        }
-        dcmiReady_ = true;
-    });
+    std::call_once(dcmiInitFlag_,
+                   [this]()
+                   {
+                       static auto initFunc = VallinaSymbol<DcmiLibLoader>::Instance().Get<DcmiInitFunc>("dcmi_init");
+                       if (initFunc == nullptr)
+                       {
+                           LOG_ERROR("Get dcmi_init func ptr failed");
+                           return;
+                       }
+                       // 进入真实驱动调用窗口：驱动初始化内部的内存申请/上报会被hook捕获，
+                       // 抑制期间直接跳过，防止递归上报与幻影事件
+                       EventReportSuppressor suppressor;
+                       if (initFunc() != DCMI_OK)
+                       {
+                           LOG_ERROR("dcmi_init failed");
+                           return;
+                       }
+                       dcmiReady_ = true;
+                   });
     return dcmiReady_;
 }
 
@@ -223,57 +225,62 @@ bool GetDeviceInfo::BuildDeviceMap()
 {
     // 建表只做一次：失败（符号缺失/设备枚举失败）与成功都置已尝试标记，
     // 避免每次查询都重复枚举卡与设备
-    std::call_once(dcmiMapInitFlag_, [this]() {
-        static auto getCardList = VallinaSymbol<DcmiLibLoader>::Instance().Get<DcmiGetCardListFunc>("dcmi_get_card_list");
-        static auto getDeviceNum =
-            VallinaSymbol<DcmiLibLoader>::Instance().Get<DcmiGetDeviceNumInCardFunc>("dcmi_get_device_num_in_card");
-        static auto getLogicId =
-            VallinaSymbol<DcmiLibLoader>::Instance().Get<DcmiGetDeviceLogicIdFunc>("dcmi_get_device_logic_id");
-        if (getCardList == nullptr || getDeviceNum == nullptr || getLogicId == nullptr)
+    std::call_once(
+        dcmiMapInitFlag_,
+        [this]()
         {
-            LOG_ERROR("Get dcmi device map func ptr failed");
-            return;
-        }
-
-        int cardList[DCMI_MAX_CARD_NUM] = {0};
-        int cardNum = 0;
-        {
-            EventReportSuppressor suppressor;
-            if (getCardList(&cardNum, cardList, DCMI_MAX_CARD_NUM) != DCMI_OK)
+            static auto getCardList =
+                VallinaSymbol<DcmiLibLoader>::Instance().Get<DcmiGetCardListFunc>("dcmi_get_card_list");
+            static auto getDeviceNum =
+                VallinaSymbol<DcmiLibLoader>::Instance().Get<DcmiGetDeviceNumInCardFunc>("dcmi_get_device_num_in_card");
+            static auto getLogicId =
+                VallinaSymbol<DcmiLibLoader>::Instance().Get<DcmiGetDeviceLogicIdFunc>("dcmi_get_device_logic_id");
+            if (getCardList == nullptr || getDeviceNum == nullptr || getLogicId == nullptr)
             {
-                LOG_ERROR("dcmi_get_card_list failed");
+                LOG_ERROR("Get dcmi device map func ptr failed");
                 return;
             }
-        }
-        for (int i = 0; i < cardNum && i < DCMI_MAX_CARD_NUM; i++)
-        {
-            int deviceNum = 0;
+
+            int cardList[DCMI_MAX_CARD_NUM] = {0};
+            int cardNum = 0;
             {
                 EventReportSuppressor suppressor;
-                if (getDeviceNum(cardList[i], &deviceNum) != DCMI_OK)
+                if (getCardList(&cardNum, cardList, DCMI_MAX_CARD_NUM) != DCMI_OK)
                 {
-                    LOG_ERROR("dcmi_get_device_num_in_card failed, card_id %d", cardList[i]);
+                    LOG_ERROR("dcmi_get_card_list failed");
                     return;
                 }
             }
-            for (int deviceId = 0; deviceId < deviceNum; deviceId++)
+            for (int i = 0; i < cardNum && i < DCMI_MAX_CARD_NUM; i++)
             {
-                int logicId = 0;
+                int deviceNum = 0;
                 {
                     EventReportSuppressor suppressor;
-                    if (getLogicId(&logicId, cardList[i], deviceId) != DCMI_OK)
+                    if (getDeviceNum(cardList[i], &deviceNum) != DCMI_OK)
                     {
-                        LOG_ERROR("dcmi_get_device_logic_id failed, card_id %d device_id %d", cardList[i], deviceId);
+                        LOG_ERROR("dcmi_get_device_num_in_card failed, card_id %d", cardList[i]);
                         return;
                     }
                 }
-                // acl 物理逻辑号 = 硬件逻辑号，HAL 事件 devId（flag 解析）与其同源，
-                // 直接以逻辑号建表
-                devIdToDcmiMap_[logicId] = {cardList[i], deviceId};
+                for (int deviceId = 0; deviceId < deviceNum; deviceId++)
+                {
+                    int logicId = 0;
+                    {
+                        EventReportSuppressor suppressor;
+                        if (getLogicId(&logicId, cardList[i], deviceId) != DCMI_OK)
+                        {
+                            LOG_ERROR("dcmi_get_device_logic_id failed, card_id %d device_id %d", cardList[i],
+                                      deviceId);
+                            return;
+                        }
+                    }
+                    // acl 物理逻辑号 = 硬件逻辑号，HAL 事件 devId（flag 解析）与其同源，
+                    // 直接以逻辑号建表
+                    devIdToDcmiMap_[logicId] = {cardList[i], deviceId};
+                }
             }
-        }
-        dcmiMapReady_ = true;
-    });
+            dcmiMapReady_ = true;
+        });
     return dcmiMapReady_;
 }
 
@@ -297,7 +304,9 @@ bool GetDeviceInfo::GetDeviceHbmInfo(int32_t devId, uint64_t& usedMb, uint64_t& 
         LOG_ERROR("Get dcmi_get_device_hbm_info func ptr failed");
         return false;
     }
-    struct dcmi_hbm_info info{};
+    struct dcmi_hbm_info info
+    {
+    };
     {
         // 驱动查询内部可能有临时内存申请，抑制期间跳过上报，防止递归上报与幻影事件
         EventReportSuppressor suppressor;
