@@ -129,7 +129,7 @@ torch_npu.npu.empty_cache()
 
     ```python
     import msmemscope
-    msmemscope.config(analysis="leaks, decompose", call_stack="python")  # 开启泄漏检测、片上内存拆解、调用栈采集
+    msmemscope.config(analysis="leaks,decompose", call_stack="python")  # 开启泄漏检测、片上内存拆解、调用栈采集
     ```
 
 2. **执行数据采集** 配置环境变量，执行采集脚本。

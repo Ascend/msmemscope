@@ -29,6 +29,7 @@ msMemScope 基于 [devcontainer](https://containers.dev/) 提供一致的容器�
 **代码跳转**：C++ 经 clangd 读取 `build/compile_commands.json`（首次构建后生成），Python 经 Pylance 提供语义跳转。
 
 **注意事项**：
+
 - 编译必须在容器内进行；容器外命令行入口（`python3 build.py`）保持可用。
 - Debug 与 Release 产物同路径覆盖，两种模式切换时请重新构建目标模式。
 - `.vscode/settings.json` 本地个人化修改不会进入 `git status`（skip-worktree 治理）。
@@ -48,7 +49,7 @@ Fork本仓库到个人私仓，并将个人私仓中的项目通过Clone下载�
 运行以下命令时，请确保您的终端已进入到容器内的代码仓库目录下，并确保网络畅通。
 
 ```shell
-cd build
+cd <path>/memscope   # 进入memscope代码仓目录，path为代码仓项目所在路径
 python3 build.py local test
 ```
 
@@ -72,6 +73,7 @@ python3 build.py local test
 默认构建为 Release（`-O2` + strip）。如需使用 GDB 断点调试，请执行 Debug 构建（`-g -O0`，不 strip）：
 
 ```shell
+cd <path>/memscope   # 进入memscope代码仓目录，path为代码仓项目所在路径
 python3 build.py -e only_down_deps=true   # 仅下载三方依赖后退出
 cd build
 cmake .. -DCMAKE_BUILD_TYPE=Debug

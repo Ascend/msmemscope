@@ -111,7 +111,7 @@ get_analyzer_config(analyzer_type: str) -> Dict[str, Any]
 
 |参数名|输入/输出|说明|
 |--|--|--|
-|str|输入|字符串，代表对应的内存分析类型，可参考list_analyzers的输出结果，例如“leaks”或“inefficient”。|
+|analyzer_type|输入|字符串，代表对应的内存分析类型，可参考list_analyzers的输出结果，例如“leaks”或“inefficient”。|
 
 **返回值说明**
 

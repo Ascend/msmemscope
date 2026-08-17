@@ -38,7 +38,7 @@
 进入 `ctr_in.py` 打开的交互式容器 Shell 后，执行如下命令克隆本仓库：
 
 ```bash
-cd ~
+cd <path>/memscope   # 进入到memscope代码仓目录，path为代码仓项目所在路径
 git clone https://gitcode.com/Ascend/msmemscope.git
 ```
 
@@ -47,7 +47,7 @@ git clone https://gitcode.com/Ascend/msmemscope.git
 保持在 `ctr_in.py` 打开的同一个交互式容器 Shell 中，在仓库根目录执行以下命令，自动完成依赖下载与构建：
 
 ```bash
-cd ~/msmemscope
+cd <path>/memscope   # 进入到memscope代码仓目录，path为代码仓项目所在路径
 python3 build.py
 ```
 
