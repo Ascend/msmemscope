@@ -157,6 +157,11 @@ class MemoryEvent : public EventBase
     int64_t size = 0;
     int64_t total = 0;
     int64_t used = 0;
+    // 统计字段（MemoryStateManager 累计/查询后回填，dump 时值<0 的字段省略不输出）：
+    int64_t processUsed = -1;  // 本进程显存用量（池事件=该设备 HAL 维度活跃累计；HOST 事件=VmRSS；
+                               // -1=无统计值（池事件且该设备无 HAL 活跃记录），dump 省略）
+    int64_t deviceUsed = -1;  // 整卡用量（仅 NPU 显存事件；HAL 事件=本次 dcmi_get_device_hbm_info 查询值，
+                              // 池事件=最近一次查询缓存值；-1=未知/查询失败），dump 省略
     uint64_t eventIndex = 0;
     unsigned long long flag = FLAG_INVALID;
     MemOpSpace space;

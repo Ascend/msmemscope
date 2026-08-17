@@ -171,6 +171,7 @@ MemoryState* MemoryStateManager::AddEvent(std::shared_ptr<MemoryEvent>& event)
         {
             newState.shadowState = ShadowState::SHADOW_CREATED;
         }
+        UpdateUsage(event);  // 锁内维护统计累计并回填事件字段（影子事件内部跳过）
         return &newState;
     }
     else
@@ -178,13 +179,115 @@ MemoryState* MemoryStateManager::AddEvent(std::shared_ptr<MemoryEvent>& event)
         if (located != nullptr)
         {
             located->events.push_back(event);
+            UpdateUsage(event);  // FREE 事件 size/device 已在上方回填，累计扣减取值可靠
             return located;
         }
         // 当前事件没有匹配到已有的state，需要新建一个state表示新的内存块
         MemoryStateKey ghostKey{event->pid, event->device, event->addr};
         auto inserted = statesMap.emplace(ghostKey, MemoryState{event});
+        UpdateUsage(event);
         return &inserted.first->second;
     }
+}
+
+void MemoryStateManager::UpdateUsage(const std::shared_ptr<MemoryEvent>& event)
+{
+    // 影子事件不累计：影子期变更不入统计，存量块由 TRACE_START 基线（ResetUsageBaseline）计入
+    if (event->isShadowEvent)
+    {
+        return;
+    }
+
+    const int64_t size = event->size;
+    if (event->poolType == PoolType::HAL && event->device != DEVICE_ID_CPU)
+    {
+        // HAL 事件（DEVICE 空间）：used = 本进程 HAL 维度活跃累计（MALLOC 含本次、FREE 不含本次）
+        halUsed_[event->device] += (event->eventType == EventBaseType::MALLOC ? size : -size);
+        if (halUsed_[event->device] < 0)
+        {
+            // 事件缺失/重复 FREE 导致累计为负：截断为 0，曲线不出现负数毛刺
+            LOG_WARN("[device %d]: hal used goes negative (%lld), truncated to 0", event->device,
+                     halUsed_[event->device]);
+            halUsed_[event->device] = 0;
+        }
+        event->used = halUsed_[event->device];
+    }
+    else if (event->poolType == PoolType::HAL && event->device == DEVICE_ID_CPU)
+    {
+        // HOST 内存事件（HOST_PINNED，事件模型：poolType=HAL、device=DEVICE_ID_CPU）
+        hostUsed_ += (event->eventType == EventBaseType::MALLOC ? size : -size);
+        if (hostUsed_ < 0)
+        {
+            LOG_WARN("host used goes negative (%lld), truncated to 0", hostUsed_);
+            hostUsed_ = 0;
+        }
+        event->used = hostUsed_;
+        event->processUsed = static_cast<int64_t>(Utility::GetProcessVmRss());
+    }
+    // 池事件：used/total/processUsed 均不动——used/total 报告时已填（HealthAnalyzer 依赖），
+    // processUsed 由报告层按设备读 dcmi_get_npu_proc_mem_info 查询缓存（QueryProcessUsed 写入）填值
+}
+
+void MemoryStateManager::ResetUsageBaseline()
+{
+    // 重置后重新累计：start 时刻存量块为当前事实（含影子期已转正块，防累计失真），
+    // 避免与既有累计叠加造成漂移。QueryLiveBlocks 内部加锁，此处不加锁（事件处理单线程）
+    halUsed_.clear();
+    hostUsed_ = 0;
+
+    LiveBlockFilter filter;
+    filter.poolTypes = {PoolType::HAL};
+    for (const auto& blk : QueryLiveBlocks(filter))
+    {
+        if (blk.device == DEVICE_ID_CPU)
+        {
+            hostUsed_ += static_cast<int64_t>(blk.size);
+        }
+        else
+        {
+            halUsed_[blk.device] += static_cast<int64_t>(blk.size);
+        }
+    }
+}
+
+void MemoryStateManager::UpdateDeviceUsedCache(int32_t devId, int64_t used)
+{
+    if (devId < 0 || devId >= static_cast<int32_t>(deviceUsedCache_.size()))
+    {
+        return;
+    }
+    std::lock_guard<std::mutex> lock(mtx_);
+    deviceUsedCache_[devId] = used;
+}
+
+int64_t MemoryStateManager::GetDeviceUsed(int32_t devId) const
+{
+    if (devId < 0 || devId >= static_cast<int32_t>(deviceUsedCache_.size()))
+    {
+        return -1;
+    }
+    std::lock_guard<std::mutex> lock(mtx_);
+    return deviceUsedCache_[devId];
+}
+
+void MemoryStateManager::UpdateProcessUsedCache(int32_t devId, int64_t used)
+{
+    if (devId < 0 || devId >= static_cast<int32_t>(processUsedCache_.size()))
+    {
+        return;
+    }
+    std::lock_guard<std::mutex> lock(mtx_);
+    processUsedCache_[devId] = used;
+}
+
+int64_t MemoryStateManager::GetProcessUsed(int32_t devId) const
+{
+    if (devId < 0 || devId >= static_cast<int32_t>(processUsedCache_.size()))
+    {
+        return -1;
+    }
+    std::lock_guard<std::mutex> lock(mtx_);
+    return processUsedCache_[devId];
 }
 
 bool MemoryStateManager::DeteleState(const PoolType& poolType, const MemoryStateKey& key)

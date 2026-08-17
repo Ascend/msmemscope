@@ -20,7 +20,11 @@
 #include <string>
 
 #include "event.h"
+#define private public
 #include "memory_state_manager.h"
+#undef private
+#include "process.h"
+#include "record_info.h"
 
 using namespace MemScope;
 
@@ -69,6 +73,11 @@ class MemoryStateManagerTest : public ::testing::Test
         {
             MemoryStateManager::GetInstance().DeteleState(keyPair.first, keyPair.second);
         }
+        // 清理统计累计残留（HAL/HOST 累计 + 整卡/本进程用量缓存）
+        MemoryStateManager::GetInstance().halUsed_.clear();
+        MemoryStateManager::GetInstance().hostUsed_ = 0;
+        MemoryStateManager::GetInstance().deviceUsedCache_.fill(-1);
+        MemoryStateManager::GetInstance().processUsedCache_.fill(-1);
     }
 
     void TearDown() override
@@ -78,6 +87,10 @@ class MemoryStateManagerTest : public ::testing::Test
         {
             MemoryStateManager::GetInstance().DeteleState(keyPair.first, keyPair.second);
         }
+        MemoryStateManager::GetInstance().halUsed_.clear();
+        MemoryStateManager::GetInstance().hostUsed_ = 0;
+        MemoryStateManager::GetInstance().deviceUsedCache_.fill(-1);
+        MemoryStateManager::GetInstance().processUsedCache_.fill(-1);
     }
 };
 
@@ -255,4 +268,278 @@ TEST_F(MemoryStateManagerTest, free_containment_match_respects_device)
 
     MemoryStateManager::GetInstance().DeteleState(PoolType::MINDSPORE, MemoryStateKey{1, 1, 0xC000});
     MemoryStateManager::GetInstance().DeteleState(PoolType::MINDSPORE, MemoryStateKey{1, 0, 0xC100});
+}
+
+// ---------- 统计累计（used/processUsed 回填）与 TRACE_START 基线测试 ----------
+// 统计回填在 AddEvent 内完成（事件处理阶段一，先于所有分析器）；TRACE_START 基线经
+// ResetUsageBaseline 从存量块重建（EventHandler::HandleTraceEvent 调用，事件处理单线程）
+
+std::shared_ptr<MemoryEvent> CreateHalMalloc(uint64_t addr, int32_t device, int64_t size)
+{
+    auto event = std::make_shared<MemoryEvent>();
+    event->eventType = EventBaseType::MALLOC;
+    event->eventSubType = EventSubType::HAL;
+    event->poolType = PoolType::HAL;
+    event->addr = addr;
+    event->device = device;
+    event->pid = 1;
+    event->size = size;
+    return event;
+}
+
+std::shared_ptr<MemoryEvent> CreateHalFree(uint64_t addr, int32_t device, int64_t size)
+{
+    auto event = std::make_shared<MemoryEvent>();
+    event->eventType = EventBaseType::FREE;
+    event->eventSubType = EventSubType::HAL;
+    event->poolType = PoolType::HAL;
+    event->addr = addr;
+    event->device = device;
+    event->pid = 1;
+    event->size = size;  // AddEvent 匹配到 MALLOC 后回填的值，此处为回填后大小
+    return event;
+}
+
+// HOST 内存事件模型：poolType=HAL、device=DEVICE_ID_CPU、eventSubType=HOST_PINNED
+std::shared_ptr<MemoryEvent> CreateHostMalloc(uint64_t addr, int64_t size)
+{
+    auto event = CreateHalMalloc(addr, DEVICE_ID_CPU, size);
+    event->eventSubType = EventSubType::HOST_PINNED;
+    return event;
+}
+
+std::shared_ptr<MemoryEvent> CreateHostFree(uint64_t addr, int64_t size)
+{
+    auto event = CreateHalFree(addr, DEVICE_ID_CPU, size);
+    event->eventSubType = EventSubType::HOST_PINNED;
+    return event;
+}
+
+std::shared_ptr<MemoryEvent> CreatePoolEvent(EventBaseType type, uint64_t addr, int32_t device, int64_t size,
+                                             int64_t used, int64_t total, PoolType poolType)
+{
+    auto event = std::make_shared<MemoryEvent>();
+    event->eventType = type;
+    event->eventSubType = poolType == PoolType::PTA_CACHING      ? EventSubType::PTA_CACHING
+                          : poolType == PoolType::PTA_WORKSPACE  ? EventSubType::PTA_WORKSPACE
+                          : poolType == PoolType::ATB            ? EventSubType::ATB
+                                                                 : EventSubType::MINDSPORE;
+    event->poolType = poolType;
+    event->addr = addr;
+    event->device = device;
+    event->pid = 1;
+    event->size = size;
+    event->used = used;   // 报告时已填（totalAllocated），统计累计不得改写
+    event->total = total; // 报告时已填（totalReserved），统计累计不得改写
+    return event;
+}
+
+// AddEvent 内完成统计累计并回填事件字段（生产路径：事件处理阶段一 UpdateMemoryEventState）
+void Handle(std::shared_ptr<MemoryEvent>& event)
+{
+    MemoryStateManager::GetInstance().AddEvent(event);
+}
+
+// HAL MALLOC 序列按设备累计：used = 本进程 HAL 维度活跃累计
+TEST_F(MemoryStateManagerTest, hal_malloc_accumulates_per_device)
+{
+    auto e1 = CreateHalMalloc(0x1000, 0, 100);
+    auto e2 = CreateHalMalloc(0x2000, 0, 200);
+    auto e3 = CreateHalMalloc(0x3000, 0, 300);
+    Handle(e1);
+    EXPECT_EQ(e1->used, 100);
+    Handle(e2);
+    EXPECT_EQ(e2->used, 300);
+    Handle(e3);
+    EXPECT_EQ(e3->used, 600);
+
+    // 按设备隔离：卡1 的累计不影响卡0
+    auto e4 = CreateHalMalloc(0x4000, 1, 50);
+    Handle(e4);
+    EXPECT_EQ(e4->used, 50);
+    EXPECT_EQ(MemoryStateManager::GetInstance().halUsed_[0], 600);
+    EXPECT_EQ(MemoryStateManager::GetInstance().halUsed_[1], 50);
+}
+
+// HAL MALLOC+FREE 累计（100/300/200）
+TEST_F(MemoryStateManagerTest, hal_malloc_free_accumulation)
+{
+    auto e1 = CreateHalMalloc(0x1000, 0, 100);
+    auto e2 = CreateHalMalloc(0x2000, 0, 200);
+    auto f1 = CreateHalFree(0x1000, 0, 100);
+    Handle(e1);
+    Handle(e2);
+    EXPECT_EQ(e2->used, 300);
+    Handle(f1);
+    EXPECT_EQ(f1->used, 200);
+    EXPECT_EQ(MemoryStateManager::GetInstance().halUsed_[0], 200);
+}
+
+// 重复 FREE 累计为负 → 截断为 0（曲线不出现负数毛刺）
+TEST_F(MemoryStateManagerTest, negative_accumulation_truncated_to_zero)
+{
+    auto f1 = CreateHalFree(0x1000, 0, 100);
+    Handle(f1);
+    EXPECT_EQ(f1->used, 0);  // 截断而非 -100
+    EXPECT_EQ(MemoryStateManager::GetInstance().halUsed_[0], 0);
+
+    // 截断后继续累计正常
+    auto e1 = CreateHalMalloc(0x2000, 0, 100);
+    Handle(e1);
+    EXPECT_EQ(e1->used, 100);
+}
+
+// 影子事件不累计、不回填
+TEST_F(MemoryStateManagerTest, shadow_events_are_skipped)
+{
+    auto e1 = CreateHalMalloc(0x1000, 0, 100);
+    e1->isShadowEvent = true;
+    Handle(e1);
+    EXPECT_EQ(e1->used, 0);  // 未回填
+    EXPECT_TRUE(MemoryStateManager::GetInstance().halUsed_.empty());
+
+    auto f1 = CreateHalFree(0x1000, 0, 100);
+    f1->isShadowEvent = true;
+    Handle(f1);
+    EXPECT_TRUE(MemoryStateManager::GetInstance().halUsed_.empty());
+    EXPECT_EQ(MemoryStateManager::GetInstance().hostUsed_, 0);
+}
+
+// 池事件 used/total/processUsed/deviceUsed 均不被改写（used/total 报告时已填，HealthAnalyzer 依赖；
+// processUsed/deviceUsed 由报告层按设备读查询缓存填值）
+TEST_F(MemoryStateManagerTest, pool_events_preserve_used_total_and_fill_process_used)
+{
+    auto pool = CreatePoolEvent(EventBaseType::MALLOC, 0x2000, 0, 1024, 512, 2048, PoolType::PTA_CACHING);
+    pool->deviceUsed = 42;    // 报告层预置值，统计累计不得改写
+    pool->processUsed = 300;  // 报告层预置值（dcmi_get_npu_proc_mem_info 查询缓存），统计累计不得改写
+    Handle(pool);
+    EXPECT_EQ(pool->used, 512);  // 未动
+    EXPECT_EQ(pool->total, 2048);  // 未动
+    EXPECT_EQ(pool->processUsed, 300);  // 保持报告层预置值
+    EXPECT_EQ(pool->deviceUsed, 42);  // 报告层字段保持
+
+    auto free = CreatePoolEvent(EventBaseType::FREE, 0x2000, 0, 1024, 0, 2048, PoolType::PTA_CACHING);
+    free->processUsed = 300;
+    Handle(free);
+    EXPECT_EQ(free->used, 0);
+    EXPECT_EQ(free->total, 2048);
+    EXPECT_EQ(free->processUsed, 300);
+}
+
+// HOST（poolType=HAL、device=DEVICE_ID_CPU）：used=HOST累计、processUsed=进程VmRSS
+TEST_F(MemoryStateManagerTest, host_events_update_used_and_process_used)
+{
+    auto h1 = CreateHostMalloc(0x1000, 100);
+    Handle(h1);
+    EXPECT_EQ(h1->used, 100);
+    EXPECT_GT(h1->processUsed, 0);  // 进程 VmRSS 必然大于 0
+
+    auto h2 = CreateHostMalloc(0x2000, 50);
+    Handle(h2);
+    EXPECT_EQ(h2->used, 150);
+
+    auto f1 = CreateHostFree(0x1000, 100);
+    Handle(f1);
+    EXPECT_EQ(f1->used, 50);
+    EXPECT_GT(f1->processUsed, 0);
+
+    // HOST 累计与 DEVICE 维度隔离（DEVICE_ID_CPU 不进入 halUsed_）
+    auto dev = CreateHalMalloc(0x3000, 0, 100);
+    Handle(dev);
+    EXPECT_EQ(MemoryStateManager::GetInstance().hostUsed_, 50);
+    EXPECT_EQ(MemoryStateManager::GetInstance().halUsed_[0], 100);
+}
+
+// TRACE_START 从存量块初始化基线（卡0 100B、卡1 50B、HOST 30B）
+TEST_F(MemoryStateManagerTest, trace_start_resets_baseline_from_live_blocks)
+{
+    auto b0 = CreateHalMalloc(0x1000, 0, 100);
+    auto b1 = CreateHalMalloc(0x2000, 1, 50);
+    auto h0 = CreateHostMalloc(0x3000, 30);
+    MemoryStateManager::GetInstance().AddEvent(b0);
+    MemoryStateManager::GetInstance().AddEvent(b1);
+    MemoryStateManager::GetInstance().AddEvent(h0);
+
+    MemoryStateManager::GetInstance().ResetUsageBaseline();
+    EXPECT_EQ(MemoryStateManager::GetInstance().halUsed_[0], 100);
+    EXPECT_EQ(MemoryStateManager::GetInstance().halUsed_[1], 50);
+    EXPECT_EQ(MemoryStateManager::GetInstance().hostUsed_, 30);
+
+    // 基线后增量：事件 used = 基线和 + 新分配量
+    auto e1 = CreateHalMalloc(0x4000, 0, 20);
+    Handle(e1);
+    EXPECT_EQ(e1->used, 120);
+}
+
+// 多次 TRACE_START 重置而非叠加（无漂移）
+TEST_F(MemoryStateManagerTest, trace_start_twice_resets_not_accumulates)
+{
+    auto b0 = CreateHalMalloc(0x1000, 0, 100);
+    MemoryStateManager::GetInstance().AddEvent(b0);
+
+    MemoryStateManager::GetInstance().ResetUsageBaseline();
+    EXPECT_EQ(MemoryStateManager::GetInstance().halUsed_[0], 100);
+
+    // 存量块被释放后再次 start：基线应重置为当前存量（0）
+    MemoryStateManager::GetInstance().DeteleState(PoolType::HAL, MemoryStateKey{1, 0, 0x1000});
+    MemoryStateManager::GetInstance().ResetUsageBaseline();
+    EXPECT_EQ(MemoryStateManager::GetInstance().halUsed_[0], 0);  // 无叠加漂移
+}
+
+// SHADOW_PROMOTED 块计入基线、SHADOW_CREATED 排除（基线防影子期累计失真）
+TEST_F(MemoryStateManagerTest, trace_start_baseline_includes_promoted_shadow_blocks)
+{
+    // 影子期申请（isShadowEvent=true → SHADOW_CREATED）
+    auto shadow = CreateHalMalloc(0x1000, 0, 100);
+    shadow->isShadowEvent = true;
+    MemoryStateManager::GetInstance().AddEvent(shadow);
+    // 转正：SHADOW_CREATED → SHADOW_PROMOTED（start() 流程在 TRACE_START 前执行）
+    MemoryStateManager::GetInstance().PromoteShadowStates([](MemoryState*) {});
+    // 未转正的影子块（保持 SHADOW_CREATED）
+    auto pending = CreateHalMalloc(0x2000, 1, 50);
+    pending->isShadowEvent = true;
+    MemoryStateManager::GetInstance().AddEvent(pending);
+
+    MemoryStateManager::GetInstance().ResetUsageBaseline();
+    EXPECT_EQ(MemoryStateManager::GetInstance().halUsed_[0], 100);  // 转正块计入（防失真）
+    EXPECT_EQ(MemoryStateManager::GetInstance().halUsed_.count(1), 0);  // 未转正影子块排除
+}
+
+// SHADOW_FREED 块不计入基线
+TEST_F(MemoryStateManagerTest, trace_start_baseline_excludes_shadow_freed_blocks)
+{
+    // 正常块（NORMAL），影子期释放 → SHADOW_FREED（走事件管线标记，影子事件不参与分析分发）
+    auto alloc = CreateHalMalloc(0x1000, 0, 100);
+    MemoryStateManager::GetInstance().AddEvent(alloc);
+    auto shadowFree = CreateHalFree(0x1000, 0, 100);
+    shadowFree->isShadowEvent = true;
+    EventHandler(shadowFree);  // HandleShadowEvent 标记 SHADOW_FREED
+
+    MemoryStateManager::GetInstance().ResetUsageBaseline();
+    EXPECT_EQ(MemoryStateManager::GetInstance().halUsed_[0], 0);  // SHADOW_FREED 不计入
+}
+
+// 统计累计不改写报告层设置的 deviceUsed/processUsed（由采集层查询后写入缓存，池事件读取）
+TEST_F(MemoryStateManagerTest, device_used_not_modified_by_usage_update)
+{
+    auto hal = CreateHalMalloc(0x1000, 0, 100);
+    hal->deviceUsed = 1234;
+    hal->processUsed = 1235;
+    Handle(hal);
+    EXPECT_EQ(hal->deviceUsed, 1234);
+    EXPECT_EQ(hal->processUsed, 1235);
+    EXPECT_EQ(hal->used, 100);
+
+    auto pool = CreatePoolEvent(EventBaseType::MALLOC, 0x2000, 0, 100, 50, 200, PoolType::PTA_CACHING);
+    pool->deviceUsed = 5678;
+    pool->processUsed = 5679;
+    Handle(pool);
+    EXPECT_EQ(pool->deviceUsed, 5678);
+    EXPECT_EQ(pool->processUsed, 5679);
+
+    auto host = CreateHostMalloc(0x3000, 10);
+    host->deviceUsed = 999;
+    Handle(host);
+    EXPECT_EQ(host->deviceUsed, 999);
+    EXPECT_EQ(host->processUsed, static_cast<int64_t>(Utility::GetProcessVmRss()));  // HOST 事件仍回填 VmRSS
 }

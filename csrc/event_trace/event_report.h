@@ -104,6 +104,17 @@ class EventReport
     bool IsNeedSkip(int32_t devid);
     void SetStepInfo(MarkType type, std::string msg, uint64_t rangeId);
 
+    // 查询整卡显存用量（dcmi_get_device_hbm_info，与 npu-smi 同源；内部已有
+    // EventReportSuppressor 防递归上报）；查询失败返回 -1（不更新缓存，限频告警一次）。查询结果缓存到
+    // MemoryStateManager（槽位与事件 device 同源：HAL 事件 flag 解析/池事件 TransDeviceId
+    // 均归一为物理卡号）；HOST（DEVICE_ID_CPU）/无效（GD_INVALID_NUM）devId 不写缓存
+    int64_t QueryDeviceUsed(int32_t devId);
+    // 查询本进程在该设备上的显存占用（dcmi_get_npu_proc_mem_info 按 (card_id, device_id)
+    // 查该卡所有进程列表后按本进程 pid 过滤，与 npu-smi Process memory 同源；内部已有
+    // EventReportSuppressor 防递归上报）；失败返回 -1（不更新缓存，限频告警一次），
+    // 缓存机制与 QueryDeviceUsed 一致
+    int64_t QueryProcessUsed(int32_t devId);
+
    private:
     std::atomic<uint64_t> recordIndex_;
     std::atomic<uint64_t> kernelLaunchRecordIndex_;
@@ -117,6 +128,10 @@ class EventReport
     // 并回填device（分配时语义，与MALLOC事件flag解析同源），保证FREE事件能按key(pid, device, addr)定位
     std::unordered_map<uint64_t, int32_t> halPtrs_;
     std::atomic<bool> destroyed_{false};
+
+    // 查询失败限频告警标记（首个失败日志后静默）
+    std::atomic<bool> deviceUsedQueryWarned_{false};
+    std::atomic<bool> processUsedQueryWarned_{false};
 };
 
 class GetDeviceInfo
@@ -125,9 +140,19 @@ class GetDeviceInfo
     static GetDeviceInfo& Instance();
     bool GetDeviceId(int32_t& devId);
     bool TransDeviceId(int32_t& devId);
-    bool GetDeviceMemInfo(size_t& freeMem, size_t& totalMem);
+    // 查询设备 HBM 用量（dcmi_get_device_hbm_info，与 npu-smi 同源，单位 MB 转出）；
+    // 成功返回 true 并填写 usedMb/totalMb，失败（未 init/未建表/查询失败）返回 false
+    bool GetDeviceHbmInfo(int32_t devId, uint64_t& usedMb, uint64_t& totalMb);
+    // 查询本进程在该设备上的显存占用（dcmi_get_npu_proc_mem_info，按 pid 过滤本进程，字节单位）
+    // 成功返回 true 并填写 usedBytes；失败（未 init/未建表/本进程不在该卡进程列表）返回 false
+    bool GetDeviceProcMemInfo(int32_t devId, uint64_t& usedBytes);
 
    private:
+    // dcmi_init 一次性初始化（失败则本进程内永久降级，不再重试）
+    bool EnsureDcmiInit();
+    // 一次性建表：acl 逻辑号 → (card_id, device_id)（dcmi_get_card_list + num_in_card + logic_id）
+    bool BuildDeviceMap();
+
     GetDeviceInfo()
     {
         const char* visibleDeviceEnv = std::getenv("ASCEND_RT_VISIBLE_DEVICES");
@@ -189,6 +214,13 @@ class GetDeviceInfo
 
     bool setVisibleDevice = false;  // 是否存在可见卡
     std::unordered_map<int32_t, int32_t> visibleDeviceMap;
+
+    std::once_flag dcmiInitFlag_;
+    bool dcmiReady_ = false;  // dcmi_init 成功后才置位
+    std::once_flag dcmiMapInitFlag_;
+    bool dcmiMapReady_ = false;  // 设备映射建表成功后才置位
+    // acl 逻辑号 → (card_id, device_id)，建表后只读
+    std::unordered_map<int32_t, std::pair<int32_t, int32_t>> devIdToDcmiMap_;
 };
 
 MemOpSpace GetMemOpSpace(unsigned long long flag);

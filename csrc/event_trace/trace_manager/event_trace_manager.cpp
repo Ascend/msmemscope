@@ -30,7 +30,7 @@ namespace MemScope
 
 namespace
 {
-// 事件上报抑制深度计数（thread_local）：仪器自身调用真实运行时接口（如aclrtGetMemInfo）期间
+// 事件上报抑制深度计数（thread_local）：仪器自身调用真实运行时接口（如dcmi_get_device_hbm_info）期间
 // 置位，运行时内部的内存申请会被hook捕获并尝试上报，导致递归上报/幻影事件。
 // 嵌套置位时递增计数，最外层离开时归零，各线程互不影响
 thread_local int g_suppressEventReportDepth = 0;

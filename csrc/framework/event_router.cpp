@@ -172,6 +172,8 @@ static MemoryState* HandleTraceEvent(std::shared_ptr<EventBase> event)
     if (event->eventSubType == EventSubType::TRACE_START)
     {
         MemoryStateManager::GetInstance().ClearLastStopTimestamp();
+        // start时重建统计基线：晚于存量影子块转正，从当前存量块重新累计为事实（防影子期累计失真）
+        MemoryStateManager::GetInstance().ResetUsageBaseline();
     }
     else if (event->eventSubType == EventSubType::TRACE_STOP)
     {
