@@ -70,8 +70,17 @@ class LeaksAnalyzer(BaseAnalyzer):
         try:
             with open(self.config.input_path, 'r', encoding='utf-8') as f:
                 reader = csv.DictReader(f)
-                for row in reader:
+                # 校验CSV列，避免后续访问row['ID']/row['Device Id']时KeyError
+                required_headers = ["ID", "Device Id"]
+                missing_headers = [h for h in required_headers if h not in (reader.fieldnames or [])]
+                if missing_headers:
+                    self.error = f"ERROR: CSV format error: missing headers {missing_headers}"
+                    return False
+                for row_num, row in enumerate(reader, start=2):
                     device_id = row['Device Id']
+                    # 跳过ID无法解析为int的脏记录行
+                    if safe_convert_int(row['ID'], context=f"line {row_num}, device {device_id}") is None:
+                        continue
                     # 读取CSV文件按照设备号进行分组
                     self.device_events[device_id].append(row)
             return True

@@ -15,6 +15,18 @@
 # -------------------------------------------------------------------------
 
 import importlib
+
+import csv
+import os
+import sqlite3
+from collections import defaultdict
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Dict, List
+
+from .base import BaseAnalyzer, AnalysisConfig
+from .utility_function import safe_convert_int
+
 check_packages = [
     "sqlite3",
 ]
@@ -24,27 +36,20 @@ for package in check_packages:
         importlib.import_module(package)
     except ImportError:
         print(f"ERROR: Msleaks import {package} failed! Please check it")
-import csv
-import sqlite3
-from collections import defaultdict
-from dataclasses import dataclass
-from pathlib import Path
-from typing import Dict, List
-import os
-from .base import BaseAnalyzer, AnalysisConfig
-from .utility_function import safe_convert_int
-
 
 
 MAX_UINT64 = (1 << 64) - 1
-MIN_EVENTS_NUM = 2              # state buffer中需要最少有两条内存访问记录
-LAST_EVENTS_NUM = 1             # 上一个元素
-ATTR_INDEX = 9                  # attr在csv中的列索引
+MIN_EVENTS_NUM = 2  # state buffer中需要最少有两条内存访问记录
+LAST_EVENTS_NUM = 1  # 上一个元素
+ATTR_INDEX = 9  # attr在csv中的列索引
 
 
 class InefficientConfig(AnalysisConfig):
     """低效代码分析配置"""
-    def __init__(self, input_path: str, mem_size: int = 0, inefficient_type: List[str] = None, idle_threshold: int = 3000):
+
+    def __init__(
+        self, input_path: str, mem_size: int = 0, inefficient_type: List[str] = None, idle_threshold: int = 3000
+    ):
         super().__init__(input_path=input_path)
         self.mem_size = mem_size
         if inefficient_type is None:
@@ -64,7 +69,7 @@ class InefficientConfig(AnalysisConfig):
         def _validate_mem_size(v):
             if not isinstance(v, int) or v < 0:
                 raise ValueError("Memory size must be a non-negative integer")
-            return v  
+            return v
 
         def _validate_inefficient_type(v):
             types = [v] if isinstance(v, str) else v
@@ -74,22 +79,22 @@ class InefficientConfig(AnalysisConfig):
             for t in types:
                 if t not in valid_types:
                     raise ValueError(f"Invalid inefficient type: {t}, valid values are {list(valid_types)}")
-            return types 
+            return types
 
         def _validate_idle_threshold(v):
             if not isinstance(v, int) or v <= 0:
                 raise ValueError("Idle threshold must be a positive integer")
-            return v  
+            return v
 
         validators = {
             "mem_size": _validate_mem_size,
             "inefficient_type": _validate_inefficient_type,
-            "idle_threshold": _validate_idle_threshold
+            "idle_threshold": _validate_idle_threshold,
         }
         self.mem_size = validators["mem_size"](self.mem_size)
         self.inefficient_type = validators["inefficient_type"](self.inefficient_type)
         self.idle_threshold = validators["idle_threshold"](self.idle_threshold)
-        
+
 
 @dataclass
 class OriginEvent:
@@ -129,22 +134,33 @@ class PidState:
     # 包含低效显存相关信息
     api_tmp: List[IneffEvent]
     api_id: int
-    malloc_api_tmp_id: int 
+    malloc_api_tmp_id: int
     free_api_tmp_id: int
     is_operation_started: bool
 
 
 class InefficientAnalyzer(BaseAnalyzer):
     def __init__(self):
-        self.memory_state: Dict[str, List[IneffEvent]] = defaultdict(list)   # 参考MemoryStateKey实现，key是 pid, event_id 的拼接字符串
-        self.inefficient_results: Dict[str, List[str]] = defaultdict(list)   # key是row_num, pid, event_id拼接字符串
+        self.memory_state: Dict[str, List[IneffEvent]] = defaultdict(
+            list
+        )  # 参考MemoryStateKey实现，key是 pid, event_id 的拼接字符串
+        self.inefficient_results: Dict[str, List[str]] = defaultdict(list)  # key是row_num, pid, event_id拼接字符串
         self.pta_pid_states: Dict[int, PidState] = defaultdict(PidState)
         self.atb_pid_states: Dict[int, PidState] = defaultdict(PidState)
         self.headers = [
-                "ID", "Event", "Event Type", "Name", "Timestamp(ns)",
-                "Process Id", "Thread Id", "Device Id", "Ptr", "Attr",
-                "Call Stack(Python)", "Call Stack(C)"
-            ]
+            "ID",
+            "Event",
+            "Event Type",
+            "Name",
+            "Timestamp(ns)",
+            "Process Id",
+            "Thread Id",
+            "Device Id",
+            "Ptr",
+            "Attr",
+            "Call Stack(Python)",
+            "Call Stack(C)",
+        ]
         self.data_format: str
         self.config: InefficientConfig
 
@@ -153,8 +169,8 @@ class InefficientAnalyzer(BaseAnalyzer):
         path = Path(config.input_path)
         # 根据id排序文件
         origin_events = self.file_to_events(path)
-        origin_events.sort(key=lambda origin_event: origin_event.event_id) 
-        
+        origin_events.sort(key=lambda origin_event: origin_event.event_id)
+
         # 处理事件流
         for origin_event in origin_events:
             self.event_handle(origin_event)
@@ -163,7 +179,6 @@ class InefficientAnalyzer(BaseAnalyzer):
         self.write_back_file(path)
 
     def file_to_events(self, input_path: Path) -> List[OriginEvent]:
-
         file_suffix = input_path.suffix.lower()
         if file_suffix == ".csv":
             origin_events = self._read_csv_file(input_path)
@@ -177,17 +192,19 @@ class InefficientAnalyzer(BaseAnalyzer):
         return origin_events
 
     def _read_csv_file(self, input_path: Path) -> List[OriginEvent]:
-
         csv_events = []
         with open(input_path, "r", encoding="utf-8") as f:
             reader = csv.DictReader(f)
             missing_headers = [h for h in self.headers if h not in reader.fieldnames]
             if missing_headers:
                 raise ValueError(f"ERROR: CSV format error: missing headers {missing_headers}")
-            print(f"INFO: Connected to CSV file")
-            for row_num, row in enumerate(reader, start=2): 
+            print("INFO: Connected to CSV file")
+            for row_num, row in enumerate(reader, start=2):
+                event_id = safe_convert_int(row["ID"], context=f"line {row_num}")
+                if event_id is None:
+                    continue
                 event_obj = OriginEvent(
-                    event_id=safe_convert_int(row["ID"]),
+                    event_id=event_id,
                     event=row["Event"],
                     event_type=row["Event Type"],
                     name=row["Name"],
@@ -199,42 +216,45 @@ class InefficientAnalyzer(BaseAnalyzer):
                     attr=row["Attr"],
                     python_call_stack=row["Call Stack(Python)"],
                     cpp_call_stack=row["Call Stack(C)"],
-                    row_num=row_num
+                    row_num=row_num,
                 )
                 csv_events.append(event_obj)
 
-        print(f"INFO: CSV file read successfully")
+        print("INFO: CSV file read successfully")
         return csv_events
-        
+
     def _read_db_file(self, input_path: Path) -> List[OriginEvent]:
         db_events = []
-        conn = None             # 数据库连接（后续需确保关闭）
-        cursor = None           # 游标
+        conn = None  # 数据库连接（后续需确保关闭）
+        cursor = None  # 游标
         try:
             conn = sqlite3.connect(str(input_path))
             cursor = conn.cursor()
             print(f"INFO: Connected to {input_path.name} (table: memscope_dump)")
 
-            cursor.execute(f"SELECT name FROM sqlite_master WHERE type='table' AND name='memscope_dump'")
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='memscope_dump'")
             if not cursor.fetchone():
                 raise ValueError(f"Table 'memscope_dump' not found in database {input_path}")
 
-            cursor.execute(f"PRAGMA table_info(memscope_dump)")            
-            db_columns = [col[1] for col in cursor.fetchall()]          
+            cursor.execute("PRAGMA table_info(memscope_dump)")
+            db_columns = [col[1] for col in cursor.fetchall()]
             missing_headers = [h for h in self.headers if h not in db_columns]
             if missing_headers:
                 raise ValueError(f"ERROR: DB format error: missing headers {missing_headers}")
 
-            cursor.execute(f"SELECT * FROM memscope_dump")
-            db_rows = cursor.fetchall()  
-            column_names = [desc[0] for desc in cursor.description]  
+            cursor.execute("SELECT * FROM memscope_dump")
+            db_rows = cursor.fetchall()
+            column_names = [desc[0] for desc in cursor.description]
             row_dict_list = [dict(zip(column_names, row)) for row in db_rows]  # 转换为字典列表（与 CSV 格式对齐）
 
             for row_num, row in enumerate(row_dict_list, start=1):
-            
+                # 跳过ID无法解析为int的脏记录行
+                event_id = safe_convert_int(row["ID"], context=f"line {row_num}")
+                if event_id is None:
+                    continue
                 # 构建 OriginEvent 对象（参数与 CSV 完全一致）
                 event_obj = OriginEvent(
-                    event_id=safe_convert_int(row["ID"]),
+                    event_id=event_id,
                     event=str(row["Event"]).strip(),
                     event_type=str(row["Event Type"]).strip(),
                     name=str(row["Name"]).strip(),
@@ -246,7 +266,7 @@ class InefficientAnalyzer(BaseAnalyzer):
                     attr=str(row["Attr"]).strip(),
                     python_call_stack=str(row["Call Stack(Python)"]).strip(),
                     cpp_call_stack=str(row["Call Stack(C)"]).strip(),
-                    row_num=row_num
+                    row_num=row_num,
                 )
                 db_events.append(event_obj)
 
@@ -261,14 +281,14 @@ class InefficientAnalyzer(BaseAnalyzer):
             if conn:
                 conn.close()
 
-        print(f"INFO: DB file read successfully")
+        print("INFO: DB file read successfully")
         return db_events
 
     def event_handle(self, origin_event: OriginEvent):
         # 处理OP_LAUNCH事件
         ineff_event = self._event_convert(origin_event)
         if ineff_event.event == "OP_LAUNCH":
-            if ineff_event.event_type == "ATEN_START" or ineff_event.event_type == "ATEN_END":
+            if ineff_event.event_type in ("ATEN_START", "ATEN_END"):
                 pid_states = self.pta_pid_states
             else:
                 pid_states = self.atb_pid_states
@@ -283,10 +303,10 @@ class InefficientAnalyzer(BaseAnalyzer):
             if ineff_event.event_type == "PTA" or (ineff_event.event == "ACCESS" and ineff_event.access_type == "PTA"):
                 pid_states = self.pta_pid_states
             else:
-                pid_states = self.atb_pid_states           
-            
+                pid_states = self.atb_pid_states
+
             self._pid_state_init(ineff_event.pid, pid_states)
-            self._handle_memory_event(ineff_event, pid_states)            # state通过成员变量memory_state获取，无需传入
+            self._handle_memory_event(ineff_event, pid_states)  # state通过成员变量memory_state获取，无需传入
             return
 
     def _pid_state_init(self, pid: int, pid_states: Dict[int, PidState]):
@@ -296,22 +316,21 @@ class InefficientAnalyzer(BaseAnalyzer):
                 api_id=0,
                 malloc_api_tmp_id=MAX_UINT64,
                 free_api_tmp_id=MAX_UINT64,
-                is_operation_started=False
+                is_operation_started=False,
             )
             pid_states[pid] = state
 
     def _handle_oplaunch_event(self, ineff_event: IneffEvent, pid_states: Dict[int, PidState]):
-
         event_sub_type = ineff_event.event_type
         pid = ineff_event.pid
         pid_state = pid_states[pid]
 
-        if (event_sub_type == "ATB_START" or event_sub_type == "ATEN_START"):
+        if event_sub_type in ("ATB_START", "ATEN_START"):
             pid_state.is_operation_started = True
             pid_state.api_id += 1
             return
-        
-        if (event_sub_type == "ATB_END" or event_sub_type == "ATEN_END"):
+
+        if event_sub_type in ("ATB_END", "ATEN_END"):
             pid_state.is_operation_started = False
             self._classify_event_tmp(pid, pid_states)
             return
@@ -326,21 +345,21 @@ class InefficientAnalyzer(BaseAnalyzer):
         else:
             raw_attr = origin_event.attr.strip()
             attr_str = raw_attr[1:-1].strip()
-            attr_pairs = attr_str.split(',')          
+            attr_pairs = attr_str.split(',')
             attr_dict = {}
 
             for pair in attr_pairs:
                 key_value = pair.strip().split(':', 1)
                 if len(key_value) == 2:
-                    key = key_value[0].strip().strip('"')         # 去除双引号
+                    key = key_value[0].strip().strip('"')  # 去除双引号
                     value = key_value[1].strip().strip('"')
                     attr_dict[key] = value
 
             allocation_id = int(attr_dict.get('allocation_id', '-1'))
             size = int(attr_dict.get('size', '-1'))
             access_type = attr_dict.get('type', "")
-            api_id = -1  
-        
+            api_id = -1
+
         ineff_obj = IneffEvent(
             event_id=origin_event.event_id,
             event=origin_event.event,
@@ -357,10 +376,9 @@ class InefficientAnalyzer(BaseAnalyzer):
         return ineff_obj
 
     def _handle_memory_event(self, ineff_event: IneffEvent, pid_states: Dict[int, PidState]):
-        
         tmp_pid = ineff_event.pid
         pid_state = pid_states[tmp_pid]
-        if (pid_state.is_operation_started is False):
+        if pid_state.is_operation_started is False:
             pid_state.api_id += 1
             ineff_event.api_id = pid_state.api_id
             pid_state.api_tmp.append(ineff_event)
@@ -376,9 +394,8 @@ class InefficientAnalyzer(BaseAnalyzer):
         self._inefficient_analysis(ineff_event, pid_states)
 
     def _classify_event_tmp(self, pid: int, pid_states: Dict[int, PidState]):
-        
         pid_state = pid_states[pid]
-        if (len(pid_state.api_tmp) == 0):
+        if len(pid_state.api_tmp) == 0:
             return
         local_events = pid_state.api_tmp
         pid_state.api_tmp = []
@@ -386,42 +403,40 @@ class InefficientAnalyzer(BaseAnalyzer):
         has_free = False
 
         for tmp_event in local_events:
-            if (tmp_event.event == "MALLOC"):
+            if tmp_event.event == "MALLOC":
                 has_malloc = True
-            if (tmp_event.event == "FREE"):
+            if tmp_event.event == "FREE":
                 has_free = True
-        if (has_malloc):
+        if has_malloc:
             pid_state.malloc_api_tmp_id = pid_state.api_id
 
-        if (has_free):
+        if has_free:
             pid_state.free_api_tmp_id = pid_state.api_id
 
     def _inefficient_analysis(self, ineff_event: IneffEvent, pid_states: Dict[int, PidState]):
-        
         # 存在开头不是malloc的情况
         key = f"{ineff_event.pid}_{ineff_event.allocation_id}"
-        if (len(self.memory_state[key]) != 0):
+        if len(self.memory_state[key]) != 0:
             front_element = self.memory_state[key][0]
-            if (front_element.event != "MALLOC"):
+            if front_element.event != "MALLOC":
                 return
 
-        if (ineff_event.event == "ACCESS"):
+        if ineff_event.event == "ACCESS":
             self._temporary_idleness(ineff_event)
-            if (pid_states[ineff_event.pid].free_api_tmp_id == MAX_UINT64):
+            if pid_states[ineff_event.pid].free_api_tmp_id == MAX_UINT64:
                 return
             self._early_allocation(ineff_event, pid_states)
 
-        if (ineff_event.event == "FREE" and pid_states[ineff_event.pid].malloc_api_tmp_id != MAX_UINT64):
+        if ineff_event.event == "FREE" and pid_states[ineff_event.pid].malloc_api_tmp_id != MAX_UINT64:
             self._late_deallocation(ineff_event, pid_states)
 
     def _early_allocation(self, ineff_event: IneffEvent, pid_states: Dict[int, PidState]):
-
         key = f"{ineff_event.pid}_{ineff_event.allocation_id}"
         state = self.memory_state[key]
-        if ("early_allocation" in state[0].inefficient_type):
+        if "early_allocation" in state[0].inefficient_type:
             return
-        
-        eventsLen = len(state) 
+
+        eventsLen = len(state)
         first_access_api_id = MAX_UINT64
         malloc_api_id = 0
         pid_state = pid_states[ineff_event.pid]
@@ -438,64 +453,64 @@ class InefficientAnalyzer(BaseAnalyzer):
         # 1.如果没找到第一个ACCESS值，说明此时ACCESS API与MALLOC的相等
         # 2.如果MALLOC和最近的FREE事件在同一个API中，则无法交换。
         # ACCESS所在API此时未结束，还没有将此时API更新至最近MALLOC或者FREE的ID，所以FA 和 FREE事件API值不可能相等
-        if (first_access_api_id == MAX_UINT64 or malloc_api_id == pid_state.free_api_tmp_id):
+        if first_access_api_id == MAX_UINT64 or malloc_api_id == pid_state.free_api_tmp_id:
             return
 
         # 如果FREE的API Id在FA与MALLOC之间，则判断MALLOC内存块为过早申请
         # 根据之前识别低效显存的设计,最后的结果都会
-        if (first_access_api_id > pid_state.free_api_tmp_id and malloc_api_id < pid_state.free_api_tmp_id):
-            if (state[0].size >= self.config.mem_size and "early_allocation" in self.config.inefficient_type):
+        if first_access_api_id > pid_state.free_api_tmp_id and malloc_api_id < pid_state.free_api_tmp_id:
+            if state[0].size >= self.config.mem_size and "early_allocation" in self.config.inefficient_type:
                 state[0].inefficient_type.append("early_allocation")
                 key = f"{state[0].row_num}_{ineff_event.pid}_{state[0].event_id}"
                 self.inefficient_results[key].append("early_allocation")
-        
-    def _late_deallocation(self, ineff_event: IneffEvent, pid_states: Dict[int, PidState]):
 
+    def _late_deallocation(self, ineff_event: IneffEvent, pid_states: Dict[int, PidState]):
         key = f"{ineff_event.pid}_{ineff_event.allocation_id}"
         state = self.memory_state[key]
         # 1.找到LAST ACCESS。2.判断FREE API与LA API之间有无MALLOC API
         eventsLen = len(state)
-        last_access_api_id = MAX_UINT64 
+        last_access_api_id = MAX_UINT64
         # 此时内存块需要具有MALLOC、ACCESS、FREE的完整事件，且在state->events中具有顺序，因此events中倒数第二个事件即为LA
-        if (eventsLen >= MIN_EVENTS_NUM):
-            if (state[eventsLen - MIN_EVENTS_NUM].event == "ACCESS"):
+        if eventsLen >= MIN_EVENTS_NUM:
+            if state[eventsLen - MIN_EVENTS_NUM].event == "ACCESS":
                 last_access_api_id = state[eventsLen - MIN_EVENTS_NUM].api_id
-        
+
         pid_state = pid_states[ineff_event.pid]
         # 没有找到LA, 或者LA在当前API中
-        if (last_access_api_id == MAX_UINT64 or last_access_api_id == pid_state.api_id):
+        if last_access_api_id in (MAX_UINT64, pid_state.api_id):
             return
 
         # 如果LA与FREE中存在MALLOC的API，则说明为过迟释放
-        if (last_access_api_id < pid_state.malloc_api_tmp_id and pid_state.api_id > pid_state.malloc_api_tmp_id):
-            if (state[0].size >= self.config.mem_size and "late_deallocation" in self.config.inefficient_type):
+        if last_access_api_id < pid_state.malloc_api_tmp_id and pid_state.api_id > pid_state.malloc_api_tmp_id:
+            if state[0].size >= self.config.mem_size and "late_deallocation" in self.config.inefficient_type:
                 state[0].inefficient_type.append("late_deallocation")
                 key = f"{state[0].row_num}_{ineff_event.pid}_{state[0].event_id}"
                 self.inefficient_results[key].append("late_deallocation")
 
     def _temporary_idleness(self, ineff_event: IneffEvent):
-
         key = f"{ineff_event.pid}_{ineff_event.allocation_id}"
         front_element = self.memory_state[key][0]
-        if ("temporary_idleness" in front_element.inefficient_type):
+        if "temporary_idleness" in front_element.inefficient_type:
             return
 
         state = self.memory_state[key]
         eventsLen = len(state)
 
         # 当events不足2个或者倒数第二个事件不为ACCESS时，不用判断，此时最后一个events必定为ACCESS
-        if (eventsLen < MIN_EVENTS_NUM or state[eventsLen-MIN_EVENTS_NUM].event != "ACCESS"):
+        if eventsLen < MIN_EVENTS_NUM or state[eventsLen - MIN_EVENTS_NUM].event != "ACCESS":
             return
         # 当最后一个API值大于倒数第2个API值 并且 其差值大于阈值时，判为临时闲置
-        if (state[eventsLen - LAST_EVENTS_NUM].api_id > state[eventsLen - MIN_EVENTS_NUM].api_id and 
-            state[eventsLen - LAST_EVENTS_NUM].api_id - state[eventsLen - MIN_EVENTS_NUM].api_id > self.config.idle_threshold):
-            if (state[0].size >= self.config.mem_size and "temporary_idleness" in self.config.inefficient_type):
+        if (
+            state[eventsLen - LAST_EVENTS_NUM].api_id > state[eventsLen - MIN_EVENTS_NUM].api_id
+            and state[eventsLen - LAST_EVENTS_NUM].api_id - state[eventsLen - MIN_EVENTS_NUM].api_id
+            > self.config.idle_threshold
+        ):
+            if state[0].size >= self.config.mem_size and "temporary_idleness" in self.config.inefficient_type:
                 state[0].inefficient_type.append("temporary_idleness")
                 key = f"{state[0].row_num}_{ineff_event.pid}_{state[0].event_id}"
                 self.inefficient_results[key].append("temporary_idleness")
 
     def write_back_file(self, input_path: Path):
-
         file_suffix = input_path.suffix.lower()
         if file_suffix == ".csv":
             self._write_back_csv(input_path)
@@ -503,7 +518,6 @@ class InefficientAnalyzer(BaseAnalyzer):
             self._write_back_db(input_path)
 
     def _write_back_csv(self, input_path: Path):
-
         with open(input_path, 'r', newline='', encoding='utf-8') as file:
             reader = csv.reader(file)
             data = list(reader)
@@ -511,17 +525,16 @@ class InefficientAnalyzer(BaseAnalyzer):
         print(f"INFO: Connecting to csv {input_path.name} to write results")
         # 低效显存写回attr
         for inefficient_key, inefficient_value in self.inefficient_results.items():
- 
-            parts = inefficient_key.split('_', 2)   
+            parts = inefficient_key.split('_', 2)
             row_num_str, pid_str, id_str = parts
             row_index = int(row_num_str) - 1
- 
+
             # 读取旧attr并更新
             row_data = data[row_index]
             original_attr = row_data[ATTR_INDEX].strip()
             updated_attr_str = self._update_attr(original_attr, inefficient_value)
             row_data[ATTR_INDEX] = updated_attr_str
- 
+
         # 提交所有更新
         with open(input_path, 'w', newline='', encoding='utf-8') as file:
             writer = csv.writer(file)
@@ -531,19 +544,20 @@ class InefficientAnalyzer(BaseAnalyzer):
     def _write_back_db(self, input_path: Path, db_table: str = "leaks_dump"):
         ALLOWED_TABLES = {"leaks_dump"}
         if db_table not in ALLOWED_TABLES:
-            raise ValueError(f"Invalid table name: memscope_dump")
+            raise ValueError("Invalid table name: memscope_dump")
         conn = None
         cursor = None
         try:
             conn = sqlite3.connect(str(input_path))
             cursor = conn.cursor()
-            cursor.execute("PRAGMA journal_mode=WAL;")              # 启用WAL模式 加快文件写入
-            cursor.execute("PRAGMA synchronous=NORMAL;")            # 降低磁盘同步次数 如果遇到断电、崩溃可能会有风险 但是会大幅提高速度
-            cursor.execute("PRAGMA cache_size=-20000;")             # 增大内存缓存大小
+            cursor.execute("PRAGMA journal_mode=WAL;")  # 启用WAL模式 加快文件写入
+            cursor.execute(
+                "PRAGMA synchronous=NORMAL;"
+            )  # 降低磁盘同步次数 如果遇到断电、崩溃可能会有风险 但是会大幅提高速度
+            cursor.execute("PRAGMA cache_size=-20000;")  # 增大内存缓存大小
             print(f"INFO: Connecting to database {input_path.name} to write results")
 
             for inefficient_key, inefficient_value in self.inefficient_results.items():
-
                 parts = inefficient_key.split('_', 2)
                 row_num_str, pid_str, id_str = parts
                 target_id = int(id_str)
@@ -552,22 +566,23 @@ class InefficientAnalyzer(BaseAnalyzer):
 
                 # 数据库数据不推荐使用行号写入 这里用pid + id定位唯一行
                 cursor.execute(
-                    f"SELECT Attr FROM memscope_dump WHERE ID = ? AND `Process Id` = ?",  
-                    (target_id, target_pid) 
+                    "SELECT Attr FROM memscope_dump WHERE ID = ? AND `Process Id` = ?", (target_id, target_pid)
                 )
 
                 # 读取旧attr并更新
                 result = cursor.fetchone()
                 if not result:
-                    print(f"WARNING: No record with ID={target_id} found in the database (line number {row_num}), please check")
+                    print(
+                        f"WARNING: No record with ID={target_id} found in the database (line number {row_num}), please check"
+                    )
                     continue
                 original_attr = result[0]
                 updated_attr_str = self._update_attr(original_attr, inefficient_value)
-                
+
                 # 执行数据库更新（使用参数化查询避免SQL注入）
                 cursor.execute(
-                    f"UPDATE memscope_dump SET Attr = ? WHERE ID = ? AND `Process Id` = ?",
-                    (updated_attr_str, target_id, target_pid)
+                    "UPDATE memscope_dump SET Attr = ? WHERE ID = ? AND `Process Id` = ?",
+                    (updated_attr_str, target_id, target_pid),
                 )
 
             # 提交所有更新
@@ -577,7 +592,7 @@ class InefficientAnalyzer(BaseAnalyzer):
         except sqlite3.OperationalError as e:
             print(f"ERROR: Database operation failed → {str(e)} (check if file is a valid SQLite database)")
             if conn:
-                conn.rollback()             # 出错时回滚事务,删除错误缓存
+                conn.rollback()  # 出错时回滚事务,删除错误缓存
         except Exception as e:
             print(f"ERROR: Failed to write to database → {str(e)}")
             if conn:
@@ -616,8 +631,9 @@ class InefficientAnalyzer(BaseAnalyzer):
 
 
 # 对外暴露的便捷低效显存识别函数
-def check_inefficient(input_path: str, mem_size: int = 0, inefficient_type: List[str] = None, idle_threshold: int = 3000):
-
+def check_inefficient(
+    input_path: str, mem_size: int = 0, inefficient_type: List[str] = None, idle_threshold: int = 3000
+):
     if inefficient_type is None:
         inefficient_type: List[str] = ["early_allocation", "late_deallocation", "temporary_idleness"]
 
@@ -627,5 +643,5 @@ def check_inefficient(input_path: str, mem_size: int = 0, inefficient_type: List
         inefficient_type=inefficient_type,
         idle_threshold=idle_threshold,
     )
-    
+
     return InefficientAnalyzer().analyze(config)
