@@ -10,7 +10,7 @@
   - [Label Description](#label-description)
     - [Content Labels](#content-labels)
     - [Priority Labels](#priority-labels)
-  - [Committing Specifications](#committing-specifications)
+  - [Submission Guidelines](#submission-guidelines)
     - [Title Requirements](#title-requirements)
     - [Content Requirements](#content-requirements)
     - [Code of Conduct](#code-of-conduct)
@@ -65,7 +65,7 @@ Enter the title and content of an issue on the left and set configuration items 
 | medium-priority | Medium priority. The issue is handled according to the normal process.|
 | low-priority | Low priority. The issue (for example, less important scenarios and optimization suggestions) can be handled later.|
 
-## Committing Specifications
+## Submission Guidelines
 
 ### Title Requirements
 

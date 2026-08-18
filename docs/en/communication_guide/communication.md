@@ -10,7 +10,7 @@ Submitting [Issues](https://gitcode.com/Ascend/msmemscope/issues) in the GitCode
 
 If your issue is complicated or you want to keep it confidential, send an email to:
 
-**<memscope@outlook.com>**
+**`memscope@outlook.com`**
 
 Describe your question or suggestion in detail in the email. We will reply as soon as possible.
 

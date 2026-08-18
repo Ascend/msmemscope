@@ -9,9 +9,10 @@ msMemScope provides analysis capabilities such as leak detection, comparison, mo
 |Memory leak|If memory is not released for a long time or memory leaks occur, msMemScope provides memory leak analysis and kernel-launch-based memory change analysis to locate and analyze problems.|
 |Memory comparison|If the memory usage differs between two steps, it may lead to excessive memory usage or even out of memory (OOM) errors. In this case, use the memory comparison analysis function of msMemScope to locate and analyze the problem.|
 |Memory block monitoring|In foundation model scenarios, if it is difficult to locate memory corruption, msMemScope can monitor the specified memory blocks before and after operator execution through Python APIs and CLIs. Based on changes in the memory block data, it can quickly determine the scope or exact location of memory corruption between operators.|
-|Memory decomposition|msMemScope supports memory decomposition to analyze the memory usage of the CANN layer and Ascend Extension for PyTorch framework and outputs model weights, activations, gradients, and optimizer and other component memory usage.|
+|Memory decomposition|msMemScope supports memory decomposition to analyze the memory usage of the CANN layer and Ascend for PyTorch framework and outputs model weights, activations, gradients, and optimizer and other component memory usage.|
 |Identification of inefficient memory|During model training and inference, some memory blocks may not be used immediately after being allocated or may not be deallocated in a timely manner after being used. msMemScope identifies the inefficient memory usage to optimize model training and inference.|
-|One-click analysis|msMemScope supports on-click memory decomposition and memory snapshot to improve memory analysis usability, allowing core functions of vLLM, FSDP, and verl to be automatically dotted for quick analysis.|
+|One-click analysis|msMemScope supports one-click memory decomposition and memory snapshot to improve memory analysis usability, allowing core functions of vLLM, FSDP, and verl to be automatically dotted for quick analysis.|
+|NPU Sanitizer|For custom operators, msMemScope, in coordination with NPU Sanitizer, provides the custom operator instrumentation feature, allowing developers to feed memory read-write information into the Sanitizer's analysis pipeline via a reported formatted message string for detecting multi-stream synchronization errors.|
 
 ## Preparations
 
@@ -36,7 +37,7 @@ Memory leak analysis supports both online and offline modes.
 
 **Online Mode**
 
-During memory analysis, use the mstx instrumentation function to locate issues. For details about mstx instrumentation, see [MindStudio Tools Extension Library Interfaces](https://gitcode.com/Ascend/mstx/blob/master/docs/en/api_reference/README.md).
+During memory analysis, use the mstx instrumentation function to locate issues. For details about mstx instrumentation, see [MindStudio Tools Extension Library Interfaces](https://gitcode.com/Ascend/mstx/blob/26.1.0/docs/en/api_reference/README.md).
 
 1. Use msMemScope to start the user program (represented by **Application**).
 
@@ -48,11 +49,13 @@ During memory analysis, use the mstx instrumentation function to locate issues. 
     - If the information shown in [Figure 1 Memory leak](#leak) is displayed, a memory leak occurs. The command output displays the summary information about memory leaks of each device, including the number of steps where memory leak occurs, associated kernel, address, and leak size.
 
         Figure 1 Memory leak<a id="leak"></a>
+
         ![](../figures/memory_leak.png)
 
     - If the information shown in [Figure 2 Memory fluctuation](#fluctuation) is displayed, the memory fluctuates. The command output displays the memory fluctuation in a single step (defined by the ratio of the minimum memory pool allocation to the maximum memory pool allocation) and the minimum memory pool allocation. The minimum ratio and maximum ratio are provided as references. Users can determine whether there is a memory leak risk based on the ratio.
 
-        > [!NOTE]Note 
+        > [!NOTE]
+        > 
         > The memory is not stable in the first step. Therefore, only the memory fluctuation from the second step can be analyzed. The memory fluctuation in the first step can be ignored.
 
         Figure 2 Memory fluctuation <a id="fluctuation"></a>
@@ -63,9 +66,10 @@ During memory analysis, use the mstx instrumentation function to locate issues. 
 
 msMemScope supports offline leak analysis of memory events in a specified range. After using mstx to mark the memory leak analysis range, you can use this function to analyze the dumped files.
 
-1. Apply the mstx mark function to the range where leak detection is required. For details about mstx instrumentation, see [MindStudio Tools Extension Library Interfaces](https://gitcode.com/Ascend/mstx/blob/master/docs/en/api_reference/README.md).
+1. Apply the mstx mark function to the range where leak detection is required. For details about mstx instrumentation, see [MindStudio Tools Extension Library Interfaces](https://gitcode.com/Ascend/mstx/blob/26.1.0/docs/en/api_reference/README.md).
 
-    > [!NOTE]Note  
+    > [!NOTE]
+    >
     > - The mark information is used as the input of the offline analysis interfaces.
     > - Use the mark function to mark three points, which are referred to as A, B, and C. The memory allocated within the range from A to B must be deallocated before point C. Otherwise, the memory is considered as a memory leak.
 
@@ -98,7 +102,7 @@ msMemScope supports offline leak analysis of memory events in a specified range.
 
 ### Function Description
 
-If the training and inference parameters are the same but the CANN version does not match the version of Ascend Extension for PyTorch or MindSpore, memory usage of two different steps of training and inference jobs may be different, causing excessive memory usage or even OOM. msMemScope then can be used to compare memory to effectively locate memory issues.
+If the training and inference parameters are the same but the CANN version does not match the version of Ascend for PyTorch or MindSpore, memory usage of two different steps of training and inference jobs may be different, causing excessive memory usage or even OOM. msMemScope then can be used to compare memory to effectively locate memory issues.
 
 ### Precautions
 
@@ -153,7 +157,7 @@ In foundation model scenarios, the computing task of a single card is highly com
 ### Precautions
 
  - The memory block monitoring function supports only Aten single-operator and ATB operators. You can set **--level** to specify the memory block monitoring at the op and kernel levels.
- - In the Ascend Extension for PyTorch scenario, kernel monitoring is only performed through the Python interfaces and is not supported via **watch**. For monitoring via the Python interfaces, see [3](#3).
+ - In the Ascend for PyTorch scenario, kernel monitoring is only performed through the Python interfaces and is not supported via **watch**. For monitoring via the Python interfaces, see [3](#3).
  - You need to limit the range of operators to be monitored and the memory block size to prevent longer dump times and excessive drive space consumption due to overly large value settings.
  - The memory block monitoring function is not supported by VLLM-Ascend because VLLM-Ascend does not support the setting of **ASCEND_LAUNCH_BLOCKING=1**.
 
@@ -182,7 +186,8 @@ In foundation model scenarios, the computing task of a single card is highly com
 
     The interfaces of the Python watcher module are added. The **watch** interface indicates that the memory block is monitored, and the **remove** interface indicates that the memory block monitoring is canceled. There are two methods to enable memory block monitoring. For details about the parameters in the sample code, see [Table 2 Parameters-for-enabling-memory-block-monitoring](#parameters-for-enabling-memory-block-monitoring).
 
-    > [!NOTE]Note   
+    > [!NOTE]
+    >
     > You are advised to use method 1 to specify the tensor to be monitored. If method 2 is used, confirm the validity of the memory block address and length.
 
     - Method 1: Input the tensor directly.
@@ -210,9 +215,9 @@ In foundation model scenarios, the computing task of a single card is highly com
         import torch
         import torch_npu
         import msmemscope
-        
+
         torch.npu.synchronize()
-        test_tensor = torch.randn(2,3).to('npu:0')       
+        test_tensor = torch.randn(2,3).to('npu:0')
         msmemscope.watcher.watch(test_tensor.data_ptr(), length=1000, name="test", dump_nums=2)
         ...
         torch.npu.synchronize()
@@ -231,7 +236,7 @@ In foundation model scenarios, the computing task of a single card is highly com
 4. Check the result directory of memory block monitoring after command execution.
 
     ```text
-    ├── memscopeDumpResults             
+    ├── memscopeDumpResults
     │    └── watch_dump
           │    ├── {deviceid}_{tid}_{opName}_{Number of calls}-{watchedOpName}_{outid}_{before/after}.bin       # A .bin file is flushed if full-content is specified.
           │    ├── watch_dump_data_check_sum_{deviceid}_{timestamp}.csv         # A .csv file is flushed if full-content is not specified.
@@ -329,7 +334,7 @@ Table 1 Inefficient memory types<a id="inefficient-memory-types"></a>
 
 ### Precautions
 
-msMemScope can identify only inefficient memory in ATB LLM and Ascend Extension for PyTorch single-operator scenarios.
+msMemScope can identify only inefficient memory in ATB LLM and Ascend for PyTorch single-operator scenarios.
 
 ### Usage Example
 
@@ -368,7 +373,7 @@ The one-click analysis function contains two APIs.
     |framework|Supported framework. Currently, only vLLM-Ascend is supported.|
     |version|Framework version. Currently, only vLLM-Ascend 11.0 is supported.|
     |component|Component or module to be hooked. For example, worker corresponds to vLLM-Ascend, and actor_rollout\ref\critic\reward corresponds to verl.<br> Currently, only worker is supported. |
-    |hook_type|Hook function. Currently, **decompose** (for memory decomposition) and **snapshot** (for memory snapshot) are supported.|
+    |type|Hook function. Currently, **decompose** (for memory decomposition) and **snapshot** (for memory snapshot) are supported.|
 
 - **cleanup_framework_hooks()**
 
@@ -378,7 +383,7 @@ The one-click analysis function contains two APIs.
 
 The following describes how to enable one-click memory decomposition in the vLLM inference framework.
 
-1. Set the configuration file to importing msMemScopre, clear historical records through `cleanup_framework_hooks`, and use `init_framework_hooks` to configure the required framework type, version, component, and feature.
+1. Set the configuration file to importing msMemScope, clear historical records through `cleanup_framework_hooks`, and use `init_framework_hooks` to configure the required framework type, version, component, and feature.
 
     The following is an example:
 
@@ -399,3 +404,133 @@ The following describes how to enable one-click memory decomposition in the vLLM
 ### Output Description
 
 The one-click analysis function supports only memory decomposition and memory snapshot. For details about the output information, see [Memory Decomposition](#memory-decomposition) and [Memory Snapshot Collection](./memory_profile.md#collection-via-python-apis).
+
+## NPU Sanitizer
+
+### Function Description
+
+NPU Sanitizer (`torch_npu.npu._sanitizer`) is used to detect synchronization errors in NPU multi-stream programs, such as data races and unsynchronized cross-stream accesses. For ATen operators registered via `torch.ops`, Sanitizer automatically intercepts submission information through `TorchDispatchMode`. However, for custom operators or operators that directly dispatch underlying kernels, the automatic interception mechanism does not apply.
+
+msMemScope, in coordination with NPU Sanitizer, provides a custom operator instrumentation feature, allowing developers to report a formatted string via the mstx interface at custom operator call sites. msMemScope then converts this string into a kernel launch event that Sanitizer can recognize and feeds it into the native analysis pipeline for synchronization error detection.
+
+The workflow consists of four steps:
+
+1. **Enable Sanitizer**: Call `msmemscope.enable_npu_sanitizer()` to enable NPU Sanitizer.
+2. **Report Instrumentation**: At the custom operator call site, call the native mstx interface (Python: `mstx.mark()`; C: `mstxMarkA()`) with a formatted string. In Python, pass `torch_npu.npu.current_stream().npu_stream` to specify the stream for instrumentation; in C, pass the current context's `stream` object.
+3. **Intercept and Parse**: msMemScope intercepts messages with the `sanitizer-op:` prefix at the C++ layer and parses the `name`, `read`, and `write` fields.
+4. **Trigger Analysis**: Assemble a kernel launch event and calls the native Sanitizer's `_handle_kernel_launch` interface to feed it into the analysis pipeline.
+
+### Message String Format
+
+A single `MSTX mark` is used for custom operator instrumentation, with the following format:
+
+```text
+sanitizer-op: name=<operator_name>;read=<alias:addr:size>,...;write=<alias:addr:size>,...
+```
+
+**Field Description**
+
+| Field | Type | Required | Description |
+|------|------|------|------|
+| `name` | String | Yes | Fully qualified operator name, recommended in the format of  `module.func_name` |
+| `read` | String | No | List of read memory addresses, each in `parameter_name:address:size format`, multiple items separated by commas |
+| `write` | String | No | List of write memory addresses, format same as `read` |
+
+**Constraints**
+
+- `;` is the top-level field separator, `=` is the key-value separator, `,` is the list item separator, and `:` is the parameter name-address-size separator.
+- Addresses support both decimal and hexadecimal (`0x` prefix) formats.
+- f the same address appears in both  `read` and `write`, it indicates an in-place read-write operation.
+- Parameter names are defined by the caller and should be less than 32 bytes in length.
+- The total message length must not exceed 1024 bytes.
+
+**Message Example**
+
+```text
+sanitizer-op: name=my_ext.my_fused_op;read=input_a:0x7f00:1024,input_b:0x7f04:512;write=output:0x7f08:2048
+```
+
+### Precautions
+
+- NPU Sanitizer must be enabled via msMemScope  (i.e., by calling `msmemscope.enable_npu_sanitizer()`) for messages with the `sanitizer-op:` prefix to be intercepted and trigger analysis.
+- This feature is only available in eager mode and does not support graph mode.
+- The overhead of the instrumentation interface is extremely low (mstx marks are on the order of microseconds). For lightweight custom operators that are called frequently, it is recommended to only add tracepoints for cross-stream operators.
+
+### Usage Example
+
+**Python Scenario**
+
+1. Enable NPU Sanitizer via `msmemscope.enable_npu_sanitizer()`.
+2. At the custom operator call site, call `mstx.mark()` to report a formatted string.
+
+```python
+import torch
+import torch_npu
+import mstx
+import msmemscope
+
+
+def run_my_custom_op(tensor_a, tensor_b, tensor_c):
+    """Custom operator: reads a and b, writes to c"""
+    a_size = tensor_a.numel() * tensor_a.element_size()
+    b_size = tensor_b.numel() * tensor_b.element_size()
+    c_size = tensor_c.numel() * tensor_c.element_size()
+
+    # A single mstx.mark() call reports all read/write information. The second parameter specifies the stream for the instrumentation.
+    mstx.mark(
+        f"sanitizer-op: name=my_ext.my_fused_op;"
+        f"read=a:{tensor_a.data_ptr()}:{a_size},"
+        f"b:{tensor_b.data_ptr()}:{b_size};"
+        f"write=c:{tensor_c.data_ptr()}:{c_size}",
+        torch_npu.npu.current_stream().npu_stream
+    )
+
+    # Actual custom operator execution logic
+    # ...
+
+
+def test():
+    # Enable NPU Sanitizer via msMemScope
+    msmemscope.enable_npu_sanitizer()
+
+    device = torch.device('npu:0')
+    torch.npu.set_device(device)
+
+    tensor_a = torch.randn(1024).to(device)
+    tensor_b = torch.randn(512).to(device)
+    tensor_c = torch.empty(2048).to(device)
+
+    run_my_custom_op(tensor_a, tensor_b, tensor_c)
+
+    print("Test finished.")
+
+
+if __name__ == "__main__":
+    test()
+```
+
+**C Scenario**
+
+In C/C++ custom operators, call `mstxMarkA()` to report a formatted string.
+
+```c
+#include "mstx/ms_tools_ext.h"
+
+void my_fused_op(float* a, int na, float* b, int nb, float* c, int nc,
+                 aclrtStream stream) {
+    char buf[512];
+
+    // A single mstxMarkA() call reports all read/write information
+    snprintf(buf, sizeof(buf),
+        "sanitizer-op: name=my_ext.my_fused_op;"
+        "read=a:%p:%zu,b:%p:%zu;"
+        "write=c:%p:%zu",
+        (void*)a, na * sizeof(float),
+        (void*)b, nb * sizeof(float),
+        (void*)c, nc * sizeof(float));
+    mstxMarkA(buf, stream);
+
+    // Execute kernel
+    launch_my_kernel(a, b, c, na, nb, nc);
+}
+```

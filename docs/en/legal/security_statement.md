@@ -12,10 +12,10 @@ Before using the tool, read the following security instructions carefully to pre
 
 ## File Permission Constraints
 
-  - For security purpose and the principle of least privilege, you are advised to use a common user instead of a high-privilege user (such as root) to install and use msMemScope.
+  - For security purpose and the principle of least privilege, you are advised to use a standard user instead of a high-privilege user (such as root) to install and use msMemScope.
   - Follow the principle of least privilege. For example, prevent other users (**others**) from writing data by disabling permissions like 666 and 777.
   - Ensure that the execution user's **umask** value is greater than or equal to **0027**; otherwise, the permissions of directories and files where performance data is collected may be too high.
-  - Ensure that performance data is saved in the current user's directory and the directory does not contain symbolic links, to prevent potential security problems.
+  - Ensure that input content is secure and reliable, and avoid using symbolic links. All file inputs should be resolved to their true absolute paths to mitigate potential security risks.
 
 **File Permission Reference**
 
