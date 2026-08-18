@@ -31,7 +31,7 @@ Some memory management configurations are set through environment variables. The
 
 | Scenario                                                     | Environment Variable                                                  |
 | --------------------------------------------------------- | ---------------------------------------------------------- |
-| PTA used for memory allocation, with virtual memory enabled to optimize the idle memory in the memory pool| **export PYTORCH_NPU_ALLOC_CONF=expandable_segments:True** |
+| TorchNPU used for memory allocation, with virtual memory enabled to optimize the idle memory in the memory pool| **export PYTORCH_NPU_ALLOC_CONF=expandable_segments:True** |
 | GE used for idle memory optimization in the memory pool: CANN 8.0.RC3.beta1 or later| **export GE_USE_STATIC_MEMORY=3**                          |
 | Optimizing operator workspace reuse in the ATB scenario                         | **export ATB_WORKSPACE_MEM_ALLOC_GLOBAL=1**                |
 
@@ -138,7 +138,7 @@ During training, the global on-chip memory usage continuously increases.
 
     ![alt text](./figures/memscope_leak_output.png)
 
-    As shown in the figure, multiple on-chip memory blocks of about 1.5 MB are leaked in each step, and a total of about 398 MB on-chip memory is leaked.
+    As shown in the figure, multiple on-chip memory blocks of about 1.5MB are leaked in each step, and a total of about 398MB on-chip memory is leaked.
 
 4. Use MindStudio Insight for analysis.
 
@@ -170,7 +170,7 @@ The call stack information is as follows:
 
 ***
 
-"/opt/miniconda3/envs/torch2.6/lib/Python3.11/site\-packages/torch/\_ops.py\(723\): \_\_call\_\_
+"/opt/miniconda3/envs/torch2.6/lib/python3.11/site\-packages/torch/\_ops.py\(723\): \_\_call\_\_
 ./memscope/build/msmemscope/Python/msmemscope/aten\_collection.py\(187\): \_\_torch\_dispatch\_\_
 ./memscope/example/memory\_leak\_demo.py\(99\): create\_memory\_leak
 ./memscope/example/memory\_leak\_demo.py\(150\): main
@@ -192,7 +192,7 @@ Memory used by the framework:
 
 Memory used by the memory pool:
 
-- **PTA Reserved** (memory pool reserved for the PyTorch Ascend framework): 3936 MB
+- **PTA Reserved** (memory pool reserved for the Ascend for PyTorch framework): 3936 MB
 
 - **PTA Model** (on-chip memory actually used by the model): 2811 MB
 
@@ -202,13 +202,13 @@ The difference between the two values is 1125 MB, indicating that memory fragmen
 
 **Conclusion**
 
-Based on the call stack information, line 99 of `memory_leak_demo.py` is the memory leak source, that is, `leak_tensor = torch.randn(512, 512).to\(device)`. The leaked size is 398 MB. According to the on-chip memory decomposition graph, the reserved on-chip memory is 1125 MB more than the on-chip memory occupied by the model, indicating that on-chip memory fragmentation occurs.
+Based on the call stack information, line 99 of `memory_leak_demo.py` is the memory leak source, that is, `leak_tensor = torch.randn(512, 512).to(device)`. The leaked size is 398MB. According to the on-chip memory decomposition graph, the reserved on-chip memory is 1125 MB more than the on-chip memory occupied by the model, indicating that on-chip memory fragmentation occurs.
 
 In addition to the preceding methods, for Python processes, we need to pay special attention to Python object leaks. The following section describes how to troubleshoot on-chip memory leaks caused by Python objects.
 
 ### Troubleshooting Python Object Leaks
 
-For Python processes, memory leaks are often closely related to the reference of Python objects. In Python processes, memory leaks are often closely related to the referencing of Python objects. The recommended troubleshooting approach follows a logical sequence: first, determine whether the leak is attributable to Python objects; second, identify the leaked objects; and third, locate their allocation points.
+For Python processes, memory leaks are often closely related to the reference of Python objects. The recommended troubleshooting approach follows a logical sequence: first, determine whether the leak is attributable to Python objects; second, identify the leaked objects; and third, locate their allocation points.
 
 #### 1. Check whether Python object leaks occur
 
@@ -276,8 +276,8 @@ Since the first few steps may involve many initialization operations, it is reco
 Output example:
 
 ```shell
-/home/test.py:3: size=576 B (+576 B), count=1 (+1), average=576 B
-/home/test.py:6: size=144 B (+144 B), count=1 (+1), average=144 B
+/home/test.py:3: size=576B (+576B), count=1 (+1), average=576B
+/home/test.py:6: size=144B (+144B), count=1 (+1), average=144B
 ```
 
 In this way, you can locate the memory growth point.
@@ -305,7 +305,7 @@ print(sys.getrefcount(obj_global_ref))
 # Obtain all object referrers.
 referrers = gc.get_referrers(obj_global_ref)
 for ref in referrers:
-    print(f"referrer: {ref}")
+    print(f"referrer:{ref}")
 
 # Use a visualization library to display the reference relationship topology.
 objgraph.show_refs([obj_global_ref], filename="refs.png", max_depth=5)

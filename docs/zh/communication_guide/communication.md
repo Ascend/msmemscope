@@ -10,7 +10,7 @@
 
 如果您有更复杂或需要保密的问题，可以发送邮件至：
 
-**<memscope@outlook.com>**
+**`memscope@outlook.com`**
 
 请在邮件中详细描述您的问题或建议，我们会尽快回复。
 

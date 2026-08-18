@@ -115,7 +115,7 @@ git push --force-with-lease origin your-branch-name
 
 If you encounter any problem or need further help during PR merging, contact the maintenance team in the following ways:
 
-- Email: <memscope@outlook.com>
+- Email: `memscope@outlook.com`
 - Group chat: Scan the QR code to add the Ascend open-source assistant, obtain the group link, and join the MindStudio community technical exchange group to obtain help and support. For details, see [Group Chat](../communication_guide/communication.md#3- open-source assistant).
 
 ## Submitting an Issue

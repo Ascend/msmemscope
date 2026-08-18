@@ -1,8 +1,8 @@
-# Welcome to the meMemScope Memory Analysis Tool Tutorial ✨
+# Welcome to the MindStudio MemScope Analysis Tool Tutorial ✨
 
 ## 🌟 What's New
 
-- **[2026.2.02]** 🎉 **MindStudio MemScope 26.0.0-alpha.1 launched!** It supports data collection via Python APIs, memory snapshot collection in the PyTorch framework, identification of memory page table attributes and flushing, and new memory allocation API of the driver.
+- **[2026.2.02]** 🎉 **MindStudio MemScope 26.0.0-alpha.1 launched!** It supports data collection via Python APIs, memory snapshot collection in the Ascend for PyTorch framework, identification of memory page table attributes and flushing, and new memory allocation API of the driver.
 
 - [2025.12.30]: The MindStudio MemScope project was debuted.
 
@@ -30,7 +30,7 @@ msMemScope provides memory collection and analysis functions.
         Memory collection
       </td>
       <td rowspan="2">
-        msMemScope can collection memory events and allows custom memory collection scopes and items to provide raw data for subsequent analysis.
+        msMemScope can collect memory events and allows custom memory collection scopes and items to provide raw data for subsequent analysis.
       </td>
       <td>Collection via Python APIs</td>
       <td>Information is collected through Python APIs, supporting custom collection scopes and items, memory events, and Python Trace events, for precise collection and efficient analysis.</td>
@@ -60,7 +60,7 @@ msMemScope provides memory collection and analysis functions.
     </tr>
     <tr>
       <td>Memory decomposition</td>
-      <td>msMemScope supports memory decomposition to analyze the memory usage of the CANN layer and Ascend Extension for PyTorch framework and outputs model weights, activations, gradients, and optimizer and other component memory usage.</td>
+      <td>msMemScope supports memory decomposition to analyze the memory usage of the CANN layer and Ascend for PyTorch framework and outputs model weights, activations, gradients, and optimizer and other component memory usage.</td>
     </tr>
     <tr>
       <td>Identification of inefficient memory</td>
@@ -73,7 +73,7 @@ msMemScope provides memory collection and analysis functions.
 
 To get started with msMemScope, follow this learning path:
 
-* Read [Installation Guide](install_guide/install_guide.md) to get started with msMemScope and correctly configure an environment.
+* Read [Installation Guide](install_guide/install_guide.md)) to get started with msMemScope and correctly configure an environment.
 * Read [Quick Start](quick_start/quick_start.md) to learn how to configure and run msMemScope to locate memory problems.
 * Read [Memory Collection](user_guide/memory_profile.md), [Memory Analysis](user_guide/memory_analysis.md), and [Output File Specifications](user_guide/output_file_spec.md) to better understand memory problem locating.
 * Read [API Reference](api_reference/api.md) to quickly analyze memory status.

@@ -8,7 +8,8 @@ msMemScope collects memory events and conducts memory leak detection, memory com
 
 ### Environment Setup
 
-For details, [msMemScope Installation Guide](../install_guide/install_guide.md).
+Refer to [msMemScope Installation Guide](../install_guide/install_guide.md) to install msMemScope.<br>
+The following example is designed based on PyTorch and Ascend for PyTorch. Please first download and install [Ascend for PyTorch](https://www.hiascend.com/en/developer/software/ai-frameworks/pytorch/download).
 
 ## Procedure
 
