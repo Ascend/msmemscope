@@ -35,6 +35,17 @@ def _is_cpu_tensor(t) -> bool:
     return isinstance(t, torch.Tensor) and t.device.type == "cpu"
 
 
+def _format_py_stack() -> str:
+    """Format the current call stack as a self-quoted CSV field.
+
+    Mirrors the C++ ``PythonCallstack`` format (``"file(line): func\\n..."``)
+    used by device-side events, so the dump CSV stays well-formed.
+    """
+    frames = list(traceback.extract_stack())
+    frames.reverse()  # C++ walks from the innermost frame outward
+    return '"' + "\n".join(f"{f.filename}({f.lineno}): {f.name}" for f in frames) + '\n"'
+
+
 def _on_cpu_tensor_created(ret, *args, **kwargs):  # pylint: disable=unused-argument
     """POST_HOOK callback: report MALLOC when return value is a CPU tensor."""
     if not _is_cpu_tensor(ret):
@@ -49,7 +60,7 @@ def _on_cpu_tensor_created(ret, *args, **kwargs):  # pylint: disable=unused-argu
         if ptr in _cpu_blocks:  # same-channel dedup (no-op return self / shared storage)
             return ret
         size = storage.nbytes()
-        stack = "".join(traceback.format_stack())
+        stack = _format_py_stack()
         # Cross-channel dedup: only attach finalize if C++ accepts (returns True)
         if not _cpp._report_cpu_tensor(ptr, size, True, stack):
             return ret
@@ -121,10 +132,10 @@ def _deferred_enable():
     """Poll until the NPU device is initialized, then install the hooks."""
     global _pending_enable
     deadline = time.monotonic() + 60.0
-    while not _npu_initialized() and time.monotonic() < deadline:
-        time.sleep(0.01)
+    while _pending_enable and not _npu_initialized() and time.monotonic() < deadline:
+        time.sleep(0.001)
     if not _pending_enable:
-        return  # disabled while waiting
+        return  # disabled, or already registered by on_device_ready()
     _pending_enable = False
     _register_handlers()
 
@@ -132,15 +143,26 @@ def _deferred_enable():
 def enable_cpu_tensor_collect():
     """Register hooks: torch.tensor / Tensor.to / Tensor.cpu (idempotent)."""
     global _pending_enable
-    if _handlers or _pending_enable:
+    if _handlers:
         return
-    if not _npu_initialized():
-        # Called during torch_npu initialization (e.g. from the aclInit hook).
-        # Defer the patch until the device is ready to avoid breaking
-        # torch.npu.set_device.
+    if _npu_initialized():
+        _register_handlers()
+    elif not _pending_enable:
         _pending_enable = True
         threading.Thread(target=_deferred_enable, daemon=True).start()
-        return
+
+
+def on_device_ready():
+    """Called from C++ after ``aclrtSetDevice`` completes.
+
+    The NPU device is retained at this point, so monkey-patching
+    ``torch.Tensor`` is safe. This closes the CLI deferral window in which
+    tensors created right after ``set_device`` (before the first NPU op) were
+    otherwise missed by the ``is_initialized()``-based polling in
+    ``enable_cpu_tensor_collect``.
+    """
+    global _pending_enable
+    _pending_enable = False
     _register_handlers()
 
 

@@ -59,6 +59,22 @@ ACL_FUNC_VISIBILITY aclError aclInit(const char *configPath)
     return ret;
 }
 
+ACL_FUNC_VISIBILITY aclError aclrtSetDevice(int32_t deviceId)
+{
+    using AclrtSetDevice = decltype(&aclrtSetDevice);
+    auto vallina = VallinaSymbol<AclLibLoader>::Instance().Get<AclrtSetDevice>("aclrtSetDevice");
+    if (vallina == nullptr) {
+        LOG_ERROR("vallina func get FAILED: %s", __func__);
+        return ACL_ERROR_INTERNAL_ERROR;
+    }
+
+    aclError ret = vallina(deviceId);
+
+    EventTraceManager::Instance().SetDeviceReadyStatus(true);
+
+    return ret;
+}
+
 ACL_FUNC_VISIBILITY aclError aclFinalize()
 {
     using AclFinalize = decltype(&aclFinalize);

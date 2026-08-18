@@ -82,6 +82,7 @@ typedef enum aclrtMemAttr {
 
 ACL_FUNC_VISIBILITY aclError aclInit(const char *configPath);
 ACL_FUNC_VISIBILITY aclError aclFinalize();
+ACL_FUNC_VISIBILITY aclError aclrtSetDevice(int32_t deviceId);
 
 aclError aclrtMemcpy(void *dst, size_t destMax, const void *src, size_t count, aclrtMemcpyKind kind);
 aclError aclrtSynchronizeStream(aclrtStream stream);

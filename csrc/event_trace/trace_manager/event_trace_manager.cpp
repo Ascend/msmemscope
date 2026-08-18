@@ -342,6 +342,25 @@ void EventTraceManager::SetAclInitStatus(bool isInit)
     HandleWithCpuTensorCollect();
 }
 
+void EventTraceManager::SetDeviceReadyStatus(bool isReady)
+{
+    if (!isReady)
+    {
+        return;
+    }
+
+    bool expected = false;
+    if (!deviceReady_.compare_exchange_strong(expected, true))
+    {
+        return;  // device readiness already signaled once
+    }
+
+    if ((status_ == EventTraceStatus::IN_TRACING) && GetConfig().collectCpu)
+    {
+        Utility::MemScopePythonCall("msmemscope.cpu_tensor_collection", "on_device_ready");
+    }
+}
+
 void EventTraceManager::CleanUpEventTraceManager()
 {
     // 这里可以添加其他的CleanUp操作,最好把析构函数中的抽象出来,放到stop实现
