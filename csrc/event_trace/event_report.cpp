@@ -1006,6 +1006,11 @@ bool EventReport::ReportCpuTensor(uint64_t addr, uint64_t size, bool isAlloc, st
     }
 
     {
+        // 单例类析构之后不再访问其成员变量
+        if (destroyed_.load())
+        {
+            return false;
+        }
         std::lock_guard<std::mutex> lock(mutex_);
         if (isAlloc)
         {
