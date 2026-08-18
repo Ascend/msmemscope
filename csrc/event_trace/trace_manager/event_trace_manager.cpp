@@ -44,21 +44,24 @@ EventReportSuppressor::~EventReportSuppressor() { --g_suppressEventReportDepth; 
 bool ConfigManager::Inited = false;
 
 const std::unordered_map<std::string, std::function<void(const std::string &, Config &, bool &)>> parserConfigTable = {
-    {"call_stack", ParseCallstack}, {"level", ParseDataLevel},        {"events", ParseEventTraceType},
-    {"device", ParseDevice},        {"format", ParseDataFormat},      {"output_path", ParseOutputPath},
+    {"call_stack", ParseCallstack},
+    {"level", ParseDataLevel},
+    {"events", ParseEventTraceType},
+    {"device", ParseDevice},
+    {"format", ParseDataFormat},
+    {"output_path", ParseOutputPath},
     // 兼容旧参数名（仅保留解析能力，不体现于用户手册/帮助信息）
-    {"data_format", ParseDataFormat}, {"output", ParseOutputPath},
-    {"analysis", ParseAnalysis},    {"watch", ParseWatchConfig},
+    {"data_format", ParseDataFormat},
+    {"output", ParseOutputPath},
+    {"analysis", ParseAnalysis},
+    {"watch", ParseWatchConfig},
 };
 
 // 只允许设置一次的config参数；旧参数名与标准名归入同一组，视为同一个参数，不可重复设置
 // （旧参数名data_format/output仅作兼容保留，不体现于用户手册/帮助信息）
 const std::unordered_map<std::string, std::string> configPolicyTable = {
-    {"format", "format"},
-    {"data_format", "format"},
-    {"output_path", "output_path"},
-    {"output", "output_path"},
-    {"watch", "watch"},
+    {"format", "format"},      {"data_format", "format"}, {"output_path", "output_path"},
+    {"output", "output_path"}, {"watch", "watch"},
 };
 
 ConfigManager::ConfigManager() { InitConfig(); }
