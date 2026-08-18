@@ -422,6 +422,7 @@ std::vector<OOMMemRecord> LeakAnalyzer::QueryUnfreedRecords(int32_t deviceId, ui
         rec.allocTimestamp = blk.allocTimestamp;
         rec.cCallStack = blk.cCallStack;
         rec.pyCallStack = blk.pyCallStack;
+        rec.deviceId = deviceId;
         records.push_back(rec);
     }
 
@@ -438,6 +439,7 @@ std::vector<OOMMemRecord> LeakAnalyzer::QueryUnfreedRecords(int32_t deviceId, ui
         rec.allocTimestamp = blk.allocTimestamp;
         rec.cCallStack = blk.cCallStack;
         rec.pyCallStack = blk.pyCallStack;
+        rec.deviceId = deviceId;
         records.push_back(rec);
     }
     return records;

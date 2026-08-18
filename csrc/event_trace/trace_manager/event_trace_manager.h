@@ -48,7 +48,17 @@ class ConfigManager
     bool SetConfig(const std::unordered_map<std::string, std::string>& config);
     void SetConfig(const Config& config);
 
-    static bool HasInited() { return Inited; }
+    // 配置是否已就绪：单例已初始化 且 配置已被显式设置（命令行启动或调用python接口config()）。
+    // 仅因日志/钩子等消费方首次触碰而加载的缺省物化不算"已设置"：
+    // 缺省配置不应消费once-only策略，也不应让日志等消费方以缺省outputDir提前落盘。
+    static bool HasInited()
+    {
+        if (!Inited)
+        {
+            return false;
+        }
+        return Instance().GetConfig().isEffective;
+    }
 
    private:
     ConfigManager();
