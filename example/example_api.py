@@ -65,8 +65,8 @@ if __name__ == '__main__':
         level="kernel,op",                      # 采集op或者kernel级别的算子下发事件
         call_stack="c,python",                  # 采集调用栈，数据量较大
         analysis="leaks,inefficient,decompose", # 开启泄漏识别、低效显存识别、显存拆解功能
-        output="./output",                      # 指定输出文件落盘路径
-        data_format="csv"                       # 指定输出文件格式
+        output_path="./output",                 # 指定输出文件落盘路径
+        format="csv"                            # 指定输出文件格式
     )                                           # 设置参数
     msmemscope.start()                          # 开始采集
     main()

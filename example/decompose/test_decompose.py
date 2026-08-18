@@ -23,7 +23,7 @@ import msmemscope.describe as describe
 
 
 def test():
-    msmemscope.config(analysis='decompose', data_format='csv', output='./output') # 将analysis设置为decompose进行内存拆解
+    msmemscope.config(analysis='decompose', format='csv', output_path='./output') # 将analysis设置为decompose进行内存拆解
     device = torch.device('npu:0') # 可以更改为想要的卡号
     torch.npu.set_device(device)
 

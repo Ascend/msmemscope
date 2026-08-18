@@ -386,9 +386,9 @@ The following describes how to enable one-click memory decomposition in the vLLM
     import msmemscope
     msmemscope.config(
     events="alloc,free",
-    data_format="db",
+    format="db",
     analysis="decompose",
-    output="/vllm-ascend/wlz_data_test"
+    output_path="/vllm-ascend/wlz_data_test"
     )
     msmemscope.cleanup_framework_hooks()
     msmemscope.init_framework_hooks("vllm_ascend","11.0","worker","decompose")

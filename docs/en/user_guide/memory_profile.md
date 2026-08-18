@@ -52,12 +52,12 @@ Python APIs can be used to collect memory events and Python Trace events, while 
 
 2. Collect the memory.
 
-    Run the following sample code to collect memory events. Note that you need to set `msmemscope.config` as required. Set **device**, **level**, **events**, **call_stack**, **analysis**, **watch**, **output**, and **data_format** as required. For details about the parameters, see [Collection via CLI](#collection-via-cli).
+    Run the following sample code to collect memory events. Note that you need to set `msmemscope.config` as required. Set **device**, **level**, **events**, **call_stack**, **analysis**, **watch**, **output_path**, and **format** as required. For details about the parameters, see [Collection via CLI](#collection-via-cli).
 
     ```python
     import msmemscope
 
-    msmemscope.config(call_stack="c:10,python:5", events="launch,alloc,free", level="0", device="npu", analysis="leaks,decompose", watch="op0,op1,full-content", data_format="db", output="/home/projects/output")
+    msmemscope.config(call_stack="c:10,python:5", events="launch,alloc,free", level="0", device="npu", analysis="leaks,decompose", watch="op0,op1,full-content", format="db", output_path="/home/projects/output")
     msmemscope.start()   # Start collection.
     train()              # train() is the user code.
     msmemscope.stop()    # Stop collection.

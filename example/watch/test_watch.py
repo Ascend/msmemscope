@@ -33,7 +33,7 @@ class SimpleModel(nn.Module):
 
 
 def test():
-    msmemscope.config(data_format='csv', watch='start,end,full-content') # 可以在这里设置监测的算子
+    msmemscope.config(format='csv', watch='start,end,full-content') # 可以在这里设置监测的算子
     device = torch.device('npu:0')
     torch.npu.set_device(device)
 

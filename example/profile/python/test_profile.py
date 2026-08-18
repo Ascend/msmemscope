@@ -22,7 +22,7 @@ import msmemscope
 
 
 def test():
-    msmemscope.config(data_format='csv', output='./output') # 通过msmemscope.config()来设置各种采集配置
+    msmemscope.config(format='csv', output_path='./output') # 通过msmemscope.config()来设置各种采集配置
     device = torch.device('npu:0') # 可以更改为想要的卡号
     torch.npu.set_device(device)
 

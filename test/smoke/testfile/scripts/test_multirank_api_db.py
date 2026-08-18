@@ -95,6 +95,7 @@ class TrainModel:
 
 if __name__ == '__main__':
     msmemscope.config(
+        # 兼容性验证：保留旧参数名data_format（标准名为format）
         events='launch,access,free,alloc',
         level='kernel,op',
         device='npu,cpu',

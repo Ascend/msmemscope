@@ -23,7 +23,7 @@ import msmemscope
 
 def test():
     # 将analysis设置为inefficient进行低效显存识别
-    msmemscope.config(analysis='inefficient', data_format='csv', output='./output')
+    msmemscope.config(analysis='inefficient', format='csv', output_path='./output')
     device = torch.device('npu:0') # 可以更改为想要的卡号
     torch.npu.set_device(device)
 

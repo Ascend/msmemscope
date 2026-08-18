@@ -25,7 +25,7 @@ leaks_tensor_list = [] # 用于存储模拟泄漏的内存
 
 def test():
     # 通过msmemscope.config()来设置各种采集配置
-    msmemscope.config(events='alloc,free,launch', data_format='csv', output='./output')
+    msmemscope.config(events='alloc,free,launch', format='csv', output_path='./output')
     device = torch.device('npu:0') # 可以更改为想要的卡号
     torch.npu.set_device(device)
 

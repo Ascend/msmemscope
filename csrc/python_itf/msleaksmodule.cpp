@@ -74,9 +74,18 @@ PyDoc_STRVAR(ConfigDoc,
              "config(**kwargs)\n--\n\n"
              "Configure msmemscope module parameters.\n\n"
              "Args:\n"
-             "    **kwargs: Configuration parameters as keyword arguments\n\n"
+             "    **kwargs: Configuration parameters as keyword arguments\n"
+             "    - device: Device(s) to collect, npu | npu:<SLOT> | cpu\n"
+             "    - level: Data trace level, op | kernel\n"
+             "    - events: Trace event types, alloc | free | launch | access | traceback | none\n"
+             "    - call_stack: C/Python call stack, e.g. c:10,python:5\n"
+             "    - analysis: Analysis methods, leaks | decompose | inefficient | oom[:K] | none\n"
+             "    - watch: Watch mode, start[:outid],end[,full-content]\n"
+             "    - format: Output file format, csv | db\n"
+             "    - output_path: Output directory [default: ./memscopeDumpResults]\n\n"
              "Examples:\n"
-             "    msmemscope.config(call_stack=\"c:10,python:5\", level='0,1')");
+             "    msmemscope.config(call_stack=\"c:10,python:5\", level=\"op\", format=\"db\", "
+             "output_path=\"./output\")");
 static PyObject* MsmemscopeConfig(PyObject* self, PyObject* args, PyObject* kwargs)
 {
     if (PyTuple_Size(args) > 0)

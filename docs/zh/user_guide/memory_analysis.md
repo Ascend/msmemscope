@@ -429,9 +429,9 @@ msMemScope工具支持在当前主流训练或推理场景下，开启内存拆�
 import msmemscope
 msmemscope.config(
 events="alloc,free",
-data_format="db",
+format="db",
 analysis="decompose",
-output="/vllm-ascend/wlz_data_test"
+output_path="/vllm-ascend/wlz_data_test"
 )
 msmemscope.start()
 # ... 训练或推理逻辑 ...
@@ -484,8 +484,8 @@ msmemscope.stop()
     import msmemscope
     msmemscope.config(
     events="alloc,free",
-    data_format="db",
-    output="/vllm-ascend/wlz_data_test"
+    format="db",
+    output_path="/vllm-ascend/wlz_data_test"
     )
     msmemscope.cleanup_framework_hooks()
     msmemscope.init_framework_hooks("vllm_ascend","11.0","worker","snapshot")
