@@ -27,13 +27,15 @@
 #include "cpython.h"
 #include "decompose_analyzer.h"
 #include "describe_trace.h"
-#include "hal_analyzer.h"
+#include "health_analyzer.h"
 #include "inefficient_analyzer.h"
 #include "json_manager.h"
 #include "kernel_hooks/runtime_prof_api.h"
+#include "leak_analyzer.h"
 #include "log.h"
+#include "memory_state_manager.h"
 #include "securec.h"
-#include "stepinner_analyzer.h"
+#include "trace_manager/event_trace_manager.h"
 #include "umask_guard.h"
 #include "ustring.h"
 #include "utils.h"
@@ -42,6 +44,16 @@
 namespace MemScope
 {
 bool g_isReportHostMem = false;
+
+// DCMI 接口常量与函数指针（签名与驱动 dcmi_interface 对齐）
+constexpr int DCMI_OK = 0;
+constexpr int DCMI_MAX_CARD_NUM = 32;
+using DcmiInitFunc = int (*)();
+using DcmiGetCardListFunc = int (*)(int*, int*, int);
+using DcmiGetDeviceNumInCardFunc = int (*)(int, int*);
+using DcmiGetDeviceLogicIdFunc = int (*)(int*, int, int);
+using DcmiGetHbmInfoFunc = int (*)(int, int, struct dcmi_hbm_info*);
+using DcmiProcMemInfoFunc = int (*)(int, int, struct dcmi_proc_mem_info*, int*);
 
 constexpr uint64_t MEM_MODULE_ID_BIT = 56;
 constexpr uint64_t MEM_VIRT_BIT = 10;
@@ -143,6 +155,9 @@ bool GetDeviceInfo::GetDeviceId(int32_t& devId)
             return false;
         }
 
+        // 进入真实运行时调用窗口：运行时内部的内存申请会被hook捕获并尝试上报，
+        // 抑制期间直接跳过，防止递归上报与幻影事件
+        EventReportSuppressor suppressor;
         rtError_t ret = l_vallina(&devId);
         if (ret == RT_ERROR_INVALID_VALUE)
         {
@@ -151,6 +166,9 @@ bool GetDeviceInfo::GetDeviceId(int32_t& devId)
         return true;
     }
 
+    // 进入真实运行时调用窗口：运行时内部的内存申请会被hook捕获并尝试上报，
+    // 抑制期间直接跳过，防止递归上报与幻影事件
+    EventReportSuppressor suppressor;
     aclError ret = vallina(&devId);
     if (ret != ACL_SUCCESS)
     {
@@ -177,23 +195,217 @@ bool GetDeviceInfo::TransDeviceId(int32_t& devId)
     return true;
 }
 
-bool GetDeviceInfo::GetDeviceMemInfo(size_t& freeMem, size_t& totalMem)
+bool GetDeviceInfo::EnsureDcmiInit()
 {
-    using func = decltype(&aclrtGetMemInfo);
-    static auto vallina = VallinaSymbol<AclLibLoader>::Instance().Get<func>("aclrtGetMemInfo");
-    if (vallina == nullptr)
-    {
-        LOG_ERROR("Get aclrtGetMemInfo func ptr failed");
-        return false;
-    }
+    // dcmi_init 只尝试一次：失败（权限/驱动问题）后本进程内永久降级，
+    // 重试无意义且每次失败都走一次驱动初始化会拖慢查询路径
+    std::call_once(dcmiInitFlag_,
+                   [this]()
+                   {
+                       static auto initFunc = VallinaSymbol<DcmiLibLoader>::Instance().Get<DcmiInitFunc>("dcmi_init");
+                       if (initFunc == nullptr)
+                       {
+                           LOG_ERROR("Get dcmi_init func ptr failed");
+                           return;
+                       }
+                       // 进入真实驱动调用窗口：驱动初始化内部的内存申请/上报会被hook捕获，
+                       // 抑制期间直接跳过，防止递归上报与幻影事件
+                       EventReportSuppressor suppressor;
+                       if (initFunc() != DCMI_OK)
+                       {
+                           LOG_ERROR("dcmi_init failed");
+                           return;
+                       }
+                       dcmiReady_ = true;
+                   });
+    return dcmiReady_;
+}
 
-    int ret = vallina(ACL_HBM_MEM, &freeMem, &totalMem);
-    if (ret != ACL_SUCCESS)
+bool GetDeviceInfo::BuildDeviceMap()
+{
+    // 建表只做一次：失败（符号缺失/设备枚举失败）与成功都置已尝试标记，
+    // 避免每次查询都重复枚举卡与设备
+    std::call_once(
+        dcmiMapInitFlag_,
+        [this]()
+        {
+            static auto getCardList =
+                VallinaSymbol<DcmiLibLoader>::Instance().Get<DcmiGetCardListFunc>("dcmi_get_card_list");
+            static auto getDeviceNum =
+                VallinaSymbol<DcmiLibLoader>::Instance().Get<DcmiGetDeviceNumInCardFunc>("dcmi_get_device_num_in_card");
+            static auto getLogicId =
+                VallinaSymbol<DcmiLibLoader>::Instance().Get<DcmiGetDeviceLogicIdFunc>("dcmi_get_device_logic_id");
+            if (getCardList == nullptr || getDeviceNum == nullptr || getLogicId == nullptr)
+            {
+                LOG_ERROR("Get dcmi device map func ptr failed");
+                return;
+            }
+
+            int cardList[DCMI_MAX_CARD_NUM] = {0};
+            int cardNum = 0;
+            {
+                EventReportSuppressor suppressor;
+                if (getCardList(&cardNum, cardList, DCMI_MAX_CARD_NUM) != DCMI_OK)
+                {
+                    LOG_ERROR("dcmi_get_card_list failed");
+                    return;
+                }
+            }
+            for (int i = 0; i < cardNum && i < DCMI_MAX_CARD_NUM; i++)
+            {
+                int deviceNum = 0;
+                {
+                    EventReportSuppressor suppressor;
+                    if (getDeviceNum(cardList[i], &deviceNum) != DCMI_OK)
+                    {
+                        LOG_ERROR("dcmi_get_device_num_in_card failed, card_id %d", cardList[i]);
+                        return;
+                    }
+                }
+                for (int deviceId = 0; deviceId < deviceNum; deviceId++)
+                {
+                    int logicId = 0;
+                    {
+                        EventReportSuppressor suppressor;
+                        if (getLogicId(&logicId, cardList[i], deviceId) != DCMI_OK)
+                        {
+                            LOG_ERROR("dcmi_get_device_logic_id failed, card_id %d device_id %d", cardList[i],
+                                      deviceId);
+                            return;
+                        }
+                    }
+                    // acl 物理逻辑号 = 硬件逻辑号，HAL 事件 devId（flag 解析）与其同源，
+                    // 直接以逻辑号建表
+                    devIdToDcmiMap_[logicId] = {cardList[i], deviceId};
+                }
+            }
+            dcmiMapReady_ = true;
+        });
+    return dcmiMapReady_;
+}
+
+bool GetDeviceInfo::GetDeviceHbmInfo(int32_t devId, uint64_t& usedMb, uint64_t& totalMb)
+{
+    if (!EnsureDcmiInit() || !BuildDeviceMap())
     {
-        LOG_ERROR("Get device mem info failed, ret is %d", ret);
         return false;
     }
+    auto it = devIdToDcmiMap_.find(devId);
+    if (it == devIdToDcmiMap_.end())
+    {
+        // 未在设备映射中的逻辑号（如 HOST 设备 DEVICE_ID_CPU）无整卡用量
+        LOG_DEBUG("devId %d not in dcmi device map", devId);
+        return false;
+    }
+    static auto getHbmInfo =
+        VallinaSymbol<DcmiLibLoader>::Instance().Get<DcmiGetHbmInfoFunc>("dcmi_get_device_hbm_info");
+    if (getHbmInfo == nullptr)
+    {
+        LOG_ERROR("Get dcmi_get_device_hbm_info func ptr failed");
+        return false;
+    }
+    struct dcmi_hbm_info info
+    {
+    };
+    {
+        // 驱动查询内部可能有临时内存申请，抑制期间跳过上报，防止递归上报与幻影事件
+        EventReportSuppressor suppressor;
+        if (getHbmInfo(it->second.first, it->second.second, &info) != DCMI_OK)
+        {
+            LOG_ERROR("dcmi_get_device_hbm_info failed, devId %d", devId);
+            return false;
+        }
+    }
+    usedMb = info.memory_usage;
+    totalMb = info.memory_size;
     return true;
+}
+
+bool GetDeviceInfo::GetDeviceProcMemInfo(int32_t devId, uint64_t& usedBytes)
+{
+    if (!EnsureDcmiInit() || !BuildDeviceMap())
+    {
+        return false;
+    }
+    auto it = devIdToDcmiMap_.find(devId);
+    if (it == devIdToDcmiMap_.end())
+    {
+        // 未在设备映射中的逻辑号（如 HOST 设备 DEVICE_ID_CPU）无进程占用可查
+        LOG_DEBUG("devId %d not in dcmi device map", devId);
+        return false;
+    }
+    static auto getProcMemInfo =
+        VallinaSymbol<DcmiLibLoader>::Instance().Get<DcmiProcMemInfoFunc>("dcmi_get_npu_proc_mem_info");
+    if (getProcMemInfo == nullptr)
+    {
+        LOG_ERROR("Get dcmi_get_npu_proc_mem_info func ptr failed");
+        return false;
+    }
+    // 驱动按 DCMI_MAX_PROC_NUM_IN_DEVICE(64) 枚举该卡进程列表，输出数组需预留同等容量
+    struct dcmi_proc_mem_info procInfo[64]{};
+    int procNum = 0;
+    {
+        // 驱动查询内部可能有临时内存申请，抑制期间跳过上报，防止递归上报与幻影事件
+        EventReportSuppressor suppressor;
+        if (getProcMemInfo(it->second.first, it->second.second, procInfo, &procNum) != DCMI_OK)
+        {
+            LOG_ERROR("dcmi_get_npu_proc_mem_info failed, devId %d", devId);
+            return false;
+        }
+    }
+    // 进程列表按 pid 过滤本进程：proc_mem_usage 即 npu-smi Process memory 同源值（字节）
+    const uint64_t selfPid = Utility::GetPid();
+    for (int i = 0; i < procNum; i++)
+    {
+        if (static_cast<uint64_t>(procInfo[i].proc_id) == selfPid)
+        {
+            usedBytes = static_cast<uint64_t>(procInfo[i].proc_mem_usage);
+            return true;
+        }
+    }
+    // 本进程在该卡无显存占用记录（未申请过内存/已退出），按查询失败处理
+    LOG_DEBUG("pid %llu not in device %d proc mem list", static_cast<unsigned long long>(selfPid), devId);
+    return false;
+}
+
+int64_t EventReport::QueryProcessUsed(int32_t devId)
+{
+    uint64_t usedBytes = 0;
+    if (!GetDeviceInfo::Instance().GetDeviceProcMemInfo(devId, usedBytes))
+    {
+        // 查询失败：不更新缓存（保留最近一次成功值），限频告警一次后静默
+        if (!processUsedQueryWarned_.exchange(true))
+        {
+            LOG_WARN("Query device proc mem info failed, process_used will be -1");
+        }
+        return -1;
+    }
+    int64_t used = static_cast<int64_t>(usedBytes);
+    // 缓存数据在 MemoryStateManager（槽位与事件 device 同源，与 QueryDeviceUsed 一致），
+    // EventReport 仅负责查询动作
+    MemoryStateManager::GetInstance().UpdateProcessUsedCache(devId, used);
+    return used;
+}
+
+int64_t EventReport::QueryDeviceUsed(int32_t devId)
+{
+    uint64_t usedMb = 0;
+    uint64_t totalMb = 0;
+    if (!GetDeviceInfo::Instance().GetDeviceHbmInfo(devId, usedMb, totalMb))
+    {
+        // 查询失败：不更新缓存（保留最近一次成功值），限频告警一次后静默
+        if (!deviceUsedQueryWarned_.exchange(true))
+        {
+            LOG_WARN("Query device hbm info failed, device_used will be -1");
+        }
+        return -1;
+    }
+    // dcmi 返回 MB，事件字段 deviceUsed 保持字节（与 dump 输出语义一致）
+    int64_t used = static_cast<int64_t>(usedMb) * 1024 * 1024;
+    // 缓存数据在 MemoryStateManager（槽位与事件 device 同源：HAL 事件 flag 解析/池事件
+    // TransDeviceId 均归一为物理卡号），EventReport 仅负责查询动作
+    MemoryStateManager::GetInstance().UpdateDeviceUsedCache(devId, used);
+    return used;
 }
 
 EventReport& EventReport::Instance(MemScopeCommType type)
@@ -228,10 +440,14 @@ EventReport::EventReport(MemScopeCommType type)
     Dump::GetInstance();
 
     // 注册通过EventDispatcher订阅的分析器（替代Process::SendEvent中的switch-case分发）
-    HalAnalyzer::GetInstance();
-    StepInnerAnalyzer::GetInstance();
+    // 构造顺序即派发顺序（同优先级下后插入的订阅者先收到事件）：
+    // 先HealthAnalyzer后LeakAnalyzer，保证MALLOC/FREE先经LeakAnalyzer（对应原StepInnerAnalyzer槽位），
+    // MSTX先经LeakAnalyzer::CheckNpuLeak再经HealthAnalyzer::CheckGap（保持原告警顺序）
+    // 统计字段回填（used/processUsed）由MemoryStateManager::UpdateUsage在事件处理阶段一完成，
+    // 先于所有分析器，无需订阅
+    HealthAnalyzer::GetInstance();
+    LeakAnalyzer::GetInstance();
 
-    LOG_DEBUG("LOG INIT");
     RegisterRtProfileCallback();
 
     return;
@@ -407,6 +623,10 @@ bool EventReport::ReportMemPoolRecord(EventSubType type, const MemoryUsage& info
     event->cCallStack = std::move(stack.cStack);
     event->pyCallStack = std::move(stack.pyStack);
 
+    // 池事件不查询（池分配高频），直接读最近一次 HAL 查询缓存（数据在 MemoryStateManager）
+    event->deviceUsed = MemoryStateManager::GetInstance().GetDeviceUsed(event->device);
+    event->processUsed = MemoryStateManager::GetInstance().GetProcessUsed(event->device);
+
     Process::GetInstance().SendEvent(event);
 
     return true;
@@ -439,9 +659,13 @@ bool EventReport::ReportHalCreate(uint64_t addr, uint64_t size, const drv_mem_pr
         if (!destroyed_.load())
         {
             std::lock_guard<std::mutex> lock(mutex_);
-            halPtrs_.insert(addr);
+            halPtrs_.emplace(addr, prop.devid);
         }
     }
+
+    // MALLOC（Create 入口）事件值为申请后的整卡/本进程用量，按分配设备查询并缓存
+    event->deviceUsed = QueryDeviceUsed(prop.devid);
+    event->processUsed = QueryProcessUsed(prop.devid);
 
     Process::GetInstance().SendEvent(event);
     return true;
@@ -454,6 +678,8 @@ bool EventReport::ReportHalRelease(uint64_t addr, CallStackString&& stack)
         return true;
     }
 
+    // 分配时记录的device，free事件据此回填（分配时语义）
+    int32_t devId = GD_INVALID_NUM;
     {
         // 单例类析构之后不再访问其成员变量
         if (destroyed_.load())
@@ -466,6 +692,7 @@ bool EventReport::ReportHalRelease(uint64_t addr, CallStackString&& stack)
         {
             return true;
         }
+        devId = it->second;
         halPtrs_.erase(it);
     }
 
@@ -478,11 +705,15 @@ bool EventReport::ReportHalRelease(uint64_t addr, CallStackString&& stack)
     event->addr = addr;
     event->name = "N/A";
     event->space = MemOpSpace::INVALID;
-    event->device = GD_INVALID_NUM;
+    event->device = devId;
     event->size = 0;
     event->moduleId = INVALID_MODID;
     event->flag = FLAG_INVALID;
     event->kernelIndex = kernelLaunchRecordIndex_;
+
+    // FREE（Release/Free 入口）事件值为释放后的整卡/本进程用量，按 halPtrs_ 查表回填的分配设备查询并缓存
+    event->deviceUsed = QueryDeviceUsed(devId);
+    event->processUsed = QueryProcessUsed(devId);
 
     Process::GetInstance().SendEvent(event);
 
@@ -508,10 +739,10 @@ bool EventReport::ReportHalMalloc(uint64_t addr, uint64_t size, unsigned long lo
     bool isHostSpace = (space == MemOpSpace::HOST);
     std::shared_ptr<MemoryEvent> event = std::make_shared<MemoryEvent>();
     event->eventType = EventBaseType::MALLOC;
-    event->eventSubType = isHostSpace ? EventSubType::HOST : EventSubType::HAL;
+    event->eventSubType = isHostSpace ? EventSubType::HOST_PINNED : EventSubType::HAL;
     event->cCallStack = std::move(stack.cStack);
     event->pyCallStack = std::move(stack.pyStack);
-    event->poolType = isHostSpace ? PoolType::HOST : PoolType::HAL;
+    event->poolType = PoolType::HAL;
     event->addr = addr;
     event->name = "N/A";
     event->space = space;
@@ -522,7 +753,6 @@ bool EventReport::ReportHalMalloc(uint64_t addr, uint64_t size, unsigned long lo
     event->kernelIndex = kernelLaunchRecordIndex_;
     if (isHostSpace)
     {
-        event->isPinned = true;
         event->used = static_cast<int64_t>(Utility::GetProcessVmRss());
     }
 
@@ -530,13 +760,20 @@ bool EventReport::ReportHalMalloc(uint64_t addr, uint64_t size, unsigned long lo
         if (!destroyed_.load())
         {
             std::lock_guard<std::mutex> lock(mutex_);
-            halPtrs_.insert(addr);
+            halPtrs_.emplace(addr, devId);
             if (isHostSpace)
             {
-                halHostPtrs_.insert(addr);
                 hostPtrs_.insert(addr);
             }
         }
+    }
+
+    // MALLOC（flag 入口）事件值为申请后的整卡/本进程用量，按 flag 解析设备查询并缓存；
+    // HOST 空间（HOST_PINNED）无整卡概念，不查询（deviceUsed/processUsed 保持 -1）
+    if (space != MemOpSpace::HOST)
+    {
+        event->deviceUsed = QueryDeviceUsed(devId);
+        event->processUsed = QueryProcessUsed(devId);
     }
 
     Process::GetInstance().SendEvent(event);
@@ -561,8 +798,8 @@ bool EventReport::ReportHalMalloc(uint64_t addr, uint64_t size, unsigned long lo
     bool isHostSpace = (space == MemOpSpace::HOST);
     auto event = std::make_shared<MemoryEvent>();
     event->eventType = EventBaseType::MALLOC;
-    event->eventSubType = isHostSpace ? EventSubType::HOST : EventSubType::HAL;
-    event->poolType = isHostSpace ? PoolType::HOST : PoolType::HAL;
+    event->eventSubType = isHostSpace ? EventSubType::HOST_PINNED : EventSubType::HAL;
+    event->poolType = PoolType::HAL;
     event->addr = addr;
     event->name = "N/A";
     event->size = static_cast<int64_t>(size);
@@ -570,20 +807,15 @@ bool EventReport::ReportHalMalloc(uint64_t addr, uint64_t size, unsigned long lo
     event->space = space;
     event->isShadowEvent = true;
     event->kernelIndex = kernelLaunchRecordIndex_;
-    if (isHostSpace)
-    {
-        event->isPinned = true;
-    }
     // No callstack, no moduleId, no pageType, no owner for shadow events
 
     {
         if (!destroyed_.load())
         {
             std::lock_guard<std::mutex> lock(mutex_);
-            halPtrs_.insert(addr);
+            halPtrs_.emplace(addr, devId);
             if (isHostSpace)
             {
-                halHostPtrs_.insert(addr);
                 hostPtrs_.insert(addr);
             }
         }
@@ -597,7 +829,8 @@ bool EventReport::ReportHalMalloc(uint64_t addr, uint64_t size, unsigned long lo
 // Shadow overload (no callstack): minimal event for NOT_IN_TRACING mode
 bool EventReport::ReportHalFree(uint64_t addr)
 {
-    bool isHostAddr = false;
+    // 分配时记录的device，free事件据此回填（分配时语义）
+    int32_t devId = GD_INVALID_NUM;
     {
         if (destroyed_.load())
         {
@@ -609,22 +842,21 @@ bool EventReport::ReportHalFree(uint64_t addr)
         {
             return true;  // 未在halMemAlloc中注册过的地址，过滤掉
         }
-        isHostAddr = (halHostPtrs_.find(addr) != halHostPtrs_.end());
+        devId = it->second;
         halPtrs_.erase(it);
-        if (isHostAddr)
+        if (devId == DEVICE_ID_CPU)
         {
-            halHostPtrs_.erase(addr);
             hostPtrs_.erase(addr);
         }
     }
 
     auto event = std::make_shared<MemoryEvent>();
     event->eventType = EventBaseType::FREE;
-    event->eventSubType = isHostAddr ? EventSubType::HOST : EventSubType::HAL;
-    event->poolType = isHostAddr ? PoolType::HOST : PoolType::HAL;
+    event->eventSubType = EventSubType::HAL;
+    event->poolType = PoolType::HAL;
     event->addr = addr;
     event->name = "N/A";
-    event->device = isHostAddr ? DEVICE_ID_CPU : GD_INVALID_NUM;  // 后续由MemoryStateManager::AddEvent根据addr匹配MALLOC回填
+    event->device = devId;  // 分配时语义：与MALLOC事件flag解析同源
     event->isShadowEvent = true;
     event->kernelIndex = kernelLaunchRecordIndex_;
     // No callstack for shadow events
@@ -641,7 +873,8 @@ bool EventReport::ReportHalFree(uint64_t addr, CallStackString&& stack)
         return true;
     }
 
-    bool isHostAddr = false;
+    // 分配时记录的device，free事件据此回填（分配时语义）
+    int32_t devId = GD_INVALID_NUM;
     {
         // 单例类析构之后不再访问其成员变量
         if (destroyed_.load())
@@ -654,29 +887,32 @@ bool EventReport::ReportHalFree(uint64_t addr, CallStackString&& stack)
         {
             return true;
         }
-        isHostAddr = (halHostPtrs_.find(addr) != halHostPtrs_.end());
+        devId = it->second;
         halPtrs_.erase(it);
-        if (isHostAddr)
+        if (devId == DEVICE_ID_CPU)
         {
-            halHostPtrs_.erase(addr);
             hostPtrs_.erase(addr);
         }
     }
 
     std::shared_ptr<MemoryEvent> event = std::make_shared<MemoryEvent>();
     event->eventType = EventBaseType::FREE;
-    event->eventSubType = isHostAddr ? EventSubType::HOST : EventSubType::HAL;
+    event->eventSubType = EventSubType::HAL;
     event->cCallStack = std::move(stack.cStack);
     event->pyCallStack = std::move(stack.pyStack);
-    event->poolType = isHostAddr ? PoolType::HOST : PoolType::HAL;
+    event->poolType = PoolType::HAL;
     event->addr = addr;
     event->name = "N/A";
-    event->space = isHostAddr ? MemOpSpace::HOST : MemOpSpace::INVALID;
-    event->device = isHostAddr ? DEVICE_ID_CPU : GD_INVALID_NUM;
+    event->space = MemOpSpace::INVALID;
+    event->device = devId;
     event->size = 0;
     event->moduleId = INVALID_MODID;
     event->flag = FLAG_INVALID;
     event->kernelIndex = kernelLaunchRecordIndex_;
+
+    // FREE（Release/Free 入口）事件值为释放后的整卡/本进程用量，按 halPtrs_ 查表回填的分配设备查询并缓存
+    event->deviceUsed = QueryDeviceUsed(devId);
+    event->processUsed = QueryProcessUsed(devId);
 
     Process::GetInstance().SendEvent(event);
 
@@ -692,16 +928,15 @@ bool EventReport::ReportHostRegister(uint64_t addr, uint64_t size, CallStackStri
 
     std::shared_ptr<MemoryEvent> event = std::make_shared<MemoryEvent>();
     event->eventType = EventBaseType::MALLOC;
-    event->eventSubType = EventSubType::HOST;
+    event->eventSubType = EventSubType::HOST_PINNED;
     event->cCallStack = std::move(stack.cStack);
     event->pyCallStack = std::move(stack.pyStack);
-    event->poolType = PoolType::HOST;
+    event->poolType = PoolType::HAL;
     event->addr = addr;
     event->name = "N/A";
     event->space = MemOpSpace::HOST;
     event->device = DEVICE_ID_CPU;
     event->size = size;
-    event->isPinned = true;
     event->kernelIndex = kernelLaunchRecordIndex_;
     event->used = static_cast<int64_t>(Utility::GetProcessVmRss());
 
@@ -709,8 +944,8 @@ bool EventReport::ReportHostRegister(uint64_t addr, uint64_t size, CallStackStri
         if (!destroyed_.load())
         {
             std::lock_guard<std::mutex> lock(mutex_);
-            halPtrs_.insert(addr);
-            halHostPtrs_.insert(addr);
+            // HOST_PINNED映射到CPU设备（DEVICE_ID_CPU），与事件device一致
+            halPtrs_.emplace(addr, DEVICE_ID_CPU);
             hostPtrs_.insert(addr);
         }
     }
@@ -740,16 +975,15 @@ bool EventReport::ReportHostUnregister(uint64_t addr, CallStackString&& stack)
             return true;
         }
         halPtrs_.erase(it);
-        halHostPtrs_.erase(addr);
         hostPtrs_.erase(addr);
     }
 
     std::shared_ptr<MemoryEvent> event = std::make_shared<MemoryEvent>();
     event->eventType = EventBaseType::FREE;
-    event->eventSubType = EventSubType::HOST;
+    event->eventSubType = EventSubType::HAL;
     event->cCallStack = std::move(stack.cStack);
     event->pyCallStack = std::move(stack.pyStack);
-    event->poolType = PoolType::HOST;
+    event->poolType = PoolType::HAL;
     event->addr = addr;
     event->name = "N/A";
     event->space = MemOpSpace::HOST;
@@ -800,7 +1034,6 @@ bool EventReport::ReportCpuTensor(uint64_t addr, uint64_t size, bool isAlloc, st
     event->space = MemOpSpace::HOST;
     event->device = DEVICE_ID_CPU;
     event->size = static_cast<int64_t>(size);
-    event->isPinned = false;
     event->pyCallStack = std::move(pyStack);
     event->kernelIndex = kernelLaunchRecordIndex_;
 
@@ -1259,14 +1492,24 @@ bool EventReport::ReportOOMTrigger(const OOMTriggerInfo& info)
 
 bool EventReport::ReportOOMMemRecord(const OOMMemRecord& record, EventSubType subType)
 {
-    if (IsNeedSkip(GD_INVALID_NUM))
+    int32_t devId = record.deviceId;
+    if (devId == GD_INVALID_NUM)
+    {
+        if (!GetDeviceInfo::Instance().GetDeviceId(devId) || devId == GD_INVALID_NUM)
+        {
+            LOG_ERROR("Failed to get device ID for OOM mem record event");
+            return false;
+        }
+    }
+
+    if (IsNeedSkip(devId))
     {
         return true;
     }
 
     std::shared_ptr<OOMMemRecordEvent> event = std::make_shared<OOMMemRecordEvent>();
     event->eventSubType = subType;
-    event->device = GD_INVALID_NUM;
+    event->device = devId;
     event->poolType = record.poolType;
     event->addr = record.ptr;
     event->memSize = record.memSize;

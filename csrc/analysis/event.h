@@ -133,7 +133,8 @@ class EventBase : public DataBase
     uint64_t pid = 0;
     uint64_t tid = 0;
     uint64_t addr = 0;
-    int32_t device;
+    // 默认无效值：未显式赋值的设备字段（如CleanUpEvent）安全参与key(pid, device, addr)定位
+    int32_t device = GD_INVALID_NUM;
     std::string name;
     std::string attr;
     std::string cCallStack;
@@ -156,6 +157,11 @@ class MemoryEvent : public EventBase
     int64_t size = 0;
     int64_t total = 0;
     int64_t used = 0;
+    // 统计字段（MemoryStateManager 累计/查询后回填，dump 时值<0 的字段省略不输出）：
+    int64_t processUsed = -1;  // 本进程显存用量（池事件=该设备 HAL 维度活跃累计；HOST 事件=VmRSS；
+                               // -1=无统计值（池事件且该设备无 HAL 活跃记录），dump 省略）
+    int64_t deviceUsed = -1;  // 整卡用量（仅 NPU 显存事件；HAL 事件=本次 dcmi_get_device_hbm_info 查询值，
+                              // 池事件=最近一次查询缓存值；-1=未知/查询失败），dump 省略
     uint64_t eventIndex = 0;
     unsigned long long flag = FLAG_INVALID;
     MemOpSpace space;
@@ -163,7 +169,6 @@ class MemoryEvent : public EventBase
     MemPageType pageType = MemPageType::MEM_MAX_PAGE_TYPE;
     uint64_t kernelIndex;
     bool isShadowEvent = false;  // Shadow event created during NOT_IN_TRACING mode
-    bool isPinned = false;       // Pinned memory flag (offload pinned memory, drives dump attr pinned:true vs total)
 
     MemoryEvent() {}
 };

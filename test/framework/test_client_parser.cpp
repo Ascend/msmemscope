@@ -1119,6 +1119,67 @@ TEST(ClientParser, pass_analysis_type_none_mixed_expect_none_priority)
     ASSERT_NE(capture.find("'none' mixed"), std::string::npos);
 }
 
+TEST(ClientParser, pass_oom_analysis_topk_validation)
+{
+    // oom[:K]：K 可选，默认 10，合法范围 [1,1000]，越界/非法报错
+    ClientParser cliParser;
+    std::vector<const char*> argv;
+    UserCommand cmd;
+
+    // 无 K：默认 10，且 OOM 分析位被置位
+    argv = {"msmemscope", "--analysis=oom"};
+    optind = 1;
+    cmd = cliParser.Parse(argv.size(), const_cast<char**>(argv.data()));
+    ASSERT_FALSE(cmd.printHelpInfo);
+    ASSERT_TRUE(BitPresent(cmd.config.analysisType, static_cast<size_t>(AnalysisType::OOM_ANALYSIS)));
+    ASSERT_EQ(cmd.config.oomTopK, 10);
+
+    // 下边界 1
+    argv = {"msmemscope", "--analysis=oom:1"};
+    optind = 1;
+    cmd = cliParser.Parse(argv.size(), const_cast<char**>(argv.data()));
+    ASSERT_FALSE(cmd.printHelpInfo);
+    ASSERT_EQ(cmd.config.oomTopK, 1);
+
+    // 上边界 1000
+    argv = {"msmemscope", "--analysis=oom:1000"};
+    optind = 1;
+    cmd = cliParser.Parse(argv.size(), const_cast<char**>(argv.data()));
+    ASSERT_FALSE(cmd.printHelpInfo);
+    ASSERT_EQ(cmd.config.oomTopK, 1000);
+
+    // 中值 5
+    argv = {"msmemscope", "--analysis=oom:5"};
+    optind = 1;
+    cmd = cliParser.Parse(argv.size(), const_cast<char**>(argv.data()));
+    ASSERT_FALSE(cmd.printHelpInfo);
+    ASSERT_EQ(cmd.config.oomTopK, 5);
+
+    // 越下界 0 → 报错
+    argv = {"msmemscope", "--analysis=oom:0"};
+    optind = 1;
+    cmd = cliParser.Parse(argv.size(), const_cast<char**>(argv.data()));
+    ASSERT_TRUE(cmd.printHelpInfo);
+
+    // 越上界 1001 → 报错
+    argv = {"msmemscope", "--analysis=oom:1001"};
+    optind = 1;
+    cmd = cliParser.Parse(argv.size(), const_cast<char**>(argv.data()));
+    ASSERT_TRUE(cmd.printHelpInfo);
+
+    // 非数字 → 报错
+    argv = {"msmemscope", "--analysis=oom:abc"};
+    optind = 1;
+    cmd = cliParser.Parse(argv.size(), const_cast<char**>(argv.data()));
+    ASSERT_TRUE(cmd.printHelpInfo);
+
+    // 空 K → 报错
+    argv = {"msmemscope", "--analysis=oom:"};
+    optind = 1;
+    cmd = cliParser.Parse(argv.size(), const_cast<char**>(argv.data()));
+    ASSERT_TRUE(cmd.printHelpInfo);
+}
+
 TEST(ClientParser, pass_event_trace_type_alloc_expect_dumpEventType_only_alloc)
 {
     std::vector<const char*> argv = {

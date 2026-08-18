@@ -134,6 +134,66 @@ TEST(ShadowCollectionTest, determine_trace_mode_skip)
 }
 
 // =============================================================================
+// UT-1b: 事件上报抑制机制（dcmi 查询等真实运行时调用窗口）
+// =============================================================================
+
+TEST(ShadowCollectionTest, suppression_guard_initial_not_suppressed)
+{
+    EXPECT_FALSE(IsEventReportSuppressed());
+}
+
+TEST(ShadowCollectionTest, determine_trace_mode_suppressed_skips_normal_mode)
+{
+    // NORMAL可采集配置 + 抑制窗口 → SKIP；守卫离开窗口后恢复 NORMAL
+    Config config{};
+    BitField<decltype(config.eventType)> eventBit;
+    eventBit.setBit(static_cast<size_t>(EventType::ALLOC_EVENT));
+    eventBit.setBit(static_cast<size_t>(EventType::FREE_EVENT));
+    config.eventType = eventBit.getValue();
+    config.collectMode = static_cast<uint8_t>(CollectMode::IMMEDIATE);
+    ConfigManager::Instance().SetConfig(config);
+    EventTraceManager::Instance().SetTraceStatus(EventTraceStatus::IN_TRACING);
+
+    {
+        EventReportSuppressor suppressor;
+        EXPECT_EQ(DetermineTraceMode(), TraceMode::SKIP);
+    }
+    EXPECT_EQ(DetermineTraceMode(), TraceMode::NORMAL);
+}
+
+TEST(ShadowCollectionTest, determine_trace_mode_suppressed_skips_shadow_mode)
+{
+    // SHADOW可采集配置 + 抑制窗口 → SKIP；守卫离开窗口后恢复 SHADOW
+    Config config{};
+    BitField<decltype(config.eventType)> eventBit;
+    eventBit.setBit(static_cast<size_t>(EventType::ALLOC_EVENT));
+    config.eventType = eventBit.getValue();
+    config.collectMode = static_cast<uint8_t>(CollectMode::DEFERRED);
+    ConfigManager::Instance().SetConfig(config);
+    EventTraceManager::Instance().SetTraceStatus(EventTraceStatus::NOT_IN_TRACING);
+
+    {
+        EventReportSuppressor suppressor;
+        EXPECT_EQ(DetermineTraceMode(), TraceMode::SKIP);
+    }
+    EXPECT_EQ(DetermineTraceMode(), TraceMode::SHADOW);
+}
+
+TEST(ShadowCollectionTest, suppression_guard_supports_nesting)
+{
+    // 嵌套置位：内层析构不影响外层抑制，最外层离开后恢复
+    {
+        EventReportSuppressor outer;
+        {
+            EventReportSuppressor inner;
+            EXPECT_TRUE(IsEventReportSuppressed());
+        }
+        EXPECT_TRUE(IsEventReportSuppressed());
+    }
+    EXPECT_FALSE(IsEventReportSuppressed());
+}
+
+// =============================================================================
 // UT-2: 影子 MALLOC 创建 SHADOW_CREATED 的 State
 // =============================================================================
 
@@ -148,13 +208,13 @@ TEST(ShadowCollectionTest, shadow_malloc_creates_marked_state)
     event->size = 1024;
     event->isShadowEvent = true;
 
-    EXPECT_TRUE(MemoryStateManager::GetInstance().AddEvent(event));
+    EXPECT_NE(MemoryStateManager::GetInstance().AddEvent(event), nullptr);
     MemoryState* state = MemoryStateManager::GetInstance().GetState(event);
     ASSERT_NE(state, nullptr);
     EXPECT_EQ(state->shadowState, ShadowState::SHADOW_CREATED);
 
     // Cleanup
-    MemoryStateManager::GetInstance().DeteleState(PoolType::HAL, MemoryStateKey{12345, 0x1000});
+    MemoryStateManager::GetInstance().DeteleState(PoolType::HAL, MemoryStateKey{12345, event->device, 0x1000});
 }
 
 // =============================================================================
@@ -236,7 +296,7 @@ TEST(ShadowCollectionTest, normal_malloc_then_shadow_free_is_marked)
     EXPECT_EQ(state->shadowState, ShadowState::SHADOW_FREED);
 
     // Cleanup
-    MemoryStateManager::GetInstance().DeteleState(PoolType::HAL, MemoryStateKey{12345, 0x3000});
+    MemoryStateManager::GetInstance().DeteleState(PoolType::HAL, MemoryStateKey{12345, GD_INVALID_NUM, 0x3000});
 }
 
 // =============================================================================
@@ -266,7 +326,7 @@ TEST(ShadowCollectionTest, analyzer_skips_shadow_events)
     // dispatching to analyzers when UpdateMemoryState returns nullptr for shadow events.
 
     // Cleanup
-    MemoryStateManager::GetInstance().DeteleState(PoolType::PTA_CACHING, MemoryStateKey{12345, 0x4000});
+    MemoryStateManager::GetInstance().DeteleState(PoolType::PTA_CACHING, MemoryStateKey{12345, 0, 0x4000});
 }
 
 // =============================================================================
@@ -288,7 +348,7 @@ TEST(EventHandlerTest, update_memory_state_returns_state_for_malloc)
     EXPECT_EQ(state->size, 256u);
 
     // Cleanup
-    MemoryStateManager::GetInstance().DeteleState(PoolType::PTA_CACHING, MemoryStateKey{99999, 0x5000});
+    MemoryStateManager::GetInstance().DeteleState(PoolType::PTA_CACHING, MemoryStateKey{99999, GD_INVALID_NUM, 0x5000});
 }
 
 TEST(EventHandlerTest, update_memory_state_returns_nullptr_for_shadow_event)
@@ -306,7 +366,7 @@ TEST(EventHandlerTest, update_memory_state_returns_nullptr_for_shadow_event)
     EXPECT_EQ(state, nullptr);  // Shadow events return nullptr to skip dispatch
 
     // Cleanup
-    MemoryStateManager::GetInstance().DeteleState(PoolType::HAL, MemoryStateKey{99999, 0x6000});
+    MemoryStateManager::GetInstance().DeteleState(PoolType::HAL, MemoryStateKey{99999, GD_INVALID_NUM, 0x6000});
 }
 
 TEST(EventHandlerTest, cleanup_memory_state_deletes_on_free)
@@ -370,5 +430,5 @@ TEST(EventRouterTest, route_dispatches_to_event_handler)
     EXPECT_EQ(state->size, 64u);
 
     // Cleanup
-    MemoryStateManager::GetInstance().DeteleState(PoolType::PTA_CACHING, MemoryStateKey{88888, 0x8000});
+    MemoryStateManager::GetInstance().DeteleState(PoolType::PTA_CACHING, MemoryStateKey{88888, GD_INVALID_NUM, 0x8000});
 }

@@ -18,6 +18,8 @@
 #ifndef MEMORY_STATE_MANAGER_H
 #define MEMORY_STATE_MANAGER_H
 
+#include <array>
+#include <atomic>
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -37,12 +39,16 @@ class MemoryStateKey : StateKey
 {
    public:
     uint64_t pid;
+    int32_t device;
     uint64_t addr;
 
-    MemoryStateKey(uint64_t pid, uint64_t addr) : pid(pid), addr(addr) {}
+    MemoryStateKey(uint64_t pid, int32_t device, uint64_t addr) : pid(pid), device(device), addr(addr) {}
 
     // 必须实现相等运算符
-    bool operator==(const MemoryStateKey& other) const { return (pid == other.pid) && (addr == other.addr); }
+    bool operator==(const MemoryStateKey& other) const
+    {
+        return (pid == other.pid) && (device == other.device) && (addr == other.addr);
+    }
 };
 
 struct MemoryStateKeyHasher
@@ -50,8 +56,9 @@ struct MemoryStateKeyHasher
     std::size_t operator()(const MemoryStateKey& key) const
     {
         size_t pidHash = std::hash<uint64_t>()(key.pid);
+        size_t deviceHash = std::hash<int32_t>()(key.device);
         size_t addrHash = std::hash<uint64_t>()(key.addr);
-        return pidHash ^ (addrHash << 1);
+        return pidHash ^ (deviceHash << 1) ^ (addrHash << 2);
     }
 };
 
@@ -117,6 +124,32 @@ class Pool
     Pool() {}
 };
 
+// 存活块查询过滤条件（空vector/无效值/0表示不过滤）
+struct LiveBlockFilter
+{
+    std::vector<PoolType> poolTypes;   // 限定池，空表示全部池
+    int32_t device = GD_INVALID_NUM;   // 限定设备，GD_INVALID_NUM表示不过滤
+    uint64_t pid = 0;                  // 限定进程，0表示不过滤
+    bool excludeShadowCreated = true;  // 排除影子期创建的块（含已消亡的SHADOW_FREED）
+};
+
+// 存活块聚合信息（供LeakAnalyzer等只读查询，不持有引用）
+struct LiveBlockInfo
+{
+    PoolType poolType;
+    uint64_t pid;
+    int32_t device;
+    uint64_t addr;
+    uint64_t size;
+    uint64_t allocationId;
+    uint64_t allocTimestamp;  // MALLOC事件时间戳
+    uint64_t allocEventId;    // MALLOC事件id（与时间戳构成字典序，用于step归属推导）
+    uint64_t kernelIndex;
+    ShadowState shadowState;
+    std::string cCallStack;
+    std::string pyCallStack;
+};
+
 class MemoryStateManager : StateManager
 {
    public:
@@ -126,9 +159,12 @@ class MemoryStateManager : StateManager
     // 添加失败（poolType无效或MALLOC冲突）返回nullptr
     MemoryState* AddEvent(std::shared_ptr<MemoryEvent>& event);
     bool DeteleState(const PoolType& poolType, const MemoryStateKey& key);
-    MemoryState* GetState(std::shared_ptr<EventBase>& event);
-    MemoryState* GetState(std::shared_ptr<MemoryEvent>& event);
+    MemoryState* GetState(const std::shared_ptr<EventBase>& event);
+    MemoryState* GetState(const std::shared_ptr<MemoryEvent>& event);
     std::vector<std::pair<PoolType, MemoryStateKey>> GetAllStateKeys();
+
+    // 按过滤条件查询存活块（含SHADOW_PROMOTED，不含幽灵state），供LeakAnalyzer/OOM查询
+    std::vector<LiveBlockInfo> QueryLiveBlocks(const LiveBlockFilter& filter) const;
 
     // 线程安全的历史转正：持有mtx_遍历所有影子标记的state
     // SHADOW_CREATED → SHADOW_PROMOTED（更新timestamp，等FREE时自然落盘）
@@ -140,12 +176,44 @@ class MemoryStateManager : StateManager
     void ClearLastStopTimestamp() { lastStopTimestamp_ = 0; }
     uint64_t GetLastStopTimestamp() const { return lastStopTimestamp_; }
 
+    // 事件统计字段回填（AddEvent 内对 MALLOC/FREE 调用）：维护 HAL/HOST 活跃累计并回填
+    // event->used（池事件 processUsed 由报告层查询缓存填值，见 UpdateProcessUsedCache）
+    void UpdateUsage(const std::shared_ptr<MemoryEvent>& event);
+    // TRACE_START 时重置累计并重新从存量块初始化基线（含 SHADOW_PROMOTED，防影子期累计失真）
+    void ResetUsageBaseline();
+    // 整卡用量缓存：EventReport 查询成功后写入（QueryDeviceUsed），池事件按设备读取（GetDeviceUsed）
+    void UpdateDeviceUsedCache(int32_t devId, int64_t used);
+    int64_t GetDeviceUsed(int32_t devId) const;  // 无缓存值/越界返回 -1
+    // 本进程用量缓存（dcmi_get_npu_proc_mem_info 查询值）：EventReport 查询成功后写入（QueryProcessUsed），
+    // 池事件按设备读取（GetProcessUsed）
+    void UpdateProcessUsedCache(int32_t devId, int64_t used);
+    int64_t GetProcessUsed(int32_t devId) const;  // 无缓存值/越界返回 -1
+
    private:
     MemoryState* FindStateInPool(const PoolType& poolType, const MemoryStateKey& key, uint64_t size);
     ~MemoryStateManager() override;
     std::unordered_map<PoolType, Pool> poolsMap_;
-    std::mutex mtx_;
+    mutable std::mutex mtx_;          // QueryLiveBlocks 等 const 成员函数需加锁
     uint64_t lastStopTimestamp_ = 0;  // 最后一次TRACE_STOP的时间戳，0表示无效
+
+    // 本进程显存用量（per-device HAL 活跃申请累计 + HOST 块累计），与 poolsMap_ 数据同源，
+    // AddEvent 增量维护，TRACE_START 时经 ResetUsageBaseline 从存量块重建
+    std::unordered_map<int32_t, int64_t> halUsed_;
+    int64_t hostUsed_ = 0;
+    // per-device 整卡用量缓存（初始 -1=未知）：采集层查询成功后写入、池事件读取（mtx_ 保护）
+    std::array<int64_t, 16> deviceUsedCache_ = []()
+    {
+        std::array<int64_t, 16> cache{};
+        cache.fill(-1);
+        return cache;
+    }();
+    // per-device 本进程用量缓存（dcmi_get_npu_proc_mem_info 查询值，初始 -1=未知）：同上
+    std::array<int64_t, 16> processUsedCache_ = []()
+    {
+        std::array<int64_t, 16> cache{};
+        cache.fill(-1);
+        return cache;
+    }();
 };
 
 }  // namespace MemScope

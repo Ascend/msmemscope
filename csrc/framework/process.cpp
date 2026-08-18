@@ -75,7 +75,7 @@ bool Process::SendEvent(std::shared_ptr<EventBase> event)
 {
     std::lock_guard<std::mutex> lock(processMutex_);
     // EventHandler内部通过EventDispatcher自动通知所有订阅者
-    // （Dump、DecomposeAnalyzer、InefficientAnalyzer、HalAnalyzer、StepInnerAnalyzer）
+    // （Dump、DecomposeAnalyzer、InefficientAnalyzer、LeakAnalyzer、HealthAnalyzer）
     EventRouter::Instance().Route(event);
     return true;
 }

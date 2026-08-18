@@ -140,7 +140,7 @@ void ShowHelpInfo()
               << "  msmemscope --compare --input-path=./baseline,./target" << std::endl
               << std::endl
               << "Output:" << std::endl
-              << "  Results are written to <output-path> (default: ./memscopeDumpResults/dump/)." << std::endl;
+              << "  Results are written to <output-path> (default: ./memscopeDumpResults)." << std::endl;
 }
 
 void ShowVersion()
@@ -408,14 +408,12 @@ void ParseAnalysis(const std::string &param, Config &config, bool &printHelpInfo
                     verRule.maxValue = 1000;
                     if (kStr.empty() || !Utility::IsValidInteger(kStr, verRule) || !Utility::StrToUint32(kVal, kStr))
                     {
-                        std::cout << "[msmemscope] Warn: invalid OOM top-K value '" << kStr << "', using default 10."
-                                  << std::endl;
-                        config.oomTopK = 10;
+                        std::cout << "[msmemscope] Error: invalid OOM top-K value '" << kStr
+                                  << "', valid range is [1, 1000]." << std::endl;
+                        printHelpInfo = true;
+                        return;
                     }
-                    else
-                    {
-                        config.oomTopK = static_cast<uint16_t>(kVal);
-                    }
+                    config.oomTopK = static_cast<uint16_t>(kVal);
                 }
             }
             else

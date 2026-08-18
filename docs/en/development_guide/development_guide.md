@@ -38,7 +38,7 @@ Parameters:
 After the dependencies are successfully downloaded, the following information is displayed.
 
 ```shell
-============ download thirdparty done ============
+============ download third-party done ============
 ```
 
 After the compilation is successful, the following information is displayed.

@@ -38,9 +38,9 @@ msMemScope工具的安装，请参见《[msMemScope工具安装指南](../instal
     source msmemscope --load-api-env
     ```
 
-    > [!NOTE]
+    > [!WARNING]
     >
-    > 当使用完毕msMemScope工具后，请及时使用命令`source msmemscope --unload-api-env`清除该环境变量。该命令仅移除msMemScope相关的条目，不会影响其他工具的配置。
+    > 当使用完毕msMemScope工具后，请及时使用命令`source msmemscope --unload-api-env`清除该环境变量，避免与后续操作产生冲突。若未及时清除该环境变量，后续执行set_env类操作，或手动设置`LD_PRELOAD`、`LD_LIBRARY_PATH`等LD类环境变量时，可能产生不可预知的错误。
 
     **表 1**  参数说明<a id="参数说明"></a>
 
@@ -219,7 +219,7 @@ msmemscope.stop()  # 退出采集
 |--events|可选|采集事件。可选项有alloc、free、launch、access、traceback和none，默认值为alloc，free，launch，取值间以逗号（全角半角逗号均可）分隔。示例：--events=alloc,free,launch。<br> - **alloc**：采集内存申请事件。<br>- **free**：采集内存释放事件。<br> - **launch**：采集算子/kernel下发事件。<br> - **access**：采集内存访问事件。当前仅支持采集ATB和Ascend for PyTorch算子场景的内存访问事件。<br> - **traceback**：采集Python Trace事件。<br> - **none**：不采集任何事件类型。当`none`与其他事件类型值同时出现时，以`none`为准（清空所有事件类型），同时输出warning提示。<br>**需要注意的是**：<br>1. 如果`alloc`事件和`free`事件不成对配置，可能导致分配-释放配对信息缺失，影响数据在MindStudio Insight工具中的可视化效果（如内存时间线展示不完整、泄漏分析结果不准确等）。<br>2. --events=traceback仅支持通过API接口调用，无法在命令行环境中使用。|
 |--call-stack|可选|采集调用栈。可选项有python和c，可同时选择，以逗号（全角半角逗号均可）分隔。可设置调用栈的采集深度，在选项后输入数字，选项与数字以英文冒号间隔，表示采集深度，取值范围为[0,1000]，默认值为50，示例：--call-stack=python，--call-stack=c:20,python:10。<br> - **python**：采集python调用栈。<br> - **c**：采集c调用栈。|
 |--collect-mode|可选|内存采集方式。可选项有immediate和deferred，默认值为immediate，取值仅支持选择其一，示例：--collect-mode=immediate。<br> - **immediate**：立即采集，即用户脚本开始运行时，就开始采集内存信息，直到用户脚本运行结束；也可配合Python自定义采集接口控制采集范围。<br> - **deferred**：自定义采集，需配合Python自定义采集接口使用，等待msmemscope.start()脚本执行后，开始采集。如果仅设置--collect-mode=deferred，不使用Python自定义采集接口时，默认不采集任何数据（除少量系统数据）。|
-|--analysis|可选|启用相关内存分析功能。默认值为leaks，使用`none`关键字可不启用任何分析功能；可多选，取值间以逗号（全角半角逗号均可）分隔，示例：--analysis=leaks,decompose。<br> - **leaks**：识别内存泄漏事件。<br> - **inefficient**：识别低效内存，支持识别ATB LLM和Ascend for PyTorch单算子场景的低效内存，低效内存识别可通过接口设置，具体操作可参见[API参考](../api_reference/api.md)。<br> - **decompose**：开启内存拆解功能。<br> - **oom[:K]**：开启OOM详细分析功能，K为可选值，表示采集Top-K条未释放内存记录，默认值为10，取值范围[1,1000]。当OOM发生时，自动采集触发OOM的操作信息（func、req_size、ret）、按时间排序的最近K条未释放记录，以及按大小排序的最大K条未释放记录。开启此功能后会自动联动开启alloc和free事件采集，无需额外配置--events参数。具体使用方式可参见[OOM分析功能介绍](./memory_analysis.md#oom分析功能介绍)。<br> - **none**：不启用任何分析功能。当`none`与其他分析类型值同时出现时，以`none`为准（清空所有分析类型），同时输出warning提示。|
+|--analysis|可选|启用相关内存分析功能。默认值为leaks，使用`none`关键字可不启用任何分析功能；可多选，取值间以逗号（全角半角逗号均可）分隔，示例：--analysis=leaks,decompose。<br> - **leaks**：识别内存泄漏事件。<br> - **inefficient**：识别低效内存，支持识别ATB LLM和Ascend for PyTorch单算子场景的低效内存，低效内存识别可通过接口设置，具体操作可参见[API参考](../api_reference/api.md)。<br> - **decompose**：开启内存拆解功能。<br> - **oom[:K]**：开启OOM详细分析功能，K为可选值，表示采集Top-K条未释放内存记录，默认值为10，取值范围[1,1000]，超出范围或非法取值时报错。当OOM发生时，自动采集触发OOM的操作信息（func、req_size、ret）、按时间排序的最近K条未释放记录，以及按大小排序的最大K条未释放记录。开启此功能后会自动联动开启alloc和free事件采集，无需额外配置--events参数。具体使用方式可参见[OOM分析功能介绍](./memory_analysis.md#oom分析功能介绍)。<br> - **none**：不启用任何分析功能。当`none`与其他分析类型值同时出现时，以`none`为准（清空所有分析类型），同时输出warning提示。|
 |--format|可选|输出的文件格式。可选项有db和csv，根据需求选择一种格式，取值不可为空，默认值为csv，示例：--format=db。<br> 当输出文件为db格式时，可使用MindStudio Insight工具展示，请参见[MindStudio Insight内存调优](https://gitcode.com/Ascend/msinsight/blob/master/docs/zh/user_guide/memory_tuning.md)。<br> - **db**：db格式文件。<br> - **csv**：csv格式文件。<br> 旧参数名--data-format仍兼容使用，但已废弃，使用时会有弃用告警提示。|
 |--watch|可选|内存块监测。可选项有start，out{*id*}，end和full-content，可多选，其中end为必选，取值间以逗号（全角半角逗号均可）分隔。参数设置格式为：--watch=start:out{*id*},end,full-content，示例：--watch=op0:out0,end,full-content。<br> - **start**：可选，字符串形式，表示一个算子，不同框架下格式不同。当需要设置out{*id*}时，start为必选。<br> - **out{*id*}**：可选，表示算子的output编号。当Tensor为一个列表时，可以指定需要落盘的Tensor，取值为Tensor在列表中的下标编号。<br> - **end**：必选，字符串形式，表示一个算子，不同框架下格式不同。<br> - **full-content**：可选，如果选择该值，表示落盘完整的Tensor数据，如果不选，则落盘Tensor对应的哈希值。|
 |--output-path|可选|指定输出文件落盘路径，路径最大输入长度为4096。默认的落盘目录为“memscopeDumpResults”。示例：--output-path=/home/projects/output。<br> 旧参数名--output仍兼容使用，但已废弃，使用时会有弃用告警提示。|
@@ -292,3 +292,38 @@ msMemScope工具可以结合mstx打点能力进行内存采集，同时msMemScop
 ### 输出说明
 
 内存采集的输出结果请参见《[输出文件说明](./output_file_spec.md)》。
+
+## 输出数据解读
+
+内存采集的输出文件记录了内存事件及事件时刻的显存统计信息，可用于绘制显存使用曲线。输出文件字段说明可参见《[输出文件说明](./output_file_spec.md)》。
+
+### 统计字段说明
+
+内存事件（MALLOC/FREE）的Attr字段中，除allocation_id、addr、size等基本属性外，还包含以下显存统计字段：
+
+|字段|含义|
+|--|--|
+|used|内存使用量。Event Type为HAL时，为本进程HAL维度显存使用量（工具采集到的HAL申请/释放累计值）；Event Type为PTA、MindSpore、ATB或PTA_WORKSPACE时，为内存池内已分配大小；Event Type为HOST_PINNED时，为采集到的HOST内存块使用量。|
+|total|内存池总大小，仅内存池事件（Event Type为PTA、MindSpore、ATB或PTA_WORKSPACE）存在。|
+|process_used|本进程显存占用。Event Type为HAL时，为本进程在该设备上的显存占用，与npu-smi info的Process memory(MB)一致；内存池事件含义相同；Event Type为HOST_PINNED时，为本进程物理内存使用量（VmRSS）。|
+|device_used|整卡显存占用。Event Type为HAL时，为整卡显存占用，与npu-smi info的HBM-Usage(MB)一致；内存池事件含义相同；Event Type为HOST_PINNED时不输出。|
+
+> [!NOTE]
+>
+> - 程序初始化阶段，设备上下文还未完成初始化，process_used和device_used可能采集不到（字段省略），属正常现象，初始化完成后可正常采集。
+> - 采集不到该值时（无卡、无驱动环境、权限不足等），process_used和device_used字段将被省略，不输出。
+
+### 整卡显存曲线
+
+取HAL事件（或内存池事件）的device_used字段对Timestamp(ns)绘图，即可得到整卡显存使用曲线。
+
+- device_used为事件时刻的整卡显存占用，与npu-smi info回显的HBM-Usage(MB)一致，可用于对照验证采集数据。
+- 曲线为事件驱动，无显存事件的空闲时间段无采样点。
+
+### 本进程显存曲线
+
+取HAL事件的process_used字段对Timestamp(ns)绘图，即可得到本进程在设备上的显存使用曲线。
+
+- process_used为本进程在该设备上的显存占用，与npu-smi info回显的Process memory(MB)一致，可用于对照验证采集数据。
+- 曲线反映本进程申请/释放显存后的实际占用变化；与used曲线（工具采集的HAL维度累计）对照，可区分工具采集不完整的部分。
+- 曲线数量级关系：HAL事件的used（工具采集累计）≤ process_used（驱动统计，含分配器碎片/缓存）≤ device_used（整卡，含其他进程及片上侧占用）。

@@ -53,6 +53,7 @@ void setConfig(Config &config)
 TEST(Process, process_setpreloadenv_without_atb_expect_success)
 {
     unsetenv("ATB_HOME_PATH");
+    unsetenv("LD_PRELOAD");  // 清理环境继承的 LD_PRELOAD（SetPreloadEnv 语义为追加，不清理则期望值失真）
     setenv("LD_PRELOAD_PATH", "/lib64/", 1);
     Config config;
     Utility::FileCreateManager::GetInstance("testmsmemscope");
@@ -71,6 +72,7 @@ TEST(Process, process_setpreloadenv_without_atb_expect_success)
 
 TEST(Process, process_setpreloadenv_with_atb_abi_0_expect_success)
 {
+    unsetenv("LD_PRELOAD");  // 清理环境继承的 LD_PRELOAD（SetPreloadEnv 语义为追加，不清理则期望值失真）
     setenv("ATB_HOME_PATH", "/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_0", 1);
     setenv("LD_PRELOAD_PATH", "/lib64/", 1);
     Config config;
@@ -90,6 +92,7 @@ TEST(Process, process_setpreloadenv_with_atb_abi_0_expect_success)
 
 TEST(Process, process_setpreloadenv_with_atb_abi_1_expect_success)
 {
+    unsetenv("LD_PRELOAD");  // 清理环境继承的 LD_PRELOAD（SetPreloadEnv 语义为追加，不清理则期望值失真）
     setenv("ATB_HOME_PATH", "/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1", 1);
     setenv("LD_PRELOAD_PATH", "/lib64/", 1);
     Config config;

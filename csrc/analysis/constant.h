@@ -19,17 +19,27 @@
 #define CONSTANT_H
 
 #include <string>
+#include <unordered_map>
 
 #include "event.h"
 
 namespace MemScope
 {
 
+constexpr uint64_t BYTE_TO_MB = 1024 * 1024;
+constexpr double PERCENT_SCALE_FACTOR = 100.0;
+
 const std::unordered_map<PoolType, std::string> PoolTypeMap = {
     {PoolType::PTA_CACHING, "PTA"}, {PoolType::PTA_WORKSPACE, "PTA_WORKSPACE"},
     {PoolType::ATB, "ATB"},         {PoolType::MINDSPORE, "MINDSPORE"},
     {PoolType::HAL, "HAL"}, {PoolType::HOST, "HOST"},
 };
+
+// NPU池展示名（泄漏/Gap统计日志用），原定义于stepinner_analyzer.h，统一收敛至此处
+const std::unordered_map<PoolType, std::string> PoolTypeToString = {
+    {PoolType::ATB, "ATB memory pool"},
+    {PoolType::PTA_CACHING, "Pytorch Caching memory pool"},
+    {PoolType::MINDSPORE, "Mindspore memory pool"}};
 
 // Module id
 const std::unordered_map<int, std::string> MODULE_HASH_TABLE = {

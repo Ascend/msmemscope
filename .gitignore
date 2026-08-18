@@ -1,5 +1,32 @@
-.vscode
-build
-coverage
-opensource
-platform
+# IDE 交付物入库（settings.json 由 skip-worktree 治理本地噪声）
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/settings.json
+.idea/
+
+# 构建产物
+build/
+build_ut/
+output/
+artifacts/
+coverage/
+.cache/
+
+# Python 产物
+__pycache__/
+*.pyc
+.venv/
+dist/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+
+# 三方依赖（脚本 git clone 所得，非 submodule）
+opensource/
+platform/
+
+# 本地快照与身份文件
+memscope_dump_*.db*
+.devcontainer/.host-gitconfig

@@ -34,6 +34,13 @@ using namespace MemScope;
 // 通用OOM错误处理函数
 void HandleOOM(size_t size, uint64_t flag, int ret, const char *funcName)
 {
+    // 抑制窗口内（仪器自身调用真实运行时期间）的OOM为运行时内部行为，
+    // 不上报，防止产生幻影OOM记录与递归上报
+    if (IsEventReportSuppressed())
+    {
+        return;
+    }
+
     if (!EventTraceManager::Instance().IsNeedTrace(EventBaseType::MALLOC) &&
         !EventTraceManager::Instance().IsNeedTrace(EventBaseType::FREE))
     {

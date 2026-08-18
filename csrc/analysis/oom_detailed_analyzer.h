@@ -22,9 +22,7 @@
 #include <vector>
 
 #include "config_info.h"
-#include "hal_analyzer.h"
 #include "record_info.h"
-#include "stepinner_analyzer.h"
 
 namespace MemScope
 {

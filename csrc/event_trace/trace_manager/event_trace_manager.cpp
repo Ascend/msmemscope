@@ -28,6 +28,19 @@
 namespace MemScope
 {
 
+namespace
+{
+// 事件上报抑制深度计数（thread_local）：仪器自身调用真实运行时接口（如dcmi_get_device_hbm_info）期间
+// 置位，运行时内部的内存申请会被hook捕获并尝试上报，导致递归上报/幻影事件。
+// 嵌套置位时递增计数，最外层离开时归零，各线程互不影响
+thread_local int g_suppressEventReportDepth = 0;
+}  // namespace
+
+bool IsEventReportSuppressed() { return g_suppressEventReportDepth > 0; }
+
+EventReportSuppressor::EventReportSuppressor() { ++g_suppressEventReportDepth; }
+EventReportSuppressor::~EventReportSuppressor() { --g_suppressEventReportDepth; }
+
 bool ConfigManager::Inited = false;
 
 const std::unordered_map<std::string, std::function<void(const std::string &, Config &, bool &)>> parserConfigTable = {
@@ -174,6 +187,13 @@ bool IsNeedTraceMemory() { return IsNeedTraceAlloc() && IsNeedTraceFree(); }
 
 TraceMode DetermineTraceMode()
 {
+    // 抑制窗口内（仪器自身调用真实运行时接口期间）触发的事件为运行时内部行为，
+    // 直接跳过上报，防止递归上报与幻影事件
+    if (IsEventReportSuppressed())
+    {
+        return TraceMode::SKIP;
+    }
+
     bool needNormalTrace = EventTraceManager::Instance().IsNeedTrace(EventBaseType::MALLOC) ||
                            EventTraceManager::Instance().IsNeedTrace(EventBaseType::FREE);
     bool needShadowTrace = EventTraceManager::Instance().ShouldCollectShadowEvents();

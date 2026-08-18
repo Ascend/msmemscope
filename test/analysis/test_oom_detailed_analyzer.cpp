@@ -16,16 +16,16 @@
  */
 #include <gtest/gtest.h>
 #include <gtest/internal/gtest-port.h>
-#include <string>
-#define private public
-#include "oom_detailed_analyzer.h"
-#include "hal_analyzer.h"
-#include "stepinner_analyzer.h"
-#undef private
+#include <memory>
+
 #include "bit_field.h"
 #include "config_info.h"
 #include "event.h"
 #include "event_trace/trace_manager/event_trace_manager.h"
+#define private public
+#include "oom_detailed_analyzer.h"
+#undef private
+#include "memory_state_manager.h"
 #include "record_info.h"
 #include "utility/utils.h"
 
@@ -49,69 +49,52 @@ static Config MakeOOMConfig()
     return cfg;
 }
 
-static uint32_t GetCurrentClientId()
+namespace
 {
-    return static_cast<uint32_t>(Utility::GetPid());
+// 构造MALLOC事件并直接注入MemoryStateManager（重构后OOM查询统一走
+// LeakAnalyzer::QueryUnfreedRecords → MemoryStateManager::QueryLiveBlocks，
+// 不再经过HalAnalyzer/StepInnerAnalyzer）
+std::shared_ptr<MemoryEvent> CreateMalloc(PoolType poolType, uint64_t addr, int32_t device, uint64_t pid,
+                                          uint64_t id, uint64_t timestamp, uint64_t size)
+{
+    auto event = std::make_shared<MemoryEvent>();
+    event->eventType = EventBaseType::MALLOC;
+    event->poolType = poolType;
+    event->addr = addr;
+    event->device = device;
+    event->pid = pid;
+    event->id = id;
+    event->timestamp = timestamp;
+    event->size = static_cast<int64_t>(size);
+    return event;
 }
+}  // namespace
 
 class OOMDetailedAnalyzerTest : public ::testing::Test
 {
-protected:
+   protected:
     void SetUp() override
     {
         Config cfg = MakeOOMConfig();
         ConfigManager::Instance().SetConfig(cfg);
+        // 带参单例（static仅初始化一次），SetUp中以默认oomTopK=10初始化，供后续用例复用
         OOMDetailedAnalyzer::GetInstance(cfg);
+        // 清理单例跨用例残留state
+        auto keys = MemoryStateManager::GetInstance().GetAllStateKeys();
+        for (const auto& keyPair : keys)
+        {
+            MemoryStateManager::GetInstance().DeteleState(keyPair.first, keyPair.second);
+        }
     }
 
     void TearDown() override
     {
         ConfigManager::Instance().SetConfig(Config{});
-        HalAnalyzer::GetInstance().memtables_.clear();
-        StepInnerAnalyzer::GetInstance().npuMemUsages_.clear();
-        StepInnerAnalyzer::GetInstance().leakMemSums_.clear();
-        StepInnerAnalyzer::GetInstance().stepInfoTables_.clear();
-        StepInnerAnalyzer::GetInstance().skipSteps_ = 1;
-    }
-
-    void InjectHalRecord(uint64_t addr, int64_t size, uint64_t timestamp, int32_t deviceId,
-                         const std::string& cStack = "", const std::string& pyStack = "")
-    {
-        std::shared_ptr<MemoryEvent> event = std::make_shared<MemoryEvent>();
-        event->eventType = EventBaseType::MALLOC;
-        event->poolType = PoolType::HAL;
-        event->eventSubType = EventSubType::HAL;
-        event->device = deviceId;
-        event->addr = addr;
-        event->size = size;
-        event->timestamp = timestamp;
-        event->cCallStack = cStack;
-        event->pyCallStack = pyStack;
-
-        std::shared_ptr<EventBase> baseEvent = event;
-        HalAnalyzer::GetInstance().EventHandle(baseEvent, nullptr);
-    }
-
-    void InjectNpuRecord(uint64_t addr, int64_t size, uint64_t timestamp, int32_t deviceId,
-                         PoolType poolType = PoolType::PTA_CACHING,
-                         const std::string& cStack = "", const std::string& pyStack = "")
-    {
-        std::shared_ptr<MemoryEvent> event = std::make_shared<MemoryEvent>();
-        event->eventType = EventBaseType::MALLOC;
-        event->poolType = poolType;
-        event->eventSubType = static_cast<EventSubType>(poolType);
-        event->device = deviceId;
-        event->addr = addr;
-        event->size = size;
-        event->used = size;
-        event->total = size;
-        event->timestamp = timestamp;
-        event->kernelIndex = 0;
-        event->cCallStack = cStack;
-        event->pyCallStack = pyStack;
-
-        std::shared_ptr<EventBase> baseEvent = event;
-        StepInnerAnalyzer::GetInstance().EventHandle(baseEvent, nullptr);
+        auto keys = MemoryStateManager::GetInstance().GetAllStateKeys();
+        for (const auto& keyPair : keys)
+        {
+            MemoryStateManager::GetInstance().DeteleState(keyPair.first, keyPair.second);
+        }
     }
 };
 
@@ -175,20 +158,24 @@ TEST_F(OOMDetailedAnalyzerTest, ShouldDumpDetails_AfterIntervalReturnsTrue)
 TEST_F(OOMDetailedAnalyzerTest, QueryRecentAllocs_SortedByTimestampDesc)
 {
     const int32_t deviceId = 0;
-    const uint32_t clientId = GetCurrentClientId();
-    Config cfg = MakeOOMConfig();
-    cfg.oomTopK = 10;
+    // NPU按device过滤、HAL按clientId(pid)过滤，注入块pid统一为1
+    const uint32_t clientId = 1;
 
     // 注入 3 条 NPU 记录：timestamp 分别为 100, 300, 200
-    InjectNpuRecord(0x1000, 1024, 100, deviceId);
-    InjectNpuRecord(0x2000, 2048, 300, deviceId);
-    InjectNpuRecord(0x3000, 4096, 200, deviceId);
+    auto npuEvent1 = CreateMalloc(PoolType::PTA_CACHING, 0x1000, deviceId, clientId, 1, 100, 1024);
+    ASSERT_NE(MemoryStateManager::GetInstance().AddEvent(npuEvent1), nullptr);
+    auto npuEvent2 = CreateMalloc(PoolType::PTA_CACHING, 0x2000, deviceId, clientId, 2, 300, 2048);
+    ASSERT_NE(MemoryStateManager::GetInstance().AddEvent(npuEvent2), nullptr);
+    auto npuEvent3 = CreateMalloc(PoolType::PTA_CACHING, 0x3000, deviceId, clientId, 3, 200, 4096);
+    ASSERT_NE(MemoryStateManager::GetInstance().AddEvent(npuEvent3), nullptr);
 
     // 注入 2 条 HAL 记录：timestamp 分别为 150, 50
-    InjectHalRecord(0xA000, 512, 150, deviceId);
-    InjectHalRecord(0xB000, 256, 50, deviceId);
+    auto halEvent1 = CreateMalloc(PoolType::HAL, 0xA000, deviceId, clientId, 4, 150, 512);
+    ASSERT_NE(MemoryStateManager::GetInstance().AddEvent(halEvent1), nullptr);
+    auto halEvent2 = CreateMalloc(PoolType::HAL, 0xB000, deviceId, clientId, 5, 50, 256);
+    ASSERT_NE(MemoryStateManager::GetInstance().AddEvent(halEvent2), nullptr);
 
-    auto records = OOMDetailedAnalyzer::GetInstance(cfg).QueryRecentAllocs(deviceId, clientId);
+    auto records = OOMDetailedAnalyzer::GetInstance(MakeOOMConfig()).QueryRecentAllocs(deviceId, clientId);
 
     ASSERT_EQ(records.size(), 5u);
 
@@ -205,19 +192,21 @@ TEST_F(OOMDetailedAnalyzerTest, QueryRecentAllocs_SortedByTimestampDesc)
 TEST_F(OOMDetailedAnalyzerTest, QueryTopAllocs_SortedBySizeDesc)
 {
     const int32_t deviceId = 0;
-    const uint32_t clientId = GetCurrentClientId();
-    Config cfg = MakeOOMConfig();
-    cfg.oomTopK = 10;
+    const uint32_t clientId = 1;
 
     // 注入 2 条 NPU 记录：size 1024, 4096
-    InjectNpuRecord(0x1000, 1024, 100, deviceId);
-    InjectNpuRecord(0x2000, 4096, 200, deviceId);
+    auto npuEvent1 = CreateMalloc(PoolType::PTA_CACHING, 0x1000, deviceId, clientId, 1, 100, 1024);
+    ASSERT_NE(MemoryStateManager::GetInstance().AddEvent(npuEvent1), nullptr);
+    auto npuEvent2 = CreateMalloc(PoolType::PTA_CACHING, 0x2000, deviceId, clientId, 2, 200, 4096);
+    ASSERT_NE(MemoryStateManager::GetInstance().AddEvent(npuEvent2), nullptr);
 
     // 注入 2 条 HAL 记录：size 512, 2048
-    InjectHalRecord(0xA000, 512, 150, deviceId);
-    InjectHalRecord(0xB000, 2048, 250, deviceId);
+    auto halEvent1 = CreateMalloc(PoolType::HAL, 0xA000, deviceId, clientId, 3, 150, 512);
+    ASSERT_NE(MemoryStateManager::GetInstance().AddEvent(halEvent1), nullptr);
+    auto halEvent2 = CreateMalloc(PoolType::HAL, 0xB000, deviceId, clientId, 4, 250, 2048);
+    ASSERT_NE(MemoryStateManager::GetInstance().AddEvent(halEvent2), nullptr);
 
-    auto records = OOMDetailedAnalyzer::GetInstance(cfg).QueryTopAllocs(deviceId, clientId);
+    auto records = OOMDetailedAnalyzer::GetInstance(MakeOOMConfig()).QueryTopAllocs(deviceId, clientId);
 
     ASSERT_EQ(records.size(), 4u);
 
@@ -234,17 +223,22 @@ TEST_F(OOMDetailedAnalyzerTest, QueryTopAllocs_SortedBySizeDesc)
 TEST_F(OOMDetailedAnalyzerTest, QueryRecentAllocs_RespectsTopK)
 {
     const int32_t deviceId = 0;
-    const uint32_t clientId = GetCurrentClientId();
+    const uint32_t clientId = 1;
 
     auto& analyzer = OOMDetailedAnalyzer::GetInstance(MakeOOMConfig());
     analyzer.config_.oomTopK = 2;
 
     // 注入 5 条记录（3 NPU + 2 HAL），但 K=2
-    InjectNpuRecord(0x1000, 100, 500, deviceId);
-    InjectNpuRecord(0x2000, 100, 400, deviceId);
-    InjectNpuRecord(0x3000, 100, 300, deviceId);
-    InjectHalRecord(0xA000, 100, 200, deviceId);
-    InjectHalRecord(0xB000, 100, 100, deviceId);
+    auto npuEvent1 = CreateMalloc(PoolType::PTA_CACHING, 0x1000, deviceId, clientId, 1, 500, 100);
+    ASSERT_NE(MemoryStateManager::GetInstance().AddEvent(npuEvent1), nullptr);
+    auto npuEvent2 = CreateMalloc(PoolType::PTA_CACHING, 0x2000, deviceId, clientId, 2, 400, 100);
+    ASSERT_NE(MemoryStateManager::GetInstance().AddEvent(npuEvent2), nullptr);
+    auto npuEvent3 = CreateMalloc(PoolType::PTA_CACHING, 0x3000, deviceId, clientId, 3, 300, 100);
+    ASSERT_NE(MemoryStateManager::GetInstance().AddEvent(npuEvent3), nullptr);
+    auto halEvent1 = CreateMalloc(PoolType::HAL, 0xA000, deviceId, clientId, 4, 200, 100);
+    ASSERT_NE(MemoryStateManager::GetInstance().AddEvent(halEvent1), nullptr);
+    auto halEvent2 = CreateMalloc(PoolType::HAL, 0xB000, deviceId, clientId, 5, 100, 100);
+    ASSERT_NE(MemoryStateManager::GetInstance().AddEvent(halEvent2), nullptr);
 
     auto records = analyzer.QueryRecentAllocs(deviceId, clientId);
 
@@ -257,15 +251,18 @@ TEST_F(OOMDetailedAnalyzerTest, QueryRecentAllocs_RespectsTopK)
 TEST_F(OOMDetailedAnalyzerTest, QueryTopAllocs_TakesAllWhenLessThanK)
 {
     const int32_t deviceId = 0;
-    const uint32_t clientId = GetCurrentClientId();
-    Config cfg = MakeOOMConfig();
-    cfg.oomTopK = 10;
+    const uint32_t clientId = 1;
+
+    auto& analyzer = OOMDetailedAnalyzer::GetInstance(MakeOOMConfig());
+    analyzer.config_.oomTopK = 10;
 
     // 只注入 2 条
-    InjectNpuRecord(0x1000, 1024, 100, deviceId);
-    InjectHalRecord(0xA000, 512, 200, deviceId);
+    auto npuEvent1 = CreateMalloc(PoolType::PTA_CACHING, 0x1000, deviceId, clientId, 1, 100, 1024);
+    ASSERT_NE(MemoryStateManager::GetInstance().AddEvent(npuEvent1), nullptr);
+    auto halEvent1 = CreateMalloc(PoolType::HAL, 0xA000, deviceId, clientId, 2, 200, 512);
+    ASSERT_NE(MemoryStateManager::GetInstance().AddEvent(halEvent1), nullptr);
 
-    auto records = OOMDetailedAnalyzer::GetInstance(cfg).QueryTopAllocs(deviceId, clientId);
+    auto records = analyzer.QueryTopAllocs(deviceId, clientId);
 
     ASSERT_EQ(records.size(), 2u);
 }
@@ -273,10 +270,42 @@ TEST_F(OOMDetailedAnalyzerTest, QueryTopAllocs_TakesAllWhenLessThanK)
 TEST_F(OOMDetailedAnalyzerTest, QueryRecentAllocs_EmptyWhenNoRecords)
 {
     const int32_t deviceId = 0;
-    const uint32_t clientId = GetCurrentClientId();
-    Config cfg = MakeOOMConfig();
+    const uint32_t clientId = 1;
 
-    auto records = OOMDetailedAnalyzer::GetInstance(cfg).QueryRecentAllocs(deviceId, clientId);
+    auto records = OOMDetailedAnalyzer::GetInstance(MakeOOMConfig()).QueryRecentAllocs(deviceId, clientId);
 
     ASSERT_TRUE(records.empty());
+}
+
+// ==================== NPU与HAL合并查询 ====================
+
+TEST_F(OOMDetailedAnalyzerTest, QueryMergesNpuAndHalRecords_Sorted)
+{
+    // GetInstance为带参单例（static仅初始化一次），全测试共用同一oomTopK（SetUp中=10）
+    OOMDetailedAnalyzer& analyzer = OOMDetailedAnalyzer::GetInstance(MakeOOMConfig());
+
+    // NPU块（device=0, pid=1）
+    auto npuEvent = CreateMalloc(PoolType::PTA_CACHING, 0x1000, 0, 1, 1, 1000, 2048);
+    ASSERT_NE(MemoryStateManager::GetInstance().AddEvent(npuEvent), nullptr);
+    // HAL块（pid=1）
+    auto halEvent = CreateMalloc(PoolType::HAL, 0x2000, 0, 1, 2, 2000, 4096);
+    ASSERT_NE(MemoryStateManager::GetInstance().AddEvent(halEvent), nullptr);
+    // 其他pid的块不参与（HAL按clientId过滤）
+    auto otherPidEvent = CreateMalloc(PoolType::HAL, 0x3000, 0, 2, 3, 3000, 8192);
+    ASSERT_NE(MemoryStateManager::GetInstance().AddEvent(otherPidEvent), nullptr);
+
+    // 合并NPU(device过滤)+HAL(pid过滤)
+    auto topAllocs = analyzer.QueryTopAllocs(0, 1);
+    ASSERT_EQ(topAllocs.size(), 2u);
+    EXPECT_EQ(topAllocs[0].ptr, 0x2000);  // 按size降序：4096 > 2048
+    EXPECT_EQ(topAllocs[1].ptr, 0x1000);
+
+    auto recentAllocs = analyzer.QueryRecentAllocs(0, 1);
+    ASSERT_EQ(recentAllocs.size(), 2u);
+    EXPECT_EQ(recentAllocs[0].ptr, 0x2000);  // 按时间降序：2000 > 1000
+    EXPECT_EQ(recentAllocs[1].ptr, 0x1000);
+
+    MemoryStateManager::GetInstance().DeteleState(PoolType::PTA_CACHING, MemoryStateKey{1, 0, 0x1000});
+    MemoryStateManager::GetInstance().DeteleState(PoolType::HAL, MemoryStateKey{1, 0, 0x2000});
+    MemoryStateManager::GetInstance().DeteleState(PoolType::HAL, MemoryStateKey{2, 0, 0x3000});
 }
