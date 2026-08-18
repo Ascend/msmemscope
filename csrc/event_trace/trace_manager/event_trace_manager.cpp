@@ -116,6 +116,7 @@ void ConfigManager::SetConfig(const Config &config)
     // 会造成Instance()间接调用自身，导致单例的自引用，初始化死锁现象。
     EventTraceManager::Instance().HandleWithATenCollect();
     EventTraceManager::Instance().HandleWithDecompose();
+    EventTraceManager::Instance().HandleWithCpuTensorCollect();
 }
 
 bool ConfigManager::SetConfig(const std::unordered_map<std::string, std::string> &pythonConfig)
@@ -338,6 +339,7 @@ void EventTraceManager::SetAclInitStatus(bool isInit)
 
     HandleWithATenCollect();
     HandleWithDecompose();
+    HandleWithCpuTensorCollect();
 }
 
 void EventTraceManager::CleanUpEventTraceManager()

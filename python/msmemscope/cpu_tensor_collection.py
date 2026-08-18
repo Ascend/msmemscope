@@ -14,6 +14,9 @@
 # See the Mulan PSL v2 for more details.
 # -------------------------------------------------------------------------
 
+import sys
+import threading
+import time
 import traceback
 import weakref
 from typing import Dict, List, Tuple
@@ -24,6 +27,7 @@ from .hijacker.hijack_utility import hijacker, release, POST_HOOK
 
 _cpu_blocks: Dict[int, Tuple[int, weakref.finalize]] = {}  # data_ptr -> (nbytes, finalizer)
 _handlers: List = []  # registered hijack handlers
+_pending_enable = False  # deferred enable in flight (waiting for torch_npu init)
 
 
 def _is_cpu_tensor(t) -> bool:
@@ -68,8 +72,32 @@ def _on_storage_freed(ptr):
         print(f"[msmemscope] Warning: failed to report CPU tensor free: {exc}")
 
 
-def enable_cpu_tensor_collect():
-    """Register hooks: torch.tensor / Tensor.to / Tensor.cpu (idempotent)."""
+def _npu_initialized() -> bool:
+    """Return True when it is safe to monkey-patch ``torch.Tensor``.
+
+    torch_npu opens its device lazily (aclInit / rtSetDevice). Installing the
+    CPU tensor hijack hooks while that initialization is in flight races with
+    it and makes ``torch.npu.set_device`` fail with error 507033 ("device
+    retain error"). We therefore wait until the NPU device is initialized (or
+    confirm there is no torch_npu at all) before patching torch.
+    """
+    try:
+        if "torch_npu" not in sys.modules:
+            return True  # no torch_npu -> nothing to race with
+        npu = getattr(torch, "npu", None)
+        if npu is None:
+            return False  # torch_npu is still being imported
+        initialized = getattr(npu, "is_initialized", None)
+        if callable(initialized) and not initialized():
+            return False  # present but device not opened yet
+        return True
+    except Exception:
+        return False
+
+
+def _register_handlers():
+    """Register the torch hijack hooks (idempotent)."""
+    global _handlers
     if _handlers:
         return
     targets = [
@@ -89,8 +117,37 @@ def enable_cpu_tensor_collect():
             )
 
 
+def _deferred_enable():
+    """Poll until the NPU device is initialized, then install the hooks."""
+    global _pending_enable
+    deadline = time.monotonic() + 60.0
+    while not _npu_initialized() and time.monotonic() < deadline:
+        time.sleep(0.01)
+    if not _pending_enable:
+        return  # disabled while waiting
+    _pending_enable = False
+    _register_handlers()
+
+
+def enable_cpu_tensor_collect():
+    """Register hooks: torch.tensor / Tensor.to / Tensor.cpu (idempotent)."""
+    global _pending_enable
+    if _handlers or _pending_enable:
+        return
+    if not _npu_initialized():
+        # Called during torch_npu initialization (e.g. from the aclInit hook).
+        # Defer the patch until the device is ready to avoid breaking
+        # torch.npu.set_device.
+        _pending_enable = True
+        threading.Thread(target=_deferred_enable, daemon=True).start()
+        return
+    _register_handlers()
+
+
 def disable_cpu_tensor_collect():
     """Unregister hooks and clear state (idempotent)."""
+    global _pending_enable
+    _pending_enable = False
     for handler in _handlers:
         try:
             release(handler)

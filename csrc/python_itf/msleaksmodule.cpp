@@ -199,9 +199,9 @@ static PyObject* MsmemscopeEnableNpuSanitizer(PyObject* self, PyObject* args)
 }
 
 PyDoc_STRVAR(ReportCpuTensorDoc,
-"             \"_report_cpu_tensor(ptr, size, is_alloc, py_stack)\\n--\\n\\n\"
-"             \"Report a CPU tensor memory block alloc/free event.\\n\"
-"             \"Returns True if the event is accepted, False if deduplicated.\");
+             "_report_cpu_tensor(ptr, size, is_alloc, py_stack)\n--\n\n"
+             "Report a CPU tensor memory block alloc/free event.\n"
+             "Returns True if the event is accepted, False if deduplicated.");
 static PyObject* MsmemscopeReportCpuTensor(PyObject* self, PyObject* args)
 {
     unsigned long long ptr = 0;
