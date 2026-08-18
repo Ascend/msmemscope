@@ -44,16 +44,24 @@ EventReportSuppressor::~EventReportSuppressor() { --g_suppressEventReportDepth; 
 bool ConfigManager::Inited = false;
 
 const std::unordered_map<std::string, std::function<void(const std::string &, Config &, bool &)>> parserConfigTable = {
-    {"call_stack", ParseCallstack}, {"level", ParseDataLevel},        {"events", ParseEventTraceType},
-    {"device", ParseDevice},        {"data_format", ParseDataFormat}, {"output", ParseOutputPath},
-    {"analysis", ParseAnalysis},    {"watch", ParseWatchConfig},
+    {"call_stack", ParseCallstack},
+    {"level", ParseDataLevel},
+    {"events", ParseEventTraceType},
+    {"device", ParseDevice},
+    {"format", ParseDataFormat},
+    {"output_path", ParseOutputPath},
+    // 兼容旧参数名（仅保留解析能力，不体现于用户手册/帮助信息）
+    {"data_format", ParseDataFormat},
+    {"output", ParseOutputPath},
+    {"analysis", ParseAnalysis},
+    {"watch", ParseWatchConfig},
 };
 
-// 只允许设置一次的config参数
-const std::vector<std::string> configPolicyTable = {
-    "output",
-    "data_format",
-    "watch",
+// 只允许设置一次的config参数；旧参数名与标准名归入同一组，视为同一个参数，不可重复设置
+// （旧参数名data_format/output仅作兼容保留，不体现于用户手册/帮助信息）
+const std::unordered_map<std::string, std::string> configPolicyTable = {
+    {"format", "format"},      {"data_format", "format"}, {"output_path", "output_path"},
+    {"output", "output_path"}, {"watch", "watch"},
 };
 
 ConfigManager::ConfigManager() { InitConfig(); }
@@ -136,6 +144,9 @@ bool ConfigManager::SetConfig(const std::unordered_map<std::string, std::string>
     Config config;
     GetConfigAfterInit(config);
 
+    // 记录本次调用中已设置过的"只允许设置一次"参数组（兼容旧名与标准名视为同一参数）
+    std::vector<std::string> onceSetGroups;
+
     for (auto &p : pythonConfig)
     {
         const std::string &key = p.first;
@@ -146,12 +157,25 @@ bool ConfigManager::SetConfig(const std::unordered_map<std::string, std::string>
             return false;
         }
 
-        auto policyItr = std::find(configPolicyTable.begin(), configPolicyTable.end(), key);
-        if (policyItr != configPolicyTable.end() && config.isEffective)
+        auto policyItr = configPolicyTable.find(key);
+        if (policyItr != configPolicyTable.end())
         {
-            std::cout << "[msmemscope] Warn: Config:\"output\",\"data_format\",\"watch\" cannot be set twice."
-                      << std::endl;
-            continue;
+            const std::string &policyGroup = policyItr->second;
+            // 兼容旧参数名仅保留解析能力，使用时提示迁移到标准名（不体现于用户手册/帮助信息）
+            if (key != policyGroup)
+            {
+                std::cerr << "[msmemscope] Deprecation: '" << key << "' is deprecated, use '" << policyGroup
+                          << "' instead." << std::endl;
+            }
+            // 只允许设置一次：配置已生效时不可再改，或本次调用中同组参数（含兼容旧名）已设置过
+            if (config.isEffective ||
+                std::find(onceSetGroups.begin(), onceSetGroups.end(), policyGroup) != onceSetGroups.end())
+            {
+                std::cout << "[msmemscope] Warn: Config:\"format\",\"output_path\",\"watch\" can only be set once."
+                          << std::endl;
+                continue;
+            }
+            onceSetGroups.emplace_back(policyGroup);
         }
         bool parseFail = false;
         itr->second(value, config, parseFail);

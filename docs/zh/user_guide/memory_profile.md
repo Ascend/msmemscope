@@ -51,12 +51,12 @@ msMemScope工具的安装，请参见《[msMemScope工具安装指南](../instal
 
 2. 采集内存。
 
-    执行以下示例代码，采集内存事件。需要注意的是，请根据需求自行配置`msmemscope.config`的参数。支持设置device、level、events、call_stack、analysis、watch、output和data_format参数，可根据需求自行设置，具体参数信息可参见[命令行采集功能介绍](#命令行采集功能介绍)。
+    执行以下示例代码，采集内存事件。需要注意的是，请根据需求自行配置`msmemscope.config`的参数。支持设置device、level、events、call_stack、analysis、watch、output_path和format参数，可根据需求自行设置，具体参数信息可参见[命令行采集功能介绍](#命令行采集功能介绍)。
 
     ```python
     import msmemscope
 
-    msmemscope.config(call_stack="c:10,python:5", events="launch,alloc,free", level="0", device="npu", analysis="leaks,decompose", watch="op0,op1,full-content", data_format="db", output="/home/projects/output")
+    msmemscope.config(call_stack="c:10,python:5", events="launch,alloc,free", level="0", device="npu", analysis="leaks,decompose", watch="op0,op1,full-content", format="db", output_path="/home/projects/output")
     msmemscope.start()   # 开启采集
     train()              # train()为用户代码
     msmemscope.stop()    # 退出采集

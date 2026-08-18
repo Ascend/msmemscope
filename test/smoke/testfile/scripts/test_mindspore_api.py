@@ -37,7 +37,7 @@ if __name__ == '__main__':
         events='launch,access,free,alloc',
         level='kernel,op',
         device='npu',
-        data_format='csv'
+        format='csv'
     )
     msmemscope.start()
     ms.set_context(mode=ms.PYNATIVE_MODE)

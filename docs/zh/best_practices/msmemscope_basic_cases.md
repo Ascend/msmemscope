@@ -18,7 +18,7 @@
         events="alloc,free,launch",
         level="op",
         analysis="leaks",
-        output="./output"
+        output_path="./output"
     )
 
     msmemscope.start()
@@ -150,8 +150,8 @@
     msmemscope.config(
         events="alloc,free",
         analysis="decompose",
-        data_format="csv",
-        output="./output"
+        format="csv",
+        output_path="./output"
     )
 
     msmemscope.start()
@@ -250,8 +250,8 @@
 
     msmemscope.config(
         events="alloc,free",
-        data_format="csv",
-        output="./output"
+        format="csv",
+        output_path="./output"
     )
 
     msmemscope.start()

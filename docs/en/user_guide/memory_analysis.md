@@ -52,7 +52,7 @@ During memory analysis, use the mstx instrumentation function to locate issues. 
 
     - If the information shown in [Figure 2 Memory fluctuation](#fluctuation) is displayed, the memory fluctuates. The command output displays the memory fluctuation in a single step (defined by the ratio of the minimum memory pool allocation to the maximum memory pool allocation) and the minimum memory pool allocation. The minimum ratio and maximum ratio are provided as references. Users can determine whether there is a memory leak risk based on the ratio.
 
-        > [!NOTE]Note 
+        > [!NOTE]Note
         > The memory is not stable in the first step. Therefore, only the memory fluctuation from the second step can be analyzed. The memory fluctuation in the first step can be ignored.
 
         Figure 2 Memory fluctuation <a id="fluctuation"></a>
@@ -65,7 +65,7 @@ msMemScope supports offline leak analysis of memory events in a specified range.
 
 1. Apply the mstx mark function to the range where leak detection is required. For details about mstx instrumentation, see [MindStudio Tools Extension Library Interfaces](https://gitcode.com/Ascend/mstx/blob/master/docs/en/api_reference/README.md).
 
-    > [!NOTE]Note  
+    > [!NOTE]Note
     > - The mark information is used as the input of the offline analysis interfaces.
     > - Use the mark function to mark three points, which are referred to as A, B, and C. The memory allocated within the range from A to B must be deallocated before point C. Otherwise, the memory is considered as a memory leak.
 
@@ -182,7 +182,7 @@ In foundation model scenarios, the computing task of a single card is highly com
 
     The interfaces of the Python watcher module are added. The **watch** interface indicates that the memory block is monitored, and the **remove** interface indicates that the memory block monitoring is canceled. There are two methods to enable memory block monitoring. For details about the parameters in the sample code, see [Table 2 Parameters-for-enabling-memory-block-monitoring](#parameters-for-enabling-memory-block-monitoring).
 
-    > [!NOTE]Note   
+    > [!NOTE]Note
     > You are advised to use method 1 to specify the tensor to be monitored. If method 2 is used, confirm the validity of the memory block address and length.
 
     - Method 1: Input the tensor directly.
@@ -193,7 +193,7 @@ In foundation model scenarios, the computing task of a single card is highly com
         import torch
         import torch_npu
         import msmemscope
-        
+
         torch.npu.synchronize()
         test_tensor = torch.randn(2,3).to('npu:0')        # Create or select the tensor to be monitored as required.
         msmemscope.watcher.watch(test_tensor, name="test", dump_nums=2)
@@ -210,9 +210,9 @@ In foundation model scenarios, the computing task of a single card is highly com
         import torch
         import torch_npu
         import msmemscope
-        
+
         torch.npu.synchronize()
-        test_tensor = torch.randn(2,3).to('npu:0')       
+        test_tensor = torch.randn(2,3).to('npu:0')
         msmemscope.watcher.watch(test_tensor.data_ptr(), length=1000, name="test", dump_nums=2)
         ...
         torch.npu.synchronize()
@@ -231,7 +231,7 @@ In foundation model scenarios, the computing task of a single card is highly com
 4. Check the result directory of memory block monitoring after command execution.
 
     ```text
-    ├── memscopeDumpResults             
+    ├── memscopeDumpResults
     │    └── watch_dump
           │    ├── {deviceid}_{tid}_{opName}_{Number of calls}-{watchedOpName}_{outid}_{before/after}.bin       # A .bin file is flushed if full-content is specified.
           │    ├── watch_dump_data_check_sum_{deviceid}_{timestamp}.csv         # A .csv file is flushed if full-content is not specified.
@@ -269,7 +269,7 @@ msMemScope provides Python interfaces and uses **describe** to mark a tensor, fu
 
     ```python
     import msmemscope.describe as describe
-    
+
     @describe.describer(owner="test1")
     def train1():
         pass
@@ -281,7 +281,7 @@ msMemScope provides Python interfaces and uses **describe** to mark a tensor, fu
 
     ```python
     import msmemscope.describe as describe
-    
+
     with describe.describer(owner="test2"):
         train2()
     ```
@@ -290,7 +290,7 @@ msMemScope provides Python interfaces and uses **describe** to mark a tensor, fu
 
     ```python
     import msmemscope.describe as describe
-    
+
     describe.describer(owner="test3").__enter__()
     train3()
     describe.describer(owner="test3").__exit__()
@@ -300,7 +300,7 @@ msMemScope provides Python interfaces and uses **describe** to mark a tensor, fu
 
     ```python
     import msmemscope.describe as describe
-    
+
     t = torch.randn(10,10).to('npu:0')
     describe.describer(t, owner="test4")
     ```
@@ -386,9 +386,9 @@ The following describes how to enable one-click memory decomposition in the vLLM
     import msmemscope
     msmemscope.config(
     events="alloc,free",
-    data_format="db",
+    format="db",
     analysis="decompose",
-    output="/vllm-ascend/wlz_data_test"
+    output_path="/vllm-ascend/wlz_data_test"
     )
     msmemscope.cleanup_framework_hooks()
     msmemscope.init_framework_hooks("vllm_ascend","11.0","worker","decompose")
