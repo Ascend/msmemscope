@@ -51,7 +51,7 @@ def _on_cpu_tensor_created(ret, *args, **kwargs):  # pylint: disable=unused-argu
     if not _is_cpu_tensor(ret):
         return ret
     try:
-        import msmemscope._msmemscope as _cpp
+        import msmemscope._msmemscope as _cpp  # pylint: disable=no-name-in-module
 
         storage = ret.untyped_storage()
         ptr = storage.data_ptr()
@@ -76,7 +76,7 @@ def _on_storage_freed(ptr):
     if block is None:
         return
     try:
-        import msmemscope._msmemscope as _cpp
+        import msmemscope._msmemscope as _cpp  # pylint: disable=no-name-in-module
 
         _cpp._report_cpu_tensor(ptr, block[0], False, "")
     except Exception as exc:
@@ -108,7 +108,6 @@ def _npu_initialized() -> bool:
 
 def _register_handlers():
     """Register the torch hijack hooks (idempotent)."""
-    global _handlers
     if _handlers:
         return
     targets = [
@@ -118,14 +117,9 @@ def _register_handlers():
     ]
     for module, cls, func, stub in targets:
         try:
-            _handlers.append(
-                hijacker(stub=stub, module=module, cls=cls, function=func, action=POST_HOOK)
-            )
+            _handlers.append(hijacker(stub=stub, module=module, cls=cls, function=func, action=POST_HOOK))
         except Exception as exc:
-            print(
-                f"[msmemscope] Warning: failed to register CPU tensor hook "
-                f"({module}@{cls}@{func}): {exc}"
-            )
+            print(f"[msmemscope] Warning: failed to register CPU tensor hook ({module}@{cls}@{func}): {exc}")
 
 
 def _deferred_enable():

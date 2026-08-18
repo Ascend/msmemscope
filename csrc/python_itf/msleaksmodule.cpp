@@ -212,9 +212,9 @@ static PyObject* MsmemscopeReportCpuTensor(PyObject* self, PyObject* args)
     {
         return nullptr;
     }
-    bool accepted = EventReport::Instance(MemScopeCommType::SHARED_MEMORY)
-                        .ReportCpuTensor(ptr, static_cast<uint64_t>(size), isAlloc != 0,
-                                         std::string(pyStack ? pyStack : ""));
+    bool accepted =
+        EventReport::Instance(MemScopeCommType::SHARED_MEMORY)
+            .ReportCpuTensor(ptr, static_cast<uint64_t>(size), isAlloc != 0, std::string(pyStack ? pyStack : ""));
     if (accepted)
     {
         Py_RETURN_TRUE;
@@ -230,8 +230,7 @@ static PyMethodDef g_MsmemscopeMethods[] = {
     {"_take_snapshot", reinterpret_cast<PyCFunction>(MsmemscopeTakeSnapshot), METH_VARARGS, TakeSnapshotDoc},
     {"_enable_npu_sanitizer", reinterpret_cast<PyCFunction>(MsmemscopeEnableNpuSanitizer), METH_NOARGS,
      EnableNpuSanitizerDoc},
-    {"_report_cpu_tensor", reinterpret_cast<PyCFunction>(MsmemscopeReportCpuTensor), METH_VARARGS,
-     ReportCpuTensorDoc},
+    {"_report_cpu_tensor", reinterpret_cast<PyCFunction>(MsmemscopeReportCpuTensor), METH_VARARGS, ReportCpuTensorDoc},
     {nullptr, nullptr, 0, nullptr}};
 
 static struct PyModuleDef g_MsmemscopeCModule = {

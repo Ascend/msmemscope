@@ -101,10 +101,10 @@ extern "C"
         ACL_HBM_MEM_NORMAL,      // 普通内存
         ACL_DDR_MEM_P2P_HUGE,    // 用于Device间数据复制的大页内存
         ACL_DDR_MEM_P2P_NORMAL,  // 用于Device间数据复制的普通内存
-        ACL_HBM_MEM_P2P_HUGE,    // 用于Device间数据复制的大页内存，内存申请粒度为2M，不足2M的倍数，向上2M对齐
+        ACL_HBM_MEM_P2P_HUGE,  // 用于Device间数据复制的大页内存，内存申请粒度为2M，不足2M的倍数，向上2M对齐
         ACL_HBM_MEM_P2P_NORMAL,  // 用于Device间数据复制的普通内存
-        ACL_HBM_MEM_HUGE1G,      // 大页内存，内存申请粒度为1G，不足1G的倍数，向上1G对齐，当前版本不支持该选项
-        ACL_HBM_MEM_P2P_HUGE1G   // 用于Device间数据复制的大页内存，内存申请粒度为1G，不足1G的倍数，向上1G对齐，当前版本不支持该选项
+        ACL_HBM_MEM_HUGE1G,  // 大页内存，内存申请粒度为1G，不足1G的倍数，向上1G对齐，当前版本不支持该选项
+        ACL_HBM_MEM_P2P_HUGE1G  // 用于Device间数据复制的大页内存，内存申请粒度为1G，不足1G的倍数，向上1G对齐，当前版本不支持该选项
     } aclrtMemAttr;
 
     ACL_FUNC_VISIBILITY aclError aclInit(const char *configPath);
