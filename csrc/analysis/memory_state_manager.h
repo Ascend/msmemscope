@@ -200,6 +200,7 @@ class MemoryStateManager : StateManager
     // AddEvent 增量维护，TRACE_START 时经 ResetUsageBaseline 从存量块重建
     std::unordered_map<int32_t, int64_t> halUsed_;
     int64_t hostUsed_ = 0;
+    int64_t hostTensorTotal_ = 0;  // 活跃CPU tensor数据内存累计（poolType=HOST）
     // per-device 整卡用量缓存（初始 -1=未知）：采集层查询成功后写入、池事件读取（mtx_ 保护）
     std::array<int64_t, 16> deviceUsedCache_ = []()
     {

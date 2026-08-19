@@ -181,7 +181,7 @@ TEST_F(DeviceUsageTest, hal_release_unregistered_addr_filtered)
     EXPECT_EQ(captor_.last, nullptr);  // 无事件产生（无查询调用）
 }
 
-// UT-2: HOST_PINNED 不查询（HOST_PINNED 不查询）
+// UT-2: HOST 不查询（HOST 不查询）
 TEST_F(DeviceUsageTest, host_pinned_does_not_query)
 {
     EventReport& report = EventReport::Instance(MemScopeCommType::MEMORY_DEBUG);
@@ -197,7 +197,7 @@ TEST_F(DeviceUsageTest, host_pinned_does_not_query)
     EXPECT_TRUE(report.ReportHalMalloc(0x3000, 100, flag, std::move(stack)));
 
     ASSERT_NE(captor_.last, nullptr);
-    EXPECT_EQ(captor_.last->eventSubType, EventSubType::HOST_PINNED);
+    EXPECT_EQ(captor_.last->eventSubType, EventSubType::HOST);
     EXPECT_EQ(captor_.last->device, DEVICE_ID_CPU);
     EXPECT_EQ(captor_.last->deviceUsed, -1);  // 跳过查询与缓存读取，保持 -1
     // processUsed 不是报告层查询值/缓存值：报告层未查询未读缓存（缓存预置 2345 未被读走），

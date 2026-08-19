@@ -300,18 +300,18 @@ std::shared_ptr<MemoryEvent> CreateHalFree(uint64_t addr, int32_t device, int64_
     return event;
 }
 
-// HOST 内存事件模型：poolType=HAL、device=DEVICE_ID_CPU、eventSubType=HOST_PINNED
+// HOST 内存事件模型：poolType=HAL、device=DEVICE_ID_CPU、eventSubType=HOST
 std::shared_ptr<MemoryEvent> CreateHostMalloc(uint64_t addr, int64_t size)
 {
     auto event = CreateHalMalloc(addr, DEVICE_ID_CPU, size);
-    event->eventSubType = EventSubType::HOST_PINNED;
+    event->eventSubType = EventSubType::HOST;
     return event;
 }
 
 std::shared_ptr<MemoryEvent> CreateHostFree(uint64_t addr, int64_t size)
 {
     auto event = CreateHalFree(addr, DEVICE_ID_CPU, size);
-    event->eventSubType = EventSubType::HOST_PINNED;
+    event->eventSubType = EventSubType::HOST;
     return event;
 }
 

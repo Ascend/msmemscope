@@ -75,7 +75,10 @@ ACL_FUNC_VISIBILITY aclError aclrtSetDevice(int32_t deviceId)
 
     aclError ret = vallina(deviceId);
 
-    EventTraceManager::Instance().SetDeviceReadyStatus(true);
+    if (ret == ACL_SUCCESS)
+    {
+        EventTraceManager::Instance().SetDeviceReadyStatus(true);
+    }
 
     return ret;
 }

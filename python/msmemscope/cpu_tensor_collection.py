@@ -170,4 +170,8 @@ def disable_cpu_tensor_collect():
         except Exception as exc:
             print(f"[msmemscope] Warning: failed to release CPU tensor hook: {exc}")
     _handlers.clear()
+    # Flush pending CPU tensor frees to the C++ address book before clearing, so a
+    # repeated start/stop cycle doesn't leave stale hostPtrs_ entries (finding #2).
+    for ptr in list(_cpu_blocks.keys()):
+        _on_storage_freed(ptr)
     _cpu_blocks.clear()
