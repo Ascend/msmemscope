@@ -145,7 +145,8 @@ MemoryState* MemoryStateManager::AddEvent(std::shared_ptr<MemoryEvent>& event)
         }
 
         // hal和host内存存在free事件没有size信息，在此处匹配到malloc事件并填写size
-        if (event->eventType == EventBaseType::FREE && event->poolType == PoolType::HAL &&
+        if (event->eventType == EventBaseType::FREE &&
+            (event->poolType == PoolType::HAL || event->poolType == PoolType::HOST) &&
             firstEvent->eventType == EventBaseType::MALLOC)
         {
             event->size = firstEvent->size;
@@ -214,7 +215,7 @@ void MemoryStateManager::UpdateUsage(const std::shared_ptr<MemoryEvent>& event)
     }
     else if (event->poolType == PoolType::HAL && event->device == DEVICE_ID_CPU)
     {
-        // HOST 内存事件（HOST_PINNED，事件模型：poolType=HAL、device=DEVICE_ID_CPU）
+        // 锁页内存事件（事件模型：poolType=HAL、device=DEVICE_ID_CPU）
         hostUsed_ += (event->eventType == EventBaseType::MALLOC ? size : -size);
         if (hostUsed_ < 0)
         {
@@ -223,6 +224,18 @@ void MemoryStateManager::UpdateUsage(const std::shared_ptr<MemoryEvent>& event)
         }
         event->used = hostUsed_;
         event->processUsed = static_cast<int64_t>(Utility::GetProcessVmRss());
+    }
+    else if (event->poolType == PoolType::HOST)
+    {
+        // CPU tensor数据内存事件（事件模型：poolType=HOST、device=DEVICE_ID_CPU），
+        // total = 活跃CPU tensor数据内存累计（仅落盘，不参与分析）
+        hostTensorTotal_ += (event->eventType == EventBaseType::MALLOC ? size : -size);
+        if (hostTensorTotal_ < 0)
+        {
+            LOG_WARN("host tensor total goes negative (%lld), truncated to 0", hostTensorTotal_);
+            hostTensorTotal_ = 0;
+        }
+        event->total = hostTensorTotal_;
     }
     // 池事件：used/total/processUsed 均不动——used/total 报告时已填（HealthAnalyzer 依赖），
     // processUsed 由报告层按设备读 dcmi_get_npu_proc_mem_info 查询缓存（QueryProcessUsed 写入）填值
@@ -234,6 +247,7 @@ void MemoryStateManager::ResetUsageBaseline()
     // 避免与既有累计叠加造成漂移。QueryLiveBlocks 内部加锁，此处不加锁（事件处理单线程）
     halUsed_.clear();
     hostUsed_ = 0;
+    hostTensorTotal_ = 0;
 
     LiveBlockFilter filter;
     filter.poolTypes = {PoolType::HAL};

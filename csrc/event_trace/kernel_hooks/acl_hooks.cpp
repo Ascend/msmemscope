@@ -16,30 +16,32 @@
  */
 
 #include "acl_hooks.h"
-#include <cstdint>
-#include <vector>
+
 #include <algorithm>
-#include <sstream>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <iterator>
+#include <sstream>
 #include <unordered_map>
+#include <vector>
 
+#include "bit_field.h"
 #include "cpython.h"
 #include "event_report.h"
-#include "vallina_symbol.h"
 #include "log.h"
 #include "record_info.h"
-#include "bit_field.h"
 #include "trace_manager/event_trace_manager.h"
+#include "vallina_symbol.h"
 
 using namespace MemScope;
- 
+
 ACL_FUNC_VISIBILITY aclError aclInit(const char *configPath)
 {
     using AclInit = decltype(&aclInit);
     auto vallina = VallinaSymbol<AclLibLoader>::Instance().Get<AclInit>("aclInit");
-    if (vallina == nullptr) {
+    if (vallina == nullptr)
+    {
         LOG_ERROR("vallina func get FAILED: %s", __func__);
         return ACL_ERROR_INTERNAL_ERROR;
     }
@@ -48,12 +50,34 @@ ACL_FUNC_VISIBILITY aclError aclInit(const char *configPath)
 
     EventTraceManager::Instance().SetAclInitStatus(true);
 
-    if (!EventTraceManager::Instance().IsTracingEnabled()) {
+    if (!EventTraceManager::Instance().IsTracingEnabled())
+    {
         return ret;
     }
 
-    if (!EventReport::Instance(MemScopeCommType::SHARED_MEMORY).ReportAclItf(RecordSubType::INIT)) {
+    if (!EventReport::Instance(MemScopeCommType::SHARED_MEMORY).ReportAclItf(RecordSubType::INIT))
+    {
         LOG_ERROR("aclInit report FAILED");
+    }
+
+    return ret;
+}
+
+ACL_FUNC_VISIBILITY aclError aclrtSetDevice(int32_t deviceId)
+{
+    using AclrtSetDevice = decltype(&aclrtSetDevice);
+    auto vallina = VallinaSymbol<AclLibLoader>::Instance().Get<AclrtSetDevice>("aclrtSetDevice");
+    if (vallina == nullptr)
+    {
+        LOG_ERROR("vallina func get FAILED: %s", __func__);
+        return ACL_ERROR_INTERNAL_ERROR;
+    }
+
+    aclError ret = vallina(deviceId);
+
+    if (ret == ACL_SUCCESS)
+    {
+        EventTraceManager::Instance().SetDeviceReadyStatus(true);
     }
 
     return ret;
@@ -63,18 +87,21 @@ ACL_FUNC_VISIBILITY aclError aclFinalize()
 {
     using AclFinalize = decltype(&aclFinalize);
     auto vallina = VallinaSymbol<AclLibLoader>::Instance().Get<AclFinalize>("aclFinalize");
-    if (vallina == nullptr) {
+    if (vallina == nullptr)
+    {
         LOG_ERROR("vallina func get FAILED: %s", __func__);
         return ACL_ERROR_INTERNAL_ERROR;
     }
 
     aclError ret = vallina();
 
-    if (!EventTraceManager::Instance().IsTracingEnabled()) {
+    if (!EventTraceManager::Instance().IsTracingEnabled())
+    {
         return ret;
     }
 
-    if (!EventReport::Instance(MemScopeCommType::SHARED_MEMORY).ReportAclItf(RecordSubType::FINALIZE)) {
+    if (!EventReport::Instance(MemScopeCommType::SHARED_MEMORY).ReportAclItf(RecordSubType::FINALIZE))
+    {
         LOG_ERROR("aclInit report FAILED");
     }
 

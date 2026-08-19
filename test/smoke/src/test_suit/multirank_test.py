@@ -235,7 +235,7 @@ class MultirankTestCase(BaseTest):
             ("HAL", self.thresholds["hal_threshold"], event_type_counts),
             ("PTA", self.thresholds["pta_threshold"], event_type_counts),
             ("OP_LAUNCH", self.thresholds["op_threshold"], event_counts),
-            ("HOST_PINNED", self.thresholds["host_threshold"], event_type_counts),
+            ("HOST", self.thresholds["host_threshold"], event_type_counts),
         ]
         for name, threshold, counts in range_check_items:
             count = counts.get(name, 0)

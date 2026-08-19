@@ -137,6 +137,7 @@ void ConfigManager::SetConfig(const Config &config)
     // 会造成Instance()间接调用自身，导致单例的自引用，初始化死锁现象。
     EventTraceManager::Instance().HandleWithATenCollect();
     EventTraceManager::Instance().HandleWithDecompose();
+    EventTraceManager::Instance().HandleWithCpuTensorCollect();
 }
 
 bool ConfigManager::SetConfig(const std::unordered_map<std::string, std::string> &pythonConfig)
@@ -190,6 +191,7 @@ bool ConfigManager::SetConfig(const std::unordered_map<std::string, std::string>
     Utility::JsonConfig::GetInstance().SaveConfigToJson(config_);
     EventTraceManager::Instance().HandleWithATenCollect();
     EventTraceManager::Instance().HandleWithDecompose();
+    EventTraceManager::Instance().HandleWithCpuTensorCollect();
     EventTraceManager::Instance().InitJudgeFuncTable();
     // 更新analysis参数
     EventReport::Instance(MemScopeCommType::SHARED_MEMORY).UpdateAnalysisType();
@@ -329,6 +331,7 @@ void EventTraceManager::SetTraceStatus(const EventTraceStatus status)
 
     HandleWithATenCollect();
     HandleWithDecompose();
+    HandleWithCpuTensorCollect();
     return;
 }
 
@@ -361,12 +364,45 @@ void EventTraceManager::HandleWithDecompose()
     return;
 }
 
+void EventTraceManager::HandleWithCpuTensorCollect()
+{
+    if ((status_ == EventTraceStatus::IN_TRACING) && GetConfig().collectCpu)
+    {
+        Utility::MemScopePythonCall("msmemscope.cpu_tensor_collection", "enable_cpu_tensor_collect");
+        return;
+    }
+
+    Utility::MemScopePythonCall("msmemscope.cpu_tensor_collection", "disable_cpu_tensor_collect");
+
+    return;
+}
+
 void EventTraceManager::SetAclInitStatus(bool isInit)
 {
     aclInit_ = isInit;
 
     HandleWithATenCollect();
     HandleWithDecompose();
+    HandleWithCpuTensorCollect();
+}
+
+void EventTraceManager::SetDeviceReadyStatus(bool isReady)
+{
+    if (!isReady)
+    {
+        return;
+    }
+
+    bool expected = false;
+    if (!deviceReady_.compare_exchange_strong(expected, true))
+    {
+        return;  // device readiness already signaled once
+    }
+
+    if ((status_ == EventTraceStatus::IN_TRACING) && GetConfig().collectCpu)
+    {
+        Utility::MemScopePythonCall("msmemscope.cpu_tensor_collection", "on_device_ready");
+    }
 }
 
 void EventTraceManager::CleanUpEventTraceManager()

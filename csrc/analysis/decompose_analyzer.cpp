@@ -58,6 +58,10 @@ void DecomposeAnalyzer::EventHandle(std::shared_ptr<EventBase>& event, MemorySta
     if (event->eventType == EventBaseType::MALLOC)
     {
         auto memEvent = std::dynamic_pointer_cast<MemoryEvent>(event);
+        if (memEvent && memEvent->poolType == PoolType::HOST)
+        {
+            return;  // CPU memory events are not analyzed
+        }
         if (memEvent != nullptr && state != nullptr)
         {
             InitOwner(memEvent, state);

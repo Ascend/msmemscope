@@ -24,6 +24,7 @@
 #include <string>
 #include <thread>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -94,6 +95,7 @@ class EventReport
     void ReportMemorySnapshotOnOOM(const CallStackString& stack = CallStackString());
     bool ReportOOMTrigger(const OOMTriggerInfo& info);
     bool ReportOOMMemRecord(const OOMMemRecord& record, EventSubType subType);
+    bool ReportCpuTensor(uint64_t addr, uint64_t size, bool isAlloc, std::string&& pyStack);
     void UpdateAnalysisType();
 
    private:
@@ -127,6 +129,7 @@ class EventReport
     // 已分配的HAL块地址 → 分配时device映射：FREE事件据此过滤未注册地址，
     // 并回填device（分配时语义，与MALLOC事件flag解析同源），保证FREE事件能按key(pid, device, addr)定位
     std::unordered_map<uint64_t, int32_t> halPtrs_;
+    std::unordered_set<uint64_t> hostPtrs_;  // Cross-channel active HOST address book (first-come-first-served)
     std::atomic<bool> destroyed_{false};
 
     // 查询失败限频告警标记（首个失败日志后静默）

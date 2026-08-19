@@ -91,11 +91,29 @@ extern "C"
         ACL_MEMCPY_DEVICE_TO_DEVICE,
     } aclrtMemcpyKind;
 
+    typedef enum aclrtMemAttr
+    {
+        ACL_DDR_MEM,             // 大页内存+普通内存
+        ACL_HBM_MEM,             // 大页内存+普通内存
+        ACL_DDR_MEM_HUGE,        // 大页内存
+        ACL_DDR_MEM_NORMAL,      // 普通内存
+        ACL_HBM_MEM_HUGE,        // 大页内存，内存申请粒度为2M，不足2M的倍数，向上2M对齐
+        ACL_HBM_MEM_NORMAL,      // 普通内存
+        ACL_DDR_MEM_P2P_HUGE,    // 用于Device间数据复制的大页内存
+        ACL_DDR_MEM_P2P_NORMAL,  // 用于Device间数据复制的普通内存
+        ACL_HBM_MEM_P2P_HUGE,  // 用于Device间数据复制的大页内存，内存申请粒度为2M，不足2M的倍数，向上2M对齐
+        ACL_HBM_MEM_P2P_NORMAL,  // 用于Device间数据复制的普通内存
+        ACL_HBM_MEM_HUGE1G,  // 大页内存，内存申请粒度为1G，不足1G的倍数，向上1G对齐，当前版本不支持该选项
+        ACL_HBM_MEM_P2P_HUGE1G  // 用于Device间数据复制的大页内存，内存申请粒度为1G，不足1G的倍数，向上1G对齐，当前版本不支持该选项
+    } aclrtMemAttr;
+
     ACL_FUNC_VISIBILITY aclError aclInit(const char *configPath);
     ACL_FUNC_VISIBILITY aclError aclFinalize();
+    ACL_FUNC_VISIBILITY aclError aclrtSetDevice(int32_t deviceId);
 
     aclError aclrtMemcpy(void *dst, size_t destMax, const void *src, size_t count, aclrtMemcpyKind kind);
     aclError aclrtSynchronizeStream(aclrtStream stream);
+    aclError aclrtGetMemInfo(aclrtMemAttr attr, size_t *free, size_t *total);
 
 #ifdef __cplusplus
 }

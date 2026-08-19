@@ -130,8 +130,10 @@ class EventTraceManager
     void SetTraceStatus(const EventTraceStatus status);  // 通过python接口在运行时动态修改
     void InitJudgeFuncTable();
     void SetAclInitStatus(bool isInit);
+    void SetDeviceReadyStatus(bool isReady);
     void HandleWithATenCollect();
     void HandleWithDecompose();
+    void HandleWithCpuTensorCollect();
     void CleanUpEventTraceManager();
 
    private:
@@ -148,6 +150,7 @@ class EventTraceManager
     EventTraceStatus status_ = EventTraceStatus::NOT_IN_TRACING;
 
     std::atomic<bool> aclInit_{false};
+    std::atomic<bool> deviceReady_{false};
     std::unordered_map<EventBaseType, std::function<bool()>> judgeFuncTable_;
     std::atomic<bool> destroyed_{false};
 };
