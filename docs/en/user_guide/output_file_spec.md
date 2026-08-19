@@ -48,8 +48,8 @@ msMemScope outputs the following files after it finishes memory analysis.
 |Device ID|Device type and ID|
 |Base|Data in the first input file path|
 |Compare|Data in the second input file path|
-|Allocated Memory(byte)|Memory changes before and after the kernel call. If the value is **N/A**, the kernel is not called.|
-|Diff Memory(byte)|Relative memory changes of **Base** and **Compare**.<br> - If the value is **0**, the memory changes caused by the kernel call are the same.<br> - If the value is not **0**, the memory changes caused by the kernel call are different.|
+|Allocated Memory(Byte)|Memory changes before and after the kernel call. If the value is **N/A**, the kernel is not called.|
+|Diff Memory(Byte)|Relative memory changes of **Base** and **Compare**.<br> - If the value is **0**, the memory changes caused by the kernel call are the same.<br> - If the value is not **0**, the memory changes caused by the kernel call are different.|
 
 ## python_trace_{_TID_}_{_timestamp_}.csv
 

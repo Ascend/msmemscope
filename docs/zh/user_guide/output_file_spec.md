@@ -48,8 +48,8 @@ msMemScope工具进行内存分析后，输出的文件如[**表 1**  输出文�
 |Device ID|设备类型、卡号。|
 |Base|input输入的第一个文件路径中的数据。|
 |Compare|input输入的第二个文件路径中的数据。|
-|Allocated Memory(byte)|kernel调用前后的内存变化。如果为N/A，表示不存在该kernel的调用。|
-|Diff Memory(byte)|Base和Compare的内存相对变化。<br><ul>当数值为0时，表示该kernel调用所引起的内存变化没有差异。</ul><br><ul>当数值不为0时，表示该kernel调用所引起的内存变化存在差异。</ul>|
+|Allocated Memory(Byte)|kernel调用前后的内存变化。如果为N/A，表示不存在该kernel的调用。|
+|Diff Memory(Byte)|Base和Compare的内存相对变化。<br><ul>当数值为0时，表示该kernel调用所引起的内存变化没有差异。</ul><br><ul>当数值不为0时，表示该kernel调用所引起的内存变化存在差异。</ul>|
 
 ## python_trace_{_TID_}_{_timestamp_}.csv文件说明
 
