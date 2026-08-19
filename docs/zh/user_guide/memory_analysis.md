@@ -403,7 +403,7 @@ msmemscope --analysis=oom:50 python train.py
 msmemscope --analysis=oom:30,leaks python train.py
 ```
 
-命令执行完成后，OOM诊断信息会写入`memscope_dump_{_timestamp_}.csv`文件，可通过筛选`Event`=`OOM_DETAIL`查看所有OOM相关记录。
+命令执行完成后，OOM诊断信息会写入`memscope_dump_{_timestamp_}.csv`文件，可通过筛选`Event`=`OOM_DETAIL`查看OOM相关记录。
 
 ### 输出说明
 
