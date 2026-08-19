@@ -233,7 +233,7 @@ msmemscope.stop()  # 退出采集
 > - 当--analysis参数取值包含decompose时，memscope\_dump\_\{_timestamp_\}.csv文件中Attr参数中会包含显存类别和组件名称。
 > - 当--analysis参数取值包含decompose时，会开启内存分解功能，当前支持对Ascend for PyTorch框架、MindSpore框架和ATB算子框架的内存池进行分类，但是暂不支持对MindSpore框架和ATB算子框架的内存池进行细分类。在Ascend for PyTorch框架下，可支持对aten、weight、gradient、optimizer\_state进行细分类，其中weight、gradient、optimizer\_state仅限于PyTorch的训练场景（即调用optimizer.step\(\)接口的场景），aten是aten算子中申请的内存，需要同时满足PyTorch版本大于或等于2.3.1，--level参数取值中包含op。
 > - 当--analysis参数取值包含oom时，会自动联动开启alloc和free事件采集（仅影响采集行为，不影响--events参数的落盘配置）。OOM数据仅采集OOM发生时刻前后未释放的记录，不影响正常的malloc/free热路径性能。
-> - 当--device参数包含cpu时，CPU内存事件（Event Type为HOST）会落盘到device_cpu/目录。CPU内存事件仅落盘，不参与泄漏分析、低效内存识别、内存拆解、OOM分析等任何分析项。offload锁页内存与CPU tensor数据内存统一为HOST类型，通过Attr中pinned:true或total字段区分。CPU tensor采集依赖Python钩子，仅在start()后生效，start()前已存在的CPU tensor不在采集范围内。
+> - 当--device参数包含cpu时，CPU内存事件（Event Type为HOST）会落盘到device_cpu/目录。CPU内存事件仅落盘，不参与泄漏分析、低效内存识别、内存拆解、OOM分析等任何分析项。offload锁页内存与CPU tensor数据内存统一为HOST类型，通过Attr中pinned:true或total字段区分。CPU tensor采集依赖Python钩子，仅在start()后生效，start()前已存在的CPU tensor不在采集范围内。CPU tensor数据内存目前仅支持采集`torch.tensor`、`Tensor.to("cpu")`、`Tensor.cpu()`三类入口创建的张量。
 > - 当参数--level=kernel，且使用Hugging Face的tokenizers库时，可能会遇到“当前发生进程fork，并行被禁用”的告警提示。这个告警信息本身不会影响功能，可以选择忽略。如果希望避免这类告警，可执行export TOKENIZERS\_PARALLELISM=false来关闭并行的行为。
 > - 当--collect-mode=deferred，且使用Python接口进行采集数据时，内存分析功能不可用，内存块监测、拆解和低效内存识别功能只对采集范围内的数据可用。
 > - MindStudio Insight工具仅支持展示db格式的内存数据文件，基本操作请参见[MindStudio Insight基础操作](https://gitcode.com/Ascend/msinsight/blob/master/docs/zh/user_guide/basic_operations.md)。
