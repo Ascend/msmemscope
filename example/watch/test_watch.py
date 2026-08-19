@@ -14,26 +14,25 @@
 # See the Mulan PSL v2 for more details.
 # -------------------------------------------------------------------------
 
+# pylint: disable=duplicate-code  # 示例文件刻意保持相似结构，便于对照不同功能
+
 import torch
-import torch_npu
-import torch.nn as nn
-import torch.optim as optim
-import mstx
+from torch import nn, optim
 import msmemscope
 
 
 class SimpleModel(nn.Module):
     def __init__(self):
-        super(SimpleModel, self).__init__()
+        super().__init__()
         self.linear = nn.Linear(10, 10)
-        
+
     def forward(self, x):
         out = self.linear(x)
-        return out    
+        return out
 
 
 def test():
-    msmemscope.config(data_format='csv', watch='start,end,full-content') # 可以在这里设置监测的算子
+    msmemscope.config(format='csv', watch='start,end,full-content')  # 可以在这里设置监测的算子
     device = torch.device('npu:0')
     torch.npu.set_device(device)
 
@@ -49,9 +48,9 @@ def test():
     msmemscope.start()
     for epoch in range(5):
         outputs = model(inputs)
-        msmemscope.watcher.watch(test_tensor, name="leaksStWatch") # 添加监测的tensor
+        msmemscope.watcher.watch(test_tensor, name="leaksStWatch")  # 添加监测的tensor
         loss = criterion(outputs, targets)
-        msmemscope.watcher.remove(test_tensor) # 去除监测的tensor
+        msmemscope.watcher.remove(test_tensor)  # 去除监测的tensor
         loss.requires_grad_(True)
         optimizer.zero_grad()
         loss.backward()
@@ -62,6 +61,7 @@ def test():
 
 def main():
     test()
+
 
 if __name__ == "__main__":
     main()

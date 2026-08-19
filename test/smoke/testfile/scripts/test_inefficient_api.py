@@ -97,7 +97,7 @@ if __name__ == '__main__':
         events='launch,access,free,alloc',
         level='kernel,op',
         device='npu',
-        data_format='csv',
+        format='csv',
         analysis='inefficient'
     )
     msmemscope.start()
