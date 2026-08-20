@@ -18,10 +18,13 @@
 #include "memory_state_manager.h"
 
 #include <algorithm>
+#include <cstdio>
 
 #include "analysis/event_dispatcher.h"
 #include "framework/event_router.h"
 #include "log.h"
+#include "trace_manager/event_trace_manager.h"
+#include "utility/file.h"
 #include "utility/file_write_manager.h"
 #include "utility/utils.h"
 
@@ -101,6 +104,11 @@ MemoryStateManager& MemoryStateManager::GetInstance()
     // C++ 保证函数内静态变量按构造的相反顺序析构，因此先触发构造的单例会后析构。
     EventDispatcher::GetInstance();
     Utility::FileWriteManager::GetInstance();
+    // Dump::WriteToFile → GetConfig() 访问 ConfigManager，需确保其在本对象之后析构
+    ConfigManager::Instance();
+    // Dump::WriteToFile → MakeDataHandler → CsvHandler::Init() 访问 FileCreateManager，
+    // 需确保其在本对象之后析构；outputDir 取当前已生效的配置值
+    Utility::FileCreateManager::GetInstance(GetConfig().outputDir);
     static MemoryStateManager manager{};
     return manager;
 }
@@ -524,13 +532,27 @@ void MemoryStateManager::PromoteShadowStates(const PromoteCallback& dumpFunc)
 
 MemoryStateManager::~MemoryStateManager()
 {
-    for (auto& state : GetAllStateKeys())
+    try
     {
-        std::shared_ptr<EventBase> event =
-            std::make_shared<CleanUpEvent>(EventSubType::PROC_EXIT, state.first, state.second.pid, state.second.addr);
-        // 从key回填device，保证DeteleState的key(pid, device, addr)一致
-        event->device = state.second.device;
-        EventHandler(event);
+        for (auto& state : GetAllStateKeys())
+        {
+            std::shared_ptr<EventBase> event = std::make_shared<CleanUpEvent>(EventSubType::PROC_EXIT, state.first,
+                                                                              state.second.pid, state.second.addr);
+            // 从key回填device，保证DeteleState的key(pid, device, addr)一致
+            event->device = state.second.device;
+            EventHandler(event);
+        }
+    }
+    catch (const std::exception& e)
+    {
+        // 析构阶段：各单例析构顺序不确定，Dump/FileCreateManager等可能已销毁，
+        // 异常必须在此吞掉，否则逃逸出析构函数 → std::terminate。
+        // 一旦出错后续迭代必然同因失败，无需继续。
+        fprintf(stderr, "[msmemscope] cleanup aborted: %s\n", e.what());
+    }
+    catch (...)
+    {
+        fprintf(stderr, "[msmemscope] cleanup aborted: unknown error\n");
     }
 }
 
