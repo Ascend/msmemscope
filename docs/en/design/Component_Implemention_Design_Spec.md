@@ -8,7 +8,7 @@ Plan and design the following functional features and matching DFX capabilities:
 | ---------------- | --------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------- |
 | Service function | Data Collection                         | Collects video memory usage data of the AI framework, CANN, and driver layers.                                                          | Data Collection                 |
 | Service function | Custom Data Collection                  | Users can customize the collection scope and collection items.                                                                          | Data Collection                 |
-| Service function | Leakage analysis                        | Supports memory pool leakage analysis in the PyTorch and Mindpore framework and video memory leakage analysis in the CANN component.    | Video buffer debugging          |
+| Service function | Leakage analysis                        | Supports memory pool leakage analysis in the PyTorch and MindSpore framework and video memory leakage analysis in the CANN component.    | Video buffer debugging          |
 | Service function | Video buffer comparison                 | Compare the memory data collected by different software versions to find the differences.                                               | Video buffer debugging          |
 | Service function | Video buffer block monitoring           | The operator is used as the monitoring event, and the specified video buffer is flushed before and after the event is executed.         | Video buffer debugging          |
 | Service function | Video Memory Disassembly                | Decomposes the video memory usage and displays the video memory usage of each module in a visualized manner.                            | Video Memory Tuning             |
@@ -51,7 +51,7 @@ This section describes the software architecture of the components through the f
 
 The tool depends on AI frameworks, CANN, and driver layers, and uses Insight to visualize and analyze data.
 
- * AI framework: Each AI framework has memory pool implementation. Therefore, only obtaining the overall memory usage is not enough. You need to obtain the memory behavior in the memory pool. Currently, the tool mainly depends on the pytorch and mindspore.
+ * AI framework: Each AI framework has memory pool implementation. Therefore, only obtaining the overall memory usage is not enough. You need to obtain the memory behavior in the memory pool. Currently, the tool mainly depends on the PyTorch and MindSpore.
  * CANN: Under the AI framework, operator execution has a significant impact on the display memory. Therefore, the tool needs to detect the kernel launch and ACL status in the runtime.
  * Driver: The driver is at the bottom layer of the software stack. This layer can obtain the video memory allocation of all upper-layer applications and the actual execution status of the kernel.
  * Insight: The data collected by the tool is displayed by the visualization tool. You can view the video memory change trend and video memory usage details.
@@ -103,7 +103,7 @@ NA
 
 #### 4.2.4 Technical selection
 
-Generally, the training and promotion large model scripts use the Python language. Therefore, the Python interface must be supported. In addition, some device-side inference scenarios do not have the Python environment. Therefore, the command line interface must be supported.
+Generally, the training and inference large model scripts use the Python language. Therefore, the Python interface must be supported. In addition, some device-side inference scenarios do not have the Python environment. Therefore, the command line interface must be supported.
 
 #### 4.2.5 Software Unit
 
@@ -378,18 +378,18 @@ First, the algorithm combines two text A`[a, b, c, d]`(length: m), B`[e, f, g, h
  * Moving one step down indicates that the element in B is inserted, that is, the name of the element in B is different.
  * A step along the diagonal indicates that A and B have the same element name.
 
-At the same time, the algorithm introduces the concept of k-line:`k=x-y`d indicates the number of steps to the right or down. The ultimate goal is to find the`(0, 0)`To the`(m, n)`Shortest path for. Myers algorithm initializes the distance and path data when constructing the optimal graph path, then records the furthest x coordinate that each k line can reach, increases the distance d, and searches for a new k line. (The value ranges from -d to d, with a step of 2.) Calculate the farthest reachable coordinates on the k-line. Know until you find the end. snake is used to represent diagonal nodes, and the text at this position of the two sequences is the same; The Diff node is used to represent the difference node, and the text at the position of the two sequences is different.
+At the same time, the algorithm introduces the concept of k-line:`k=x-y`；`d` indicates the number of steps to the right or down. The ultimate goal is to find the`(0, 0)`To the`(m, n)`Shortest path for. Myers algorithm initializes the distance and path data when constructing the optimal graph path, then records the furthest x coordinate that each k line can reach, increases the distance d, and searches for a new k line. (The value ranges from -d to d, with a step of 2.) Calculate the farthest reachable coordinates on the k-line. Know until you find the end. snake is used to represent diagonal nodes, and the text at this position of the two sequences is the same; The Diff node is used to represent the difference node, and the text at the position of the two sequences is different.
 
 ### 4.4 Security Implementation Design
 
 #### 4.4.1 Security Design Objectives
 
-> The tool is mainly used to run the customer training script, flush the data related to memory behavior, and analyze the data. The main security design objective of the tool is to collect memory behavior based on the complete running of the customer's training and promotion script. The corresponding data meets the confidentiality requirements and the tool availability must be maintained. The security items involved include external file input security protection, generated file and log security verification, secure hash algorithm, and memory access security.
+> The tool is mainly used to run the customer training script, flush the data related to memory behavior, and analyze the data. The main security design objective of the tool is to collect memory behavior based on the complete running of the customer's training and inference script. The corresponding data meets the confidentiality requirements and the tool availability must be maintained. The security items involved include external file input security protection, generated file and log security verification, secure hash algorithm, and memory access security.
 
 #### 4.4.2 Security Design Context
 
 > The northbound interface of the tool mainly includes the commands entered by customers, Python interfaces, and file input and output. For the Python and command lines, parameter validity is verified at the entry, and file input and output are protected based on security requirements. 
-> Southbound components, such as runtime, driver, PyTorch, mindspore, and atb, trace their memory behavior, legalize obtained data, and expose it to customers.
+> Southbound components, such as runtime, driver, PyTorch, MindSpore, and atb, trace their memory behavior, legalize obtained data, and expose it to customers.
 
 #### 4.4.3 Identification of High Risks
 
@@ -539,5 +539,5 @@ Currently, the size of the shared memory is designed to be 200 MB (based on hist
 
 #### 5.2.3 Concurrent Model Design
 
-Each NPU corresponds to a client to report data. The tool process receives data from all NPUs for the server, and summarizes and analyzes the data. \* \* Therefore, the concurrency model is designed as a multi-producer and single-consumer model. Shared memory + lockless queue is considered as the most efficient inter-process communication mode, and is also the communication mode adopted by this component. As shown in the following figure, the shared memory is divided into two segments. The first segment is the configuration request message sent from the server to the client. The global configuration is performed only once. In the other part, the client sends data to the server. Multiple processes where the NPUs are located write data to the shared memory at the same time. In this example, lock-free queues and atomic variables are used to ensure that data does not conflict when data is written to multiple NPUs. The server uses a resident thread to read data. Each time one more data is written, the tail moves one bit backward. When one data is read, the head moves one bit backward. When head=tail, no data is stored in the queue.
+Each NPU corresponds to a client to report data. The tool process receives data from all NPUs for the server, and summarizes and analyzes the data. \* \* Therefore, the concurrency model is designed as a multi-producer and single-consumer model. Shared memory + lockless queue is considered as the most efficient inter-process communication mode, and is also the communication mode adopted by this component. As shown in the following figure, the shared memory is divided into two segments. The first segment is the configuration request message sent from the server to the client. The global configuration is performed only once. In the other part, the client sends data to the server. Multiple processes where the NPUs are located write data to the shared memory at the same time. In this example, lock-free queues and atomic variables are used to ensure that data does not conflict when data is written to multiple NPUs. The server uses a resident thread to read data. Each time one more data is written, the tail moves one position backward. When one data is read, the head moves one position backward. When head=tail, no data is stored in the queue.
 ![image](./figures/511a0c05-0460-4695-95cb-d5841afb00c2.png)    

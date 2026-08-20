@@ -84,7 +84,7 @@ msMemScope provides two major features: memory collection and memory analysis.
     </tr>
     <tr>
       <td>Memory decomposition</td>
-      <td>msMemScope support memory usage decomposition of the CANN layer and the Ascend for PyTorch framework, and outputs the detailed usage information of model weights, activations, gradients, and optimizers and other components.</td>
+      <td>msMemScope supports memory usage decomposition of the CANN layer and the Ascend for PyTorch framework, and outputs the detailed usage information of model weights, activations, gradients, and optimizers and other components.</td>
     </tr>
     <tr>
       <td>Identification of inefficient memory</td>
@@ -105,7 +105,7 @@ msMemScope currently supports memory collection for CANN, Ascend for PyTorch, Mi
 
 | Product | Description |
 |------|------|
-| CANN | ATB (Ascend Transformers Boost) operators of CANN 8.2.RC1 and later versions. |
+| CANN | ATB (Ascend Transformer Boost) operators of CANN 8.2.RC1 and later versions. |
 | Ascend for PyTorch | Ascend for PyTorch 7.0.0 and later versions. |
 | MindSpore | MindSpore 2.7.0 and later versions. |
 | Aten operator | To collect Aten operator dispatch and access events, PyTorch 2.3.1 or later is required. |

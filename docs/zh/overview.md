@@ -19,7 +19,7 @@ msMemScope工具当前支持CANN、Ascend for PyTorch、MindSpore以及Aten算�
 
 |产品|说明|
 |--------|--------|
-|CANN|CANN 8.2.RC1及之后版本的ATB算子（Ascend Transformers Boost）。|
+|CANN|CANN 8.2.RC1及之后版本的ATB算子（Ascend Transformer Boost）。|
 |Ascend for PyTorch|Ascend for PyTorch 7.0.0及之后版本。|
 |MindSpore|MindSpore 2.7.0及之后版本。|
 |Aten算子|当采集Aten算子下发与访问事件时，需使用PyTorch 2.3.1或更高版本。|

@@ -19,7 +19,7 @@ msMemScope supports memory collection of CANN, Ascend for PyTorch, MindSpore, an
 
 |Product|Compatibility Description|
 |--------|--------|
-|CANN|Ascend Transformers Boost (ATB) operators of CANN 8.2.RC1 and later versions|
+|CANN|Ascend Transformer Boost (ATB) operators of CANN 8.2.RC1 and later versions|
 |Ascend for PyTorch|Ascend for PyTorch 7.0.0 and later versions|
 |MindSpore|MindSpore 2.7.0 and later versions|
 |Aten operators|To collect Aten operator dispatch and access events, use PyTorch 2.3.1 or later.|

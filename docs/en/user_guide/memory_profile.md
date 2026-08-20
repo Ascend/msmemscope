@@ -225,7 +225,7 @@ Refer to the following to start msMemScope and collect memory data.
 |`--output`|Optional|Specifies the output file dump path. The maximum path length is 4096 characters. The default dump directory is `memscopeDumpResults`. Example: `--output=/home/projects/output`.|
 |`--log-level`|Optional|Specifies the log level. Options are `info`, `warn`, and `error`. The default value is `warn`.|
 |`--compare`|Optional|Enables memory data comparison between steps. This parameter is required only when using the memory comparison feature.|
-|`--input`|Optional|pecifies the absolute directory path(s) for comparison files. Both the baseline file path and the comparison file path must be provided, separated by commas (either full-width or half-width). This parameter is only valid when the `compare` feature is enabled. The maximum path length is 4096 characters. Example: `--input=/home/projects/input1,/home/projects/input2`. <br> This parameter is required only when using the memory comparison feature.|
+|`--input`|Optional|Specifies the absolute directory path(s) for comparison files. Both the baseline file path and the comparison file path must be provided, separated by commas (either full-width or half-width). This parameter is only valid when the `compare` feature is enabled. The maximum path length is 4096 characters. Example: `--input=/home/projects/input1,/home/projects/input2`. <br> This parameter is required only when using the memory comparison feature.|
 
 > [!NOTE]
 > 
