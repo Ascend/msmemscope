@@ -73,7 +73,7 @@ msMemScope provides memory collection and analysis functions.
 
 To get started with msMemScope, follow this learning path:
 
-* Read [Installation Guide](install_guide/install_guide.md)) to get started with msMemScope and correctly configure an environment.
+* Read [Installation Guide](install_guide/install_guide.md) to get started with msMemScope and correctly configure an environment.
 * Read [Quick Start](quick_start/quick_start.md) to learn how to configure and run msMemScope to locate memory problems.
 * Read [Memory Collection](user_guide/memory_profile.md), [Memory Analysis](user_guide/memory_analysis.md), and [Output File Specifications](user_guide/output_file_spec.md) to better understand memory problem locating.
 * Read [API Reference](api_reference/api.md) to quickly analyze memory status.

@@ -129,7 +129,7 @@
     msmemscope --watch=start:op0,end:op1,full-content python user_script.py
     ```
 
-4. After the command execution is complete, the results are output to the `memscopeDumpResults/watch_dump/` directory. Refer to the "Memory Block Monitoring " in *[msMemScope User Guide](../user_guide/memory_analysis.md)* to analyze the results.
+4. After the command execution is complete, the results are output to the `memscopeDumpResults/watch_dump/` directory. Refer to the "Memory Block Monitoring" in *[msMemScope User Guide](../user_guide/memory_analysis.md)* to analyze the results.
 
 ### 3.2 Example Description
 
@@ -230,7 +230,7 @@
     del used_tensor
     ```
 
-3. After execution, the tool marks inefficient memory events in the output file. Refer to"Identification of Inefficient Memory" in *[msMemScope User Guide](../user_guide/memory_analysis.md)* to analyze the results.
+3. After execution, the tool marks inefficient memory events in the output file. Refer to "Identification of Inefficient Memory" in *[msMemScope User Guide](../user_guide/memory_analysis.md)* to analyze the results.
 
 ### 5.2 Example Description
 

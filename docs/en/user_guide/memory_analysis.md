@@ -440,7 +440,7 @@ sanitizer-op: name=<operator_name>;read=<alias:addr:size>,...;write=<alias:addr:
 
 - `;` is the top-level field separator, `=` is the key-value separator, `,` is the list item separator, and `:` is the parameter name-address-size separator.
 - Addresses support both decimal and hexadecimal (`0x` prefix) formats.
-- f the same address appears in both  `read` and `write`, it indicates an in-place read-write operation.
+- If the same address appears in both  `read` and `write`, it indicates an in-place read-write operation.
 - Parameter names are defined by the caller and should be less than 32 bytes in length.
 - The total message length must not exceed 1024 bytes.
 
