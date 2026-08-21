@@ -63,11 +63,25 @@ class FileCreateManager
     bool CreateDir();
 
     std::string GetProjectDir() const;
+
+    /// 显式指定落盘根目录（测试桩等特殊场景）。显式指定的目录被"钉住"：
+    /// 后续RefreshOutputDir仅同步outputDir_，不再重算该目录。生产代码不调用本接口
     void SetProjectDir(std::string dirPath);
+
+    /// 配置生效时按新outputDir重算projectDir_。本单例可能在用户config()之前被提前构造
+    /// （hook影子采集路径触发MemoryStateManager::GetInstance()的副作用），此时固化的是默认
+    /// outputDir；调用方为SetEffectiveConfig，保证落盘路径跟随用户配置的output_path。
+    /// 空outputDir（无效配置，生产两条SetConfig路径均保证非空）与未变化的outputDir不触发
+    /// 重算（projectDir_时间戳保持首建时刻）；SetProjectDir显式钉住的目录不被覆盖；
+    /// 配置生效前不会有文件落盘。
+    void RefreshOutputDir(const std::string& outputDir);
 
    private:
     explicit FileCreateManager(const std::string& outputDir);
+    std::string outputDir_;
     std::string projectDir_;
+    /// projectDir_是否被SetProjectDir显式钉住：置位后RefreshOutputDir不重算projectDir_
+    bool projectDirPinned_{false};
     std::string dbDateStr_{""};
     std::mutex createCsvFileMutex_;
     std::mutex createDbFileMutex_;

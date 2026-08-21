@@ -91,6 +91,15 @@ bool TableExists(sqlite3* filefp, std::string tableName)
     return exists;
 }
 
+namespace
+{
+// 落盘根目录命名规则: <outputDir>/msmemscope_<pid>_<时间戳>_ascend（构造与RefreshOutputDir共用）
+std::string MakeProjectDir(const std::string& outputDir)
+{
+    return outputDir + "/" + "msmemscope_" + std::to_string(GetPid()) + "_" + GetDateStr() + "_ascend";
+}
+}  // namespace
+
 FileCreateManager& FileCreateManager::GetInstance(const std::string& outputDir)
 {
     static FileCreateManager instance(outputDir);
@@ -98,8 +107,31 @@ FileCreateManager& FileCreateManager::GetInstance(const std::string& outputDir)
 }
 
 FileCreateManager::FileCreateManager(const std::string& outputDir)
+    : outputDir_(outputDir), projectDir_(MakeProjectDir(outputDir))
 {
-    projectDir_ = outputDir + "/" + "msmemscope_" + std::to_string(GetPid()) + "_" + GetDateStr() + "_ascend";
+}
+
+void FileCreateManager::RefreshOutputDir(const std::string& outputDir)
+{
+    // 空outputDir为无效配置（生产两条SetConfig路径均保证非空），不刷新，
+    // 避免落盘根目录漂移到"/msmemscope_..."这类根路径
+    if (outputDir.empty())
+    {
+        return;
+    }
+    // outputDir未变化时不重算:projectDir_时间戳保持首建时刻,避免跨天运行的进程中途更换目录
+    if (outputDir == outputDir_)
+    {
+        return;
+    }
+    outputDir_ = outputDir;
+    // SetProjectDir显式钉住的目录优先于配置派生值（生产代码不调用SetProjectDir，不受影响），
+    // 此处仅同步outputDir_，不覆盖目录
+    if (projectDirPinned_)
+    {
+        return;
+    }
+    projectDir_ = MakeProjectDir(outputDir);
 }
 
 FILE* FileCreateManager::CreateFileWithUmask(const std::string& path, const std::string& mode, mode_t mask)
@@ -312,6 +344,11 @@ bool FileCreateManager::CreateDbTable(sqlite3* filefp, const std::string& tableC
 
 std::string FileCreateManager::GetProjectDir() const { return projectDir_; }
 
-void FileCreateManager::SetProjectDir(std::string dirPath) { projectDir_ = dirPath; }
+void FileCreateManager::SetProjectDir(std::string dirPath)
+{
+    projectDir_ = std::move(dirPath);
+    // 显式指定的目录钉住projectDir_，后续RefreshOutputDir不再重算（见RefreshOutputDir注释）
+    projectDirPinned_ = true;
+}
 
 }  // namespace Utility
