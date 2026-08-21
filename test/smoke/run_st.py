@@ -111,7 +111,7 @@ def run_tests(working_dir: str, params) -> bool:
     inefficient_cmd_command = ["../../msmemscope/output/bin/msmemscope", "bash", "../../testfile/scripts/test_inefficient_cmd.sh",
         "--log-level=info", "--analysis=inefficient", "--level=0,1","--events=alloc,free,launch,access"]
     inefficient_api_command = ["bash", "../../testfile/scripts/test_inefficient_api.sh"]
-    cpu_tensor_cmd = ["../../msmemscope/output/bin/msmemscope", "python", "../../testfile/scripts/test_cpu_tensor_smoke.py",
+    cpu_tensor_cmd = ["../../msmemscope/output/bin/msmemscope", "bash", "../../testfile/scripts/test_cpu_tensor_smoke.sh",
         "--device=npu,cpu", "--log-level=info", "--level=0,1"]
     oom_cmd = ["../../msmemscope/output/bin/msmemscope", "python", "../../testfile/scripts/test_oom_smoke.py",
         "--analysis=oom:5", "--log-level=info"]

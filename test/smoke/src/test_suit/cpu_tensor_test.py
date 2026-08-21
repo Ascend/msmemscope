@@ -20,6 +20,12 @@ class CpuTensorTestSuite(TestSuite):
         super().__init__(name, config, work_path, cmd, max_time)
         _ = list(map(self.register, [CpuTensorTestCase("check_cpu_dump", work_path)]))
 
+    def set_up(self):
+        pass
+
+    def tear_down(self):
+        pass
+
     def __str__(self):
         return f"cpu tensor smoke. suite: {self.name}"
 
