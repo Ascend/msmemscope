@@ -107,7 +107,9 @@ MemoryStateManager& MemoryStateManager::GetInstance()
     // Dump::WriteToFile → GetConfig() 访问 ConfigManager，需确保其在本对象之后析构
     ConfigManager::Instance();
     // Dump::WriteToFile → MakeDataHandler → CsvHandler::Init() 访问 FileCreateManager，
-    // 需确保其在本对象之后析构；outputDir 取当前已生效的配置值
+    // 需确保其在本对象之后析构；outputDir 取当前已生效的配置值。
+    // 注意：本调用可能先于用户config()发生（hook影子采集路径），此时以默认outputDir固化
+    // projectDir_，由SetEffectiveConfig在配置生效时经RefreshOutputDir纠正
     Utility::FileCreateManager::GetInstance(GetConfig().outputDir);
     static MemoryStateManager manager{};
     return manager;

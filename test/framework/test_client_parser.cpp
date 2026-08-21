@@ -26,6 +26,7 @@
 #include "client_parser.h"
 #include "log.h"
 #include "bit_field.h"
+#include "utility/file.h"
 #undef private
 
 using namespace MemScope;
@@ -1665,4 +1666,39 @@ TEST(ClientParser, log_level_conflict_explicit_log_level_wins)
     };
     cmd = cliParser.Parse(argv.size(), const_cast<char**>(argv.data()));
     ASSERT_EQ(cmd.config.logLevel, debugLv);
+}
+
+// ==================== RFC: output_path提前构造固化回归 ====================
+
+// 回归场景：hook影子采集路径在用户config()之前触发MemoryStateManager::GetInstance()，
+// FileCreateManager随之以默认outputDir提前构造并固化projectDir_；
+// SetEffectiveConfig在配置生效时须按用户outputDir刷新落盘根目录，否则output_path不生效
+TEST(ClientParser, set_effective_config_expect_project_dir_follow_user_output)
+{
+    // InitialConfig得到默认outputDir（模拟提前构造时刻的默认配置）
+    Config config;
+    memset(&config, 0, sizeof(config));
+    ClientParser parser;
+    parser.InitialConfig(config);
+    ASSERT_NE(config.outputDir[0], '\0');
+
+    // 以默认目录完成提前构造（进程内已构造时参数被忽略，无副作用），
+    // 确保后续断言不依赖测试执行顺序
+    auto& fileManager = Utility::FileCreateManager::GetInstance(config.outputDir);
+    // 前置：projectDir_处于派生态（未被SetProjectDir显式钉住），生产场景下始终如此
+    fileManager.projectDirPinned_ = false;
+
+    // 模拟用户config(output_path=...)后配置生效
+    const std::string userOutput = "./testmsmemscope_effective_config";
+    snprintf(config.outputDir, sizeof(config.outputDir), "%s", userOutput.c_str());
+    SetEffectiveConfig(config);
+
+    // 落盘根目录按用户output_path重算: <outputDir>/msmemscope_<pid>_<时间戳>_ascend
+    std::string projectDir = fileManager.GetProjectDir();
+    ASSERT_TRUE(projectDir.rfind(userOutput + "/msmemscope_", 0) == 0);
+    ASSERT_TRUE(config.isEffective);
+
+    // 恢复单例状态（进程级单例，测试间共享）
+    fileManager.RefreshOutputDir("./testmsmemscope");
+    fileManager.SetProjectDir("");
 }

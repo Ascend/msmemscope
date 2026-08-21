@@ -297,3 +297,54 @@ TEST_F(FileTest, set_dir_path_exceed_path_max_expect_no_change)
     // 断言2：路径内容未被修改（与原始值一致）
     ASSERT_EQ(overLengthDir, originalDir);
 }
+
+// 测试RefreshOutputDir：outputDir变化时按新目录重算projectDir
+// 回归场景：FileCreateManager在用户config()之前被提前构造（hook影子采集路径触发
+// MemoryStateManager::GetInstance()的副作用），以默认outputDir固化projectDir_，
+// 配置生效时经RefreshOutputDir纠正到用户output_path
+TEST_F(FileTest, refresh_output_dir_to_new_dir_expect_project_dir_recalculated)
+{
+    auto& manager = FileCreateManager::GetInstance("./testmsmemscope");
+    // 前置：解除此前用例SetProjectDir留下的钉住，回到派生态（生产场景下projectDir_始终派生自outputDir_）
+    manager.projectDirPinned_ = false;
+    manager.RefreshOutputDir("./testmsmemscope_fcm_refresh");
+    std::string projectDir = manager.GetProjectDir();
+    // projectDir按新outputDir重算: <outputDir>/msmemscope_<pid>_<时间戳>_ascend
+    ASSERT_TRUE(projectDir.rfind("./testmsmemscope_fcm_refresh/msmemscope_", 0) == 0);
+    const std::string suffix = "_ascend";
+    ASSERT_GT(projectDir.length(), suffix.length());
+    ASSERT_EQ(projectDir.substr(projectDir.length() - suffix.length()), suffix);
+    // 恢复单例状态（进程级单例，测试间共享）
+    manager.RefreshOutputDir("./testmsmemscope");
+}
+
+// 测试RefreshOutputDir：outputDir未变化时不重算projectDir
+// （跨天运行的进程不因RefreshOutputDir中途更换落盘目录，时间戳保持首建时刻）
+TEST_F(FileTest, refresh_output_dir_same_dir_expect_project_dir_kept)
+{
+    auto& manager = FileCreateManager::GetInstance("./testmsmemscope");
+    // 先将outputDir固定为探测目录（projectDir_是否重算与本用例无关）
+    manager.RefreshOutputDir("./testmsmemscope_fcm_keep");
+    // 打入哨兵projectDir：若同outputDir刷新发生重算，哨兵将被覆盖
+    manager.SetProjectDir("sentinel_project_dir");
+    // 解除pin以隔离语义：本用例专测等值短路，哨兵仅能由"outputDir未变化"保护
+    manager.projectDirPinned_ = false;
+    manager.RefreshOutputDir("./testmsmemscope_fcm_keep");
+    ASSERT_EQ(manager.GetProjectDir(), "sentinel_project_dir");
+    // 恢复单例状态
+    manager.RefreshOutputDir("./testmsmemscope");
+}
+
+// 测试RefreshOutputDir：SetProjectDir显式钉住的projectDir不被刷新覆盖
+// （测试桩经SetProjectDir指定落盘目录后，SetEffectiveConfig触发的配置刷新不得将其改写为
+// 派生目录<outputDir>/msmemscope_<pid>_<时间戳>_ascend；生产代码不调用SetProjectDir）
+TEST_F(FileTest, refresh_output_dir_pinned_project_dir_expect_not_overwritten)
+{
+    auto& manager = FileCreateManager::GetInstance("./testmsmemscope");
+    manager.SetProjectDir("pinned_project_dir");
+    manager.RefreshOutputDir("./testmsmemscope_fcm_pin");
+    ASSERT_EQ(manager.GetProjectDir(), "pinned_project_dir");
+    // 恢复单例状态（解除pin并回到派生态）
+    manager.projectDirPinned_ = false;
+    manager.RefreshOutputDir("./testmsmemscope");
+}

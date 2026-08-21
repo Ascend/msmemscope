@@ -219,6 +219,10 @@ void SetAnalysisDefaultConfig(Config &config)
 
 void SetEffectiveConfig(Config &config)
 {
+    // 配置生效时按outputDir刷新落盘根目录:FileCreateManager可能在config()之前被提前构造
+    // （hook影子采集路径触发MemoryStateManager::GetInstance()，以默认outputDir固化projectDir_），
+    // 不刷新会导致用户output_path配置不生效；须先于isEffective置位，避免并发日志线程以旧目录建文件
+    Utility::FileCreateManager::GetInstance(config.outputDir).RefreshOutputDir(config.outputDir);
     // 调用SetConfig后，设置为EFFECTIVE
     // 1.状态不为空桩，使能MemScope功能
     // 2.只能设置一次的变量生效，不能在被python config接口改变
