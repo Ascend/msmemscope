@@ -383,7 +383,11 @@ void EventTraceManager::SetAclInitStatus(bool isInit)
 
     HandleWithATenCollect();
     HandleWithDecompose();
-    HandleWithCpuTensorCollect();
+    // CPU tensor collection does not depend on aclInit and must not be
+    // triggered from the aclInit hook: that runs mid torch_npu device init,
+    // and patching torch.Tensor there races with it (error 507033). It is
+    // enabled from SetConfig/SetTraceStatus (before device init) and from
+    // on_device_ready (after aclrtSetDevice) instead.
 }
 
 void EventTraceManager::SetDeviceReadyStatus(bool isReady)
