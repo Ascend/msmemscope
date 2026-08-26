@@ -1146,11 +1146,6 @@ UserCommand ClientParser::Parse(int32_t argc, char **argv)
             param = optarg;
         }
         ParseUserCommand(opt, param, userCommand);
-        // 打印help或者version不进行其他操作
-        if (userCommand.printHelpInfo || userCommand.printVersionInfo)
-        {
-            return userCommand;
-        }
     }
     std::vector<std::string> userBinCmd;
     for (; optind < argc; optind++)
