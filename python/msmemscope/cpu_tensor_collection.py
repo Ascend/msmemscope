@@ -84,24 +84,20 @@ def _on_storage_freed(ptr):
 
 
 def _npu_initialized() -> bool:
-    """Return True when it is safe to monkey-patch ``torch.Tensor``.
+    """Return True when it is safe to monkey-patch ``torch.Tensor`` now.
 
-    torch_npu opens its device lazily (aclInit / rtSetDevice). Installing the
-    CPU tensor hijack hooks while that initialization is in flight races with
-    it and makes ``torch.npu.set_device`` fail with error 507033 ("device
-    retain error"). We therefore wait until the NPU device is initialized (or
-    confirm there is no torch_npu at all) before patching torch.
+    Patching is unsafe only while ``torch_npu`` is mid-import (``torch.npu`` not
+    yet registered), because torch_npu patches torch during import and racing
+    with it produced the 507033 "device retain error". A device that is merely
+    "not opened yet" (``is_initialized()`` False) is safe: the hooks only wrap
+    ``torch.Tensor``, and CPU tensors created before the first NPU op must still
+    be captured. The aclInit-time race is avoided on the C++ side — the aclInit
+    hook no longer triggers this function; aclrtSetDevice drives on_device_ready.
     """
     try:
         if "torch_npu" not in sys.modules:
             return True  # no torch_npu -> nothing to race with
-        npu = getattr(torch, "npu", None)
-        if npu is None:
-            return False  # torch_npu is still being imported
-        initialized = getattr(npu, "is_initialized", None)
-        if callable(initialized) and not initialized():
-            return False  # present but device not opened yet
-        return True
+        return getattr(torch, "npu", None) is not None
     except Exception:
         return False
 

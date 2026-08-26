@@ -26,9 +26,12 @@ def main():
     mstx_id = mstx.range_start("step start", None)
 
     x = torch.randn(16, 16).to("npu:0")
-    torch.tensor([1.0, 2.0, 3.0])     # Method 1: torch.tensor
-    x.to("cpu")                         # Method 2: Tensor.to('cpu')
-    x.cpu()                             # Method 3: Tensor.cpu()
+    torch.tensor([1.0, 2.0, 3.0])     # Method 1: torch.tensor  -> MALLOC (size 12)
+    c1 = x.to("cpu")                   # Method 2: Tensor.to('cpu') -> MALLOC (size 1024)
+    c2 = x.cpu()                       # Method 3: Tensor.cpu() -> MALLOC (size 1024)
+    c1.cpu()                           # already CPU -> returns self, dedup (no MALLOC)
+    c1.view(-1)                        # shared storage, not hooked (no MALLOC)
+    torch.tensor([])                   # empty -> data_ptr 0, skipped (no MALLOC)
 
     mstx.range_end(mstx_id)
     torch.npu.synchronize()
