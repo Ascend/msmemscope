@@ -101,7 +101,8 @@ void ShowHelpInfo()
               << "      --level <LEVEL>           Data trace level: op | kernel [default: op]" << std::endl
               << "      --events <EVENT>          Trace event types: alloc | free | launch | access | traceback | none"
               << std::endl
-              << "                                (comma-separated, default: alloc,free,launch; none = no events)" << std::endl
+              << "                                (comma-separated, default: alloc,free,launch; none = no events)"
+              << std::endl
               << "      --steps <STEP>            Steps to collect memory info (comma-separated, max 5)" << std::endl
               << "      --call-stack <TYPE>[:<DEPTH>]  Enable C/Python call stack (c[:depth], python[:depth],"
               << std::endl
