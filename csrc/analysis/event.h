@@ -169,6 +169,7 @@ class MemoryEvent : public EventBase
     MemPageType pageType = MemPageType::MEM_MAX_PAGE_TYPE;
     uint64_t kernelIndex;
     bool isShadowEvent = false;  // Shadow event created during NOT_IN_TRACING mode
+    bool isPinned = false;       // 锁页内存标记（offload 内存置 true，dump 时 attr 写 pinned:true）
 
     MemoryEvent() {}
 };

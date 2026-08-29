@@ -200,7 +200,7 @@ void MemoryStateManager::UpdateUsage(const std::shared_ptr<MemoryEvent>& event)
     }
 
     const int64_t size = event->size;
-    if (event->poolType == PoolType::HAL && event->device != DEVICE_ID_CPU)
+    if (event->poolType == PoolType::HAL)
     {
         // HAL 事件（DEVICE 空间）：used = 本进程 HAL 维度活跃累计（MALLOC 含本次、FREE 不含本次）
         halUsed_[event->device] += (event->eventType == EventBaseType::MALLOC ? size : -size);
@@ -213,9 +213,9 @@ void MemoryStateManager::UpdateUsage(const std::shared_ptr<MemoryEvent>& event)
         }
         event->used = halUsed_[event->device];
     }
-    else if (event->poolType == PoolType::HAL && event->device == DEVICE_ID_CPU)
+    else if (event->poolType == PoolType::HOST && event->isPinned)
     {
-        // 锁页内存事件（事件模型：poolType=HAL、device=DEVICE_ID_CPU）
+        // 锁页内存事件（事件模型：poolType=HOST、isPinned=true）
         hostUsed_ += (event->eventType == EventBaseType::MALLOC ? size : -size);
         if (hostUsed_ < 0)
         {
@@ -227,7 +227,7 @@ void MemoryStateManager::UpdateUsage(const std::shared_ptr<MemoryEvent>& event)
     }
     else if (event->poolType == PoolType::HOST)
     {
-        // CPU tensor数据内存事件（事件模型：poolType=HOST、device=DEVICE_ID_CPU），
+        // CPU tensor数据内存事件（事件模型：poolType=HOST、isPinned=false），
         // total = 活跃CPU tensor数据内存累计（仅落盘，不参与分析）
         hostTensorTotal_ += (event->eventType == EventBaseType::MALLOC ? size : -size);
         if (hostTensorTotal_ < 0)
@@ -250,12 +250,16 @@ void MemoryStateManager::ResetUsageBaseline()
     hostTensorTotal_ = 0;
 
     LiveBlockFilter filter;
-    filter.poolTypes = {PoolType::HAL};
+    filter.poolTypes = {PoolType::HAL, PoolType::HOST};
     for (const auto& blk : QueryLiveBlocks(filter))
     {
-        if (blk.device == DEVICE_ID_CPU)
+        if (blk.poolType == PoolType::HOST && blk.isPinned)
         {
             hostUsed_ += static_cast<int64_t>(blk.size);
+        }
+        else if (blk.poolType == PoolType::HOST)
+        {
+            hostTensorTotal_ += static_cast<int64_t>(blk.size);
         }
         else
         {
@@ -455,6 +459,7 @@ std::vector<LiveBlockInfo> MemoryStateManager::QueryLiveBlocks(const LiveBlockFi
             info.allocEventId = allocEvent->id;
             info.kernelIndex = allocEvent->kernelIndex;
             info.shadowState = state.shadowState;
+            info.isPinned = allocEvent->isPinned;
             info.cCallStack = allocEvent->cCallStack;
             info.pyCallStack = allocEvent->pyCallStack;
             result.push_back(info);
