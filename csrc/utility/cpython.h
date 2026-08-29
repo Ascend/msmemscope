@@ -211,6 +211,7 @@ class PyInterpGuard
 };
 
 void MemScopePythonCall(const std::string& module, const std::string& function);
+void MemScopePythonCallNoTorch(const std::string& module, const std::string& function);
 
 }  // namespace Utility
 
