@@ -15,11 +15,11 @@
  * -------------------------------------------------------------------------
  */
 
-#include "cpython.h"
-#include "trace_manager/event_trace_manager.h"
-
 #include <chrono>
 #include <thread>
+
+#include "cpython.h"
+#include "trace_manager/event_trace_manager.h"
 
 namespace
 {
@@ -62,7 +62,4 @@ void CpuTensorTriggerThread()
 }
 }  // namespace
 
-__attribute__((constructor)) static void StartCpuTensorTrigger()
-{
-    std::thread(CpuTensorTriggerThread).detach();
-}
+__attribute__((constructor)) static void StartCpuTensorTrigger() { std::thread(CpuTensorTriggerThread).detach(); }

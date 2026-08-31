@@ -36,18 +36,33 @@ _torch_module = None
 # 算子之前由这些工厂创建的 CPU tensor。frombuffer 包装外部 buffer（如 mmap 页对齐
 # 内存），用于 aclrtHostRegisterV2 双通道场景。
 _CPU_TENSOR_FACTORIES = [
-    "empty", "zeros", "ones", "full",
-    "rand", "randn", "randint", "randperm",
-    "arange", "linspace", "logspace", "eye",
-    "empty_like", "zeros_like", "ones_like", "full_like",
-    "rand_like", "randn_like", "randint_like",
+    "empty",
+    "zeros",
+    "ones",
+    "full",
+    "rand",
+    "randn",
+    "randint",
+    "randperm",
+    "arange",
+    "linspace",
+    "logspace",
+    "eye",
+    "empty_like",
+    "zeros_like",
+    "ones_like",
+    "full_like",
+    "rand_like",
+    "randn_like",
+    "randint_like",
     "frombuffer",
 ]
 
 
 def _torch():
     """Lazy torch import: this module must stay importable before torch exists so the
-    C++ trigger thread can install the torch_npu import hook before torch is imported."""
+    C++ trigger thread can install the torch_npu import hook before torch is imported.
+    """
     global _torch_module
     if _torch_module is None:
         import torch  # pylint: disable=import-outside-toplevel
@@ -140,8 +155,7 @@ def _npu_initialized() -> bool:
     "about to be imported" case deterministically.
     """
     try:
-        return (_torch_imported() and "torch_npu" in sys.modules
-                and not _module_importing("torch_npu"))
+        return _torch_imported() and "torch_npu" in sys.modules and not _module_importing("torch_npu")
     except Exception:
         return False
 
@@ -184,7 +198,7 @@ def _register_handlers():
     global _pending_enable
     if _handlers:
         return
-    torch = _torch()
+    _torch()  # ensure torch imported before hijacker resolves "torch" module
     targets = [
         ("torch", "", "tensor", _on_cpu_tensor_created),
         ("torch", "Tensor", "to", _on_cpu_tensor_created),
@@ -218,8 +232,11 @@ def _deferred_enable():
         now = time.monotonic()
         if torch_imported_at is None and _torch_imported():
             torch_imported_at = now
-        if (torch_imported_at is not None and "torch_npu" not in sys.modules
-                and now - torch_imported_at >= _PURE_CPU_GRACE):
+        if (
+            torch_imported_at is not None
+            and "torch_npu" not in sys.modules
+            and now - torch_imported_at >= _PURE_CPU_GRACE
+        ):
             break
         time.sleep(0.001)
     if not _pending_enable or _handlers:
