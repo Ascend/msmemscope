@@ -76,6 +76,7 @@ class MemoryStateManagerTest : public ::testing::Test
         // 清理统计累计残留（HAL/HOST 累计 + 整卡/本进程用量缓存）
         MemoryStateManager::GetInstance().halUsed_.clear();
         MemoryStateManager::GetInstance().hostUsed_ = 0;
+        MemoryStateManager::GetInstance().hostTensorTotal_ = 0;
         MemoryStateManager::GetInstance().deviceUsedCache_.fill(-1);
         MemoryStateManager::GetInstance().processUsedCache_.fill(-1);
     }
@@ -89,6 +90,7 @@ class MemoryStateManagerTest : public ::testing::Test
         }
         MemoryStateManager::GetInstance().halUsed_.clear();
         MemoryStateManager::GetInstance().hostUsed_ = 0;
+        MemoryStateManager::GetInstance().hostTensorTotal_ = 0;
         MemoryStateManager::GetInstance().deviceUsedCache_.fill(-1);
         MemoryStateManager::GetInstance().processUsedCache_.fill(-1);
     }
@@ -300,18 +302,33 @@ std::shared_ptr<MemoryEvent> CreateHalFree(uint64_t addr, int32_t device, int64_
     return event;
 }
 
-// HOST 内存事件模型：poolType=HAL、device=DEVICE_ID_CPU、eventSubType=HOST
-std::shared_ptr<MemoryEvent> CreateHostMalloc(uint64_t addr, int64_t size)
+// HOST 内存事件模型：poolType=HOST、device=DEVICE_ID_CPU、eventSubType=HOST。
+// 锁页内存（offload pinned）isPinned=true；CPU tensor 数据内存 isPinned=false，二者仅以 isPinned 区分。
+std::shared_ptr<MemoryEvent> CreateHostMalloc(uint64_t addr, int64_t size, bool isPinned = true)
 {
-    auto event = CreateHalMalloc(addr, DEVICE_ID_CPU, size);
+    auto event = std::make_shared<MemoryEvent>();
+    event->eventType = EventBaseType::MALLOC;
     event->eventSubType = EventSubType::HOST;
+    event->poolType = PoolType::HOST;
+    event->addr = addr;
+    event->device = DEVICE_ID_CPU;
+    event->pid = 1;
+    event->size = size;
+    event->isPinned = isPinned;
     return event;
 }
 
-std::shared_ptr<MemoryEvent> CreateHostFree(uint64_t addr, int64_t size)
+std::shared_ptr<MemoryEvent> CreateHostFree(uint64_t addr, int64_t size, bool isPinned = true)
 {
-    auto event = CreateHalFree(addr, DEVICE_ID_CPU, size);
+    auto event = std::make_shared<MemoryEvent>();
+    event->eventType = EventBaseType::FREE;
     event->eventSubType = EventSubType::HOST;
+    event->poolType = PoolType::HOST;
+    event->addr = addr;
+    event->device = DEVICE_ID_CPU;
+    event->pid = 1;
+    event->size = size;
+    event->isPinned = isPinned;
     return event;
 }
 
@@ -426,7 +443,7 @@ TEST_F(MemoryStateManagerTest, pool_events_preserve_used_total_and_fill_process_
     EXPECT_EQ(free->processUsed, 300);
 }
 
-// HOST（poolType=HAL、device=DEVICE_ID_CPU）：used=HOST累计、processUsed=进程VmRSS
+// HOST 锁页内存（poolType=HOST、isPinned=true）：used=HOST累计、processUsed=进程VmRSS
 TEST_F(MemoryStateManagerTest, host_events_update_used_and_process_used)
 {
     auto h1 = CreateHostMalloc(0x1000, 100);
@@ -443,11 +460,31 @@ TEST_F(MemoryStateManagerTest, host_events_update_used_and_process_used)
     EXPECT_EQ(f1->used, 50);
     EXPECT_GT(f1->processUsed, 0);
 
-    // HOST 累计与 DEVICE 维度隔离（DEVICE_ID_CPU 不进入 halUsed_）
+    // HOST 累计与 DEVICE 维度隔离（poolType=HOST 不进入 halUsed_）
     auto dev = CreateHalMalloc(0x3000, 0, 100);
     Handle(dev);
     EXPECT_EQ(MemoryStateManager::GetInstance().hostUsed_, 50);
     EXPECT_EQ(MemoryStateManager::GetInstance().halUsed_[0], 100);
+}
+
+// CPU tensor 数据内存（poolType=HOST、isPinned=false）：total=活跃CPU tensor累计，不回填 used/processUsed
+TEST_F(MemoryStateManagerTest, cpu_tensor_events_update_total_not_host_used)
+{
+    auto t1 = CreateHostMalloc(0x1000, 100, false);
+    Handle(t1);
+    EXPECT_EQ(t1->total, 100);
+    EXPECT_EQ(MemoryStateManager::GetInstance().hostTensorTotal_, 100);
+    EXPECT_EQ(MemoryStateManager::GetInstance().hostUsed_, 0);  // 与锁页内存隔离
+
+    auto t2 = CreateHostMalloc(0x2000, 50, false);
+    Handle(t2);
+    EXPECT_EQ(t2->total, 150);
+
+    auto f1 = CreateHostFree(0x1000, 100, false);
+    Handle(f1);
+    EXPECT_EQ(f1->total, 50);
+    EXPECT_EQ(MemoryStateManager::GetInstance().hostTensorTotal_, 50);
+    EXPECT_EQ(MemoryStateManager::GetInstance().hostUsed_, 0);
 }
 
 // TRACE_START 从存量块初始化基线（卡0 100B、卡1 50B、HOST 30B）

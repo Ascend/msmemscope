@@ -47,6 +47,7 @@ protected:
         instance.stepInfo_.inStepRange = false;
         instance.stepInfo_.stepMarkRangeIdList.clear();
         instance.hostPtrs_.clear();
+        instance.halPtrs_.clear();
     }
 };
 
@@ -94,4 +95,51 @@ TEST_F(CpuTensorCollectTest, SkipWhenCpuDisabled)
 
     config.collectCpu = true;
     ConfigManager::Instance().SetConfig(config);
+}
+
+// 双向去重方向一：Python（CPU tensor）先到 → HAL锁页（ReportHalMalloc host space / ReportHostRegister）静默去重
+TEST_F(CpuTensorCollectTest, CpuTensorThenPinnedDedup)
+{
+    EventReport& instance = EventReport::Instance(MemScopeCommType::MEMORY_DEBUG);
+
+    // ReportHalMalloc host space 后到 → 静默去重（返回 true，且不重复登记 halPtrs_）
+    uint64_t addr1 = 0xABCD0002;
+    EXPECT_TRUE(instance.ReportCpuTensor(addr1, 1024, true, ""));
+    EXPECT_EQ(instance.hostPtrs_.count(addr1), 1);
+    CallStackString cs1;
+    EXPECT_TRUE(instance.ReportHalMalloc(addr1, 1024, 0x800, std::move(cs1)));
+    EXPECT_EQ(instance.hostPtrs_.count(addr1), 1);
+    EXPECT_EQ(instance.halPtrs_.count(addr1), 0);
+
+    // ReportHostRegister 后到 → 静默去重
+    uint64_t addr2 = 0xABCD0003;
+    EXPECT_TRUE(instance.ReportCpuTensor(addr2, 1024, true, ""));
+    CallStackString cs2;
+    EXPECT_TRUE(instance.ReportHostRegister(addr2, 1024, std::move(cs2)));
+    EXPECT_EQ(instance.hostPtrs_.count(addr2), 1);
+    EXPECT_EQ(instance.halPtrs_.count(addr2), 0);
+}
+
+// 双向去重方向二：HAL锁页（ReportHalMalloc host space / ReportHostRegister）先到 → Python（CPU tensor）拒绝
+TEST_F(CpuTensorCollectTest, PinnedThenCpuTensorDedup)
+{
+    EventReport& instance = EventReport::Instance(MemScopeCommType::MEMORY_DEBUG);
+
+    // ReportHalMalloc host space 先到
+    uint64_t addr1 = 0xABCD0004;
+    CallStackString cs1;
+    EXPECT_TRUE(instance.ReportHalMalloc(addr1, 1024, 0x800, std::move(cs1)));
+    EXPECT_EQ(instance.hostPtrs_.count(addr1), 1);
+    EXPECT_EQ(instance.halPtrs_.count(addr1), 1);
+    EXPECT_FALSE(instance.ReportCpuTensor(addr1, 1024, true, ""));
+    EXPECT_EQ(instance.hostPtrs_.count(addr1), 1);
+
+    // ReportHostRegister 先到
+    uint64_t addr2 = 0xABCD0005;
+    CallStackString cs2;
+    EXPECT_TRUE(instance.ReportHostRegister(addr2, 1024, std::move(cs2)));
+    EXPECT_EQ(instance.hostPtrs_.count(addr2), 1);
+    EXPECT_EQ(instance.halPtrs_.count(addr2), 1);
+    EXPECT_FALSE(instance.ReportCpuTensor(addr2, 1024, true, ""));
+    EXPECT_EQ(instance.hostPtrs_.count(addr2), 1);
 }

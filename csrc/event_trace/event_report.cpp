@@ -742,7 +742,8 @@ bool EventReport::ReportHalMalloc(uint64_t addr, uint64_t size, unsigned long lo
     event->eventSubType = isHostSpace ? EventSubType::HOST : EventSubType::HAL;
     event->cCallStack = std::move(stack.cStack);
     event->pyCallStack = std::move(stack.pyStack);
-    event->poolType = PoolType::HAL;
+    event->poolType = isHostSpace ? PoolType::HOST : PoolType::HAL;
+    event->isPinned = isHostSpace;
     event->addr = addr;
     event->name = "N/A";
     event->space = space;
@@ -760,6 +761,10 @@ bool EventReport::ReportHalMalloc(uint64_t addr, uint64_t size, unsigned long lo
         if (!destroyed_.load())
         {
             std::lock_guard<std::mutex> lock(mutex_);
+            if (isHostSpace && hostPtrs_.count(addr) > 0)
+            {
+                return true;  // HOST 地址已被其他通道持有（先到先得），静默去重
+            }
             halPtrs_.emplace(addr, devId);
             if (isHostSpace)
             {
@@ -799,7 +804,8 @@ bool EventReport::ReportHalMalloc(uint64_t addr, uint64_t size, unsigned long lo
     auto event = std::make_shared<MemoryEvent>();
     event->eventType = EventBaseType::MALLOC;
     event->eventSubType = isHostSpace ? EventSubType::HOST : EventSubType::HAL;
-    event->poolType = PoolType::HAL;
+    event->poolType = isHostSpace ? PoolType::HOST : PoolType::HAL;
+    event->isPinned = isHostSpace;
     event->addr = addr;
     event->name = "N/A";
     event->size = static_cast<int64_t>(size);
@@ -813,6 +819,10 @@ bool EventReport::ReportHalMalloc(uint64_t addr, uint64_t size, unsigned long lo
         if (!destroyed_.load())
         {
             std::lock_guard<std::mutex> lock(mutex_);
+            if (isHostSpace && hostPtrs_.count(addr) > 0)
+            {
+                return true;  // HOST 地址已被其他通道持有（先到先得），静默去重
+            }
             halPtrs_.emplace(addr, devId);
             if (isHostSpace)
             {
@@ -853,7 +863,8 @@ bool EventReport::ReportHalFree(uint64_t addr)
     auto event = std::make_shared<MemoryEvent>();
     event->eventType = EventBaseType::FREE;
     event->eventSubType = (devId == DEVICE_ID_CPU) ? EventSubType::HOST : EventSubType::HAL;
-    event->poolType = PoolType::HAL;
+    event->poolType = (devId == DEVICE_ID_CPU) ? PoolType::HOST : PoolType::HAL;
+    event->isPinned = (devId == DEVICE_ID_CPU);
     event->addr = addr;
     event->name = "N/A";
     event->device = devId;  // 分配时语义：与MALLOC事件flag解析同源
@@ -900,7 +911,8 @@ bool EventReport::ReportHalFree(uint64_t addr, CallStackString&& stack)
     event->eventSubType = (devId == DEVICE_ID_CPU) ? EventSubType::HOST : EventSubType::HAL;
     event->cCallStack = std::move(stack.cStack);
     event->pyCallStack = std::move(stack.pyStack);
-    event->poolType = PoolType::HAL;
+    event->poolType = (devId == DEVICE_ID_CPU) ? PoolType::HOST : PoolType::HAL;
+    event->isPinned = (devId == DEVICE_ID_CPU);
     event->addr = addr;
     event->name = "N/A";
     event->space = MemOpSpace::INVALID;
@@ -931,7 +943,8 @@ bool EventReport::ReportHostRegister(uint64_t addr, uint64_t size, CallStackStri
     event->eventSubType = EventSubType::HOST;
     event->cCallStack = std::move(stack.cStack);
     event->pyCallStack = std::move(stack.pyStack);
-    event->poolType = PoolType::HAL;
+    event->poolType = PoolType::HOST;
+    event->isPinned = true;
     event->addr = addr;
     event->name = "N/A";
     event->space = MemOpSpace::HOST;
@@ -944,6 +957,10 @@ bool EventReport::ReportHostRegister(uint64_t addr, uint64_t size, CallStackStri
         if (!destroyed_.load())
         {
             std::lock_guard<std::mutex> lock(mutex_);
+            if (hostPtrs_.count(addr) > 0)
+            {
+                return true;  // HOST 地址已被其他通道持有（先到先得），静默去重
+            }
             // 锁页内存（HOST）映射到CPU设备（DEVICE_ID_CPU），与事件device一致
             halPtrs_.emplace(addr, DEVICE_ID_CPU);
             hostPtrs_.insert(addr);
@@ -983,7 +1000,8 @@ bool EventReport::ReportHostUnregister(uint64_t addr, CallStackString&& stack)
     event->eventSubType = EventSubType::HOST;
     event->cCallStack = std::move(stack.cStack);
     event->pyCallStack = std::move(stack.pyStack);
-    event->poolType = PoolType::HAL;
+    event->poolType = PoolType::HOST;
+    event->isPinned = true;
     event->addr = addr;
     event->name = "N/A";
     event->space = MemOpSpace::HOST;

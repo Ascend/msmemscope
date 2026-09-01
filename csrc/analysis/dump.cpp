@@ -122,12 +122,11 @@ void Dump::DumpMemoryEvent(std::shared_ptr<MemoryEvent>& event, MemoryState* sta
     attr += "size:" + std::to_string(event->size) + ",";
     // 统计键按事件类别输出（值<0 表示无统计值，对应字段直接省略）：
     // 合成事件（影子转正/虚拟释放）isShadowEvent=true，无事件时刻的累计/查询语义，不输出统计键
-    // 锁页内存与CPU tensor数据内存统一为HOST事件类型，按池区分：
-    // 锁页内存属于HAL池（poolType=HAL、device=DEVICE_ID_CPU），标记pinned:true；
-    // CPU tensor数据内存属于HOST池（poolType=HOST），输出total字段
+    // 锁页内存与CPU tensor数据内存统一为HOST事件类型（poolType=HOST），按 isPinned 区分：
+    // 锁页内存 isPinned=true，标记pinned:true；CPU tensor数据内存 isPinned=false，输出total字段
     if (!event->isShadowEvent && event->eventType != EventBaseType::ACCESS)
     {
-        if (event->poolType == PoolType::HAL && event->device != DEVICE_ID_CPU)
+        if (event->poolType == PoolType::HAL)
         {
             // HAL事件（DEVICE空间）：本进程HAL维度使用量（used，MSM累计回填）
             // + 本进程用量（process_used，本次dcmi_get_npu_proc_mem_info查询值；查询失败/未知时省略）
@@ -142,7 +141,7 @@ void Dump::DumpMemoryEvent(std::shared_ptr<MemoryEvent>& event, MemoryState* sta
                 attr += "device_used:" + std::to_string(event->deviceUsed) + ",";
             }
         }
-        else if (event->poolType == PoolType::HAL && event->device == DEVICE_ID_CPU)  // 锁页内存（pinned）
+        else if (event->poolType == PoolType::HOST && event->isPinned)  // 锁页内存（pinned）
         {
             attr += "pinned:true,";
             attr += "used:" + std::to_string(event->used) + ",";  // host块活跃累计（原VmRSS语义迁移至process_used）
@@ -173,6 +172,12 @@ void Dump::DumpMemoryEvent(std::shared_ptr<MemoryEvent>& event, MemoryState* sta
 
     if (event->isShadowEvent)
     {
+        // 影子虚拟释放（CLEAN_UP补记）：保留 pinned:true 以区分锁页/CPU tensor，
+        // 不输出 used/process_used（无事件时刻统计语义）
+        if (event->poolType == PoolType::HOST && event->isPinned)
+        {
+            attr += "pinned:true,";
+        }
         attr += "shadow:true,";
     }
 

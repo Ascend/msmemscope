@@ -17,11 +17,11 @@
 from functools import wraps
 from ._msmemscope import _take_snapshot
 
-import torch_npu
-
 
 # 此接口不对外，因此不设默认值
 def get_device_memory_info(device):
+    import torch_npu
+
     try:
         memory_info = {
             "device": device,
@@ -64,6 +64,8 @@ def take_snapshot(device_mask=None, name="Memory Snapshot"):
 
     # Take snapshot for current device id
     try:
+        import torch_npu
+
         current_device_id = torch_npu.npu.current_device()
     except (RuntimeError, AttributeError, ImportError):
         print("Warning: Failed to get current device ID")

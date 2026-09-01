@@ -146,6 +146,7 @@ struct LiveBlockInfo
     uint64_t allocEventId;    // MALLOC事件id（与时间戳构成字典序，用于step归属推导）
     uint64_t kernelIndex;
     ShadowState shadowState;
+    bool isPinned = false;  // 锁页内存标记（HOST 池内区分 pinned / CPU tensor）
     std::string cCallStack;
     std::string pyCallStack;
 };

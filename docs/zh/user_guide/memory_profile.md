@@ -303,10 +303,10 @@ msMemScope工具可以结合mstx打点能力进行内存采集，同时msMemScop
 
 |字段|含义|
 |--|--|
-|used|内存使用量。Event Type为HAL时，为本进程HAL维度显存使用量（工具采集到的HAL申请/释放累计值）；Event Type为PTA、MindSpore、ATB或PTA_WORKSPACE时，为内存池内已分配大小；Event Type为HOST_PINNED时，为采集到的HOST内存块使用量。|
-|total|内存池总大小，仅内存池事件（Event Type为PTA、MindSpore、ATB或PTA_WORKSPACE）存在。|
-|process_used|本进程显存占用。Event Type为HAL时，为本进程在该设备上的显存占用，与npu-smi info的Process memory(MB)一致；内存池事件含义相同；Event Type为HOST_PINNED时，为本进程物理内存使用量（VmRSS）。|
-|device_used|整卡显存占用。Event Type为HAL时，为整卡显存占用，与npu-smi info的HBM-Usage(MB)一致；内存池事件含义相同；Event Type为HOST_PINNED时不输出。|
+|used|内存使用量。Event Type为HAL时，为本进程HAL维度显存使用量（工具采集到的HAL申请/释放累计值）；Event Type为PTA、MindSpore、ATB或PTA_WORKSPACE时，为内存池内已分配大小；Event Type为HOST且Attr中标记pinned:true时，为采集到的锁页内存块使用量。|
+|total|内存池总大小，内存池事件（Event Type为PTA、MindSpore、ATB或PTA_WORKSPACE）存在；Event Type为HOST且Attr中无pinned:true标记时（CPU tensor数据），表示活跃CPU tensor数据内存累计值。|
+|process_used|本进程显存占用。Event Type为HAL时，为本进程在该设备上的显存占用，与npu-smi info的Process memory(MB)一致；内存池事件含义相同；Event Type为HOST且Attr中标记pinned:true时，为本进程物理内存使用量（VmRSS）。|
+|device_used|整卡显存占用。Event Type为HAL时，为整卡显存占用，与npu-smi info的HBM-Usage(MB)一致；内存池事件含义相同；Event Type为HOST时不输出。|
 
 > [!NOTE]
 >
