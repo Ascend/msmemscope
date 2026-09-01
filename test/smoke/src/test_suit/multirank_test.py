@@ -43,18 +43,18 @@ class MultirankConfig:
             "mstx_num": 202,
             "op_threshold": {"min": 16000, "max": 16500},
             "kernel_threshold": {"min": 16000, "max": 16500},
-            "hal_threshold": {"min": 350, "max": 450},
+            "hal_threshold": {"min": 600, "max": 650},
             "pta_threshold": {"min": 9200, "max": 9300},
-            "host_threshold": {"min": 60, "max": 90}
+            "host_threshold": {"min": 1250, "max": 1350}
         },
         "default": {  # API模式
             "system_num": 12,
             "mstx_num": 202,
             "op_threshold": {"min": 16000, "max": 16500},
             "kernel_threshold": {"min": 16000, "max": 16500},
-            "hal_threshold": {"min": 200, "max": 550},
+            "hal_threshold": {"min": 600, "max": 650},
             "pta_threshold": {"min": 9200, "max": 9300},
-            "host_threshold": {"min": 60, "max": 90}
+            "host_threshold": {"min": 1250, "max": 1350}
         }
     }
     # Torch版本阈值
