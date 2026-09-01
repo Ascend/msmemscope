@@ -11,7 +11,20 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$SCRIPT_DIR/../.."  # 因为当前在 test/smoke 下，所以回退两级
 
 # ==============================
-# Step 1: Build project
+# Step 1: Install Python dependencies
+# ==============================
+REQUIREMENTS_FILE="$SCRIPT_DIR/requirements.txt"
+if [ -f "$REQUIREMENTS_FILE" ]; then
+    echo "[INFO] Installing Python dependencies from $REQUIREMENTS_FILE..."
+    if ! python -m pip install -r "$REQUIREMENTS_FILE"; then
+        echo "[WARN] Dependency install failed, continuing with existing environment..." >&2
+    fi
+else
+    echo "[WARN] requirements.txt not found: $REQUIREMENTS_FILE"
+fi
+
+# ==============================
+# Step 2: Build project
 # ==============================
 
 echo "[INFO] Building $PROJECT_NAME..."
@@ -22,7 +35,7 @@ if ! python build.py local; then
 fi
 
 # ==============================
-# Step 2: Copy Python extension
+# Step 3: Copy Python extension
 # ==============================
 SO_SRC="$PROJECT_ROOT/output/lib64/_${PROJECT_NAME}.so"
 SO_DST="$PROJECT_ROOT/python/${PROJECT_NAME}/_${PROJECT_NAME}.so"
@@ -37,7 +50,7 @@ cp "$SO_SRC" "$SO_DST"
 echo "[INFO] Copied $SO_DST"
 
 # ==============================
-# Step 3: Setup output/python symlink
+# Step 4: Setup output/python symlink
 # ==============================
 
 PYTHON_SYMLINK="$PROJECT_ROOT/output/python"
@@ -46,7 +59,7 @@ ln -s ../python "$PYTHON_SYMLINK"
 echo "[INFO] Created symlink: $PYTHON_SYMLINK -> $PROJECT_ROOT/python"
 
 # ==============================
-# Step 4: Link output into isolated smoke workspace
+# Step 5: Link output into isolated smoke workspace
 # ==============================
 SMOKE_DIR="$PROJECT_ROOT/test/smoke/$PROJECT_NAME"
 OUTPUT_LINK="$SMOKE_DIR/output"
@@ -56,7 +69,7 @@ ln -s "$PROJECT_ROOT/output" "$OUTPUT_LINK"
 echo "[INFO] Created symlink: $OUTPUT_LINK -> $PROJECT_ROOT/output"
 
 # ==============================
-# Step 5: Run smoke test in isolated workspace
+# Step 6: Run smoke test in isolated workspace
 # ==============================
 cd "$SCRIPT_DIR"
 if [ ! -f "run_st.py" ]; then

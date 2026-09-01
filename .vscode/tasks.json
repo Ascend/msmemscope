@@ -88,7 +88,7 @@
         {
             "label": "Clean: All Workspace",
             "type": "shell",
-            "command": "rm -rf build build_ut output artifacts",
+            "command": "find build -mindepth 1 -maxdepth 1 ! -name '*.sh' ! -name 'build.py' -exec rm -rf {} + ; find output -mindepth 1 ! -path 'output/bin/msmemscope' ! -path 'output/bin' -exec rm -rf {} + ; rm -rf build_ut artifacts",
             "options": {
                 "cwd": "${workspaceFolder}"
             },

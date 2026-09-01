@@ -221,7 +221,8 @@ TEST(Path, get_resolved_path_of_relative_path_expect_return_correct_path)
         path = Path("./sample-dir/../test.cpp");
         ASSERT_EQ(path.Resolved().ToString(), cwd + "/test.cpp");
         path = Path("./sample-dir/../../test.cpp");
-        ASSERT_EQ(path.Resolved().ToString(), Path(cwd).Parent().ToString() + "/test.cpp");
+        Path expected = Path(cwd).Parent() / Path("test.cpp");
+        ASSERT_EQ(path.Resolved().ToString(), expected.ToString());
     }
 }
 
