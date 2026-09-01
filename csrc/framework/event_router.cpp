@@ -90,6 +90,7 @@ static void AppendCleanUpFreeEvent(std::shared_ptr<EventBase> event, MemoryState
         if (state->events[0]->eventType == EventBaseType::MALLOC)
         {
             freeEvent->eventSubType = state->events[0]->eventSubType;
+            freeEvent->isPinned = state->events[0]->isPinned;
         }
     }
 

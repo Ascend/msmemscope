@@ -172,6 +172,12 @@ void Dump::DumpMemoryEvent(std::shared_ptr<MemoryEvent>& event, MemoryState* sta
 
     if (event->isShadowEvent)
     {
+        // 影子虚拟释放（CLEAN_UP补记）：保留 pinned:true 以区分锁页/CPU tensor，
+        // 不输出 used/process_used（无事件时刻统计语义）
+        if (event->poolType == PoolType::HOST && event->isPinned)
+        {
+            attr += "pinned:true,";
+        }
         attr += "shadow:true,";
     }
 
