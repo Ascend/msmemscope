@@ -189,6 +189,10 @@ cd ./test/smoke
 bash run_st.sh
 ```
 
+> [!NOTE]
+>
+> 使用 devcontainer 开发时，容器环境不会自动挂载NPU设备，因此ST无法执行。此时需要自行搭建可运行环境。
+
 ST用例全部通过时，显示如下。
 
 ![st_pass](./figures/st_pass.png)
