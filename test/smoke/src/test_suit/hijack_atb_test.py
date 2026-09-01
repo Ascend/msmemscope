@@ -113,7 +113,7 @@ class HijackAtbTestCase(BaseTest):
             env_path = os.getenv("ASCEND_HOME_PATH")[:-len("/ascend-toolkit/latest")]
             cann_version = "old"
         else :
-            env_path = str(Path(ascend_path_str).parent)
+            env_path = os.getenv("ASCEND_HOME_PATH")[:-len("/cann")]
             cann_version = "new"
 
         symbol_checker = SymbolChecker(env_path, cann_version)
