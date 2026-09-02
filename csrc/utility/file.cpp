@@ -93,8 +93,11 @@ bool TableExists(sqlite3* filefp, std::string tableName)
 
 FileCreateManager& FileCreateManager::GetInstance(const std::string& outputDir)
 {
-    static FileCreateManager instance(outputDir);
-    return instance;
+    // 故意不析构（immortal singleton）：进程退出时静态析构逆序会先于 LeakAnalyzer 等分析器销毁本单例，
+    // 而 ~LeakAnalyzer 仍会经 Log::Printf → CreateLogFile 访问 projectDir_，普通函数内 static 会 use-after-free
+    // （SIGSEGV / std::bad_alloc）。改用 new 泄漏规避静态析构顺序 fiasco。
+    static FileCreateManager* instance = new FileCreateManager(outputDir);
+    return *instance;
 }
 
 FileCreateManager::FileCreateManager(const std::string& outputDir)
