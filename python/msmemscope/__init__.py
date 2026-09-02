@@ -21,14 +21,10 @@ from ._msmemscope import _enable_npu_sanitizer
 from .analyzer import analyze, list_analyzers, get_analyzer_config, check_leaks, check_inefficient  # noqa: F401
 from .hijacker.hijack_manager import memscope_hijack_manager
 from .record_function import RecordFunction  # noqa: F401
-from .take_snapshot import TakeSnapshot  # noqa: F401
-from .utils import import_with_optional_deps
+from .take_snapshot import TakeSnapshot, take_snapshot  # noqa: F401
 
 tracer = _tracer
 watcher = _watcher
-
-# 指定需要的依赖包
-take_snapshot = import_with_optional_deps("take_snapshot", "take_snapshot", ["torch", "torch_npu"])
 
 
 def init_framework_hooks(framework: str, version: str, component: str, hook_type: str):
