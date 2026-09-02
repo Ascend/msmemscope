@@ -1,4 +1,4 @@
-add_library(ascend_kernel_hook SHARED runtime_hooks.cpp acl_hooks.cpp cpu_tensor_trigger.cpp)
+add_library(ascend_kernel_hook SHARED runtime_hooks.cpp acl_hooks.cpp)
 
 find_package(Python3 REQUIRED COMPONENTS Development)
 if (NOT Python3_FOUND)

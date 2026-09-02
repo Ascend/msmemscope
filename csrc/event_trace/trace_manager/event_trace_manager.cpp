@@ -368,11 +368,11 @@ void EventTraceManager::HandleWithCpuTensorCollect()
 {
     if ((status_ == EventTraceStatus::IN_TRACING) && GetConfig().collectCpu)
     {
-        Utility::MemScopePythonCallNoTorch("msmemscope.cpu_tensor_collection", "enable_cpu_tensor_collect");
+        Utility::MemScopePythonCall("msmemscope.cpu_tensor_collection", "enable_cpu_tensor_collect");
         return;
     }
 
-    Utility::MemScopePythonCallNoTorch("msmemscope.cpu_tensor_collection", "disable_cpu_tensor_collect");
+    Utility::MemScopePythonCall("msmemscope.cpu_tensor_collection", "disable_cpu_tensor_collect");
 
     return;
 }
@@ -386,9 +386,8 @@ void EventTraceManager::SetAclInitStatus(bool isInit)
     // CPU tensor collection does not depend on aclInit and must not be
     // triggered from the aclInit hook: that runs mid torch_npu device init,
     // and patching torch.Tensor there races with it (error 507033). It is
-    // enabled from SetConfig/SetTraceStatus (before device init), from
-    // on_device_ready (after aclrtSetDevice), and from the CLI early trigger
-    // thread (before torch import).
+    // enabled from SetConfig/SetTraceStatus (before device init) and from
+    // on_device_ready (after aclrtSetDevice) instead.
 }
 
 void EventTraceManager::SetDeviceReadyStatus(bool isReady)
