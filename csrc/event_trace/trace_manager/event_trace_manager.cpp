@@ -368,11 +368,11 @@ void EventTraceManager::HandleWithCpuTensorCollect()
 {
     if ((status_ == EventTraceStatus::IN_TRACING) && GetConfig().collectCpu)
     {
-        Utility::MemScopePythonCallNoTorch("msmemscope.cpu_tensor_collection", "enable_cpu_tensor_collect");
+        Utility::MemScopePythonCall("msmemscope.cpu_tensor_collection", "enable_cpu_tensor_collect");
         return;
     }
 
-    Utility::MemScopePythonCallNoTorch("msmemscope.cpu_tensor_collection", "disable_cpu_tensor_collect");
+    Utility::MemScopePythonCall("msmemscope.cpu_tensor_collection", "disable_cpu_tensor_collect");
 
     return;
 }
