@@ -3,12 +3,24 @@
 # msmemscope - MindStudio MemScope unified launcher
 #
 # Usage:
-#   source msmemscope --load-api-env    # Set env variables for Python API collection
-#   source msmemscope --unload-api-env  # Clear msmemscope env entries
-#   msmemscope [args...]                # Normal mode: launch msmemscope.bin with given arguments
+#   source msmemscope --load-api-env[=npu|host]   # Set env variables for Python API collection
+#   source msmemscope --unload-api-env            # Clear msmemscope env entries
+#   msmemscope [args...] -- <prog> [args]         # Normal mode: launch msmemscope.bin with given arguments
 #
 # The --load-api-env / --unload-api-env subcommands must be sourced so
 # environment variable changes apply to the current shell.
+#
+# --load-api-env value domain (RFC 2026-08-08, host heap leak detection):
+#   npu  (default when no value is given) — regular NPU hook chains (hal/mstx/kernel/atb)
+#   host — host memory leak hook so only (libmsmemscope_host_mem_hook.so)
+# npu and host are mutually exclusive: loading one mode removes the other
+# mode's entries from LD_PRELOAD (silently skipped when the other is not set).
+# In launch mode (a user command follows "--"), --load-api-env may be omitted:
+# the wrapper infers the preload target from --analysis (host-leaks → host,
+# anything else → npu). An explicit --load-api-env conflicting with --analysis
+# is rejected. --load-api-env[=v] itself is a wrapper-level option and is never
+# forwarded to msmemscope.bin; all other arguments (including everything after
+# "--") are passed through verbatim.
 
 REAL_PATH=$(realpath "${BASH_SOURCE[0]}")
 BIN_PATH=$(dirname "${REAL_PATH}")
@@ -46,14 +58,96 @@ MSMEMSCOPE_HOOK_SOS=(
     "libatb_abi_1_hook.so"
 )
 
+# Host memory leak hook so (RFC 2026-08-08): loaded alone, never mixed into
+# the NPU hook chain above.
+MSMEMSCOPE_HOST_HOOK_SO="libmsmemscope_host_mem_hook.so"
+
 # ---------------------------------------------------------------------------
-# msmemscope_source_detected
+# msmemscope_is_sourced
 #
 # Returns 0 (true) when the script is being sourced, non-zero otherwise.
 # Must be called before any shift / argument consumption.
 # ---------------------------------------------------------------------------
 msmemscope_is_sourced() {
     [[ "${BASH_SOURCE[0]}" != "${0}" ]]
+}
+
+# ---------------------------------------------------------------------------
+# msmemscope_prescan_args
+#
+# Argument pre-scan pass (RFC 2026-08-08 §3.4.2.1 implementation constraint):
+# wrapper-level options must be recognised in a dedicated pass BEFORE any
+# argument consumption. The main flow later only filters out known
+# wrapper-level options; it never shifts, deletes or rewrites positional
+# arguments, so the user command after "--" is forwarded verbatim.
+#
+# Fills globals:
+#   PRESCAN_HAS_SEP   "true" when "--" is present (launch mode with a user command)
+#   PRESCAN_API_ENV   explicit --load-api-env[=v] value ("npu"|"host"); empty when absent
+#   PRESCAN_API_ARG   "true" when --load-api-env was given
+#   PRESCAN_ANALYSIS  --analysis value (raw string); empty when absent
+# ---------------------------------------------------------------------------
+msmemscope_prescan_args() {
+    PRESCAN_HAS_SEP=false
+    PRESCAN_API_ENV=""
+    PRESCAN_API_ARG=false
+    PRESCAN_ANALYSIS=""
+
+    local args=("$@")
+    local i arg next
+    for ((i = 0; i < ${#args[@]}; i++)); do
+        arg="${args[$i]}"
+        if [[ "${arg}" == "--" ]]; then
+            # Everything after "--" belongs to the user command — stop scanning.
+            PRESCAN_HAS_SEP=true
+            break
+        fi
+        case "${arg}" in
+            --load-api-env)
+                PRESCAN_API_ARG=true
+                PRESCAN_API_ENV="npu"  # no value equals npu (backward compatible)
+                ;;
+            --load-api-env=*)
+                PRESCAN_API_ARG=true
+                PRESCAN_API_ENV="${arg#--load-api-env=}"
+                ;;
+            --analysis)
+                next=$((i + 1))
+                if [[ ${next} -lt ${#args[@]} ]]; then
+                    PRESCAN_ANALYSIS="${args[$next]}"
+                fi
+                ;;
+            --analysis=*)
+                PRESCAN_ANALYSIS="${arg#--analysis=}"
+                ;;
+        esac
+    done
+}
+
+# ---------------------------------------------------------------------------
+# msmemscope_analysis_flags
+#
+# Splits PRESCAN_ANALYSIS (comma or Chinese comma separated) and fills globals:
+#   PRESCAN_HAS_HOST_LEAKS  "true" when the list contains host-leaks
+#   PRESCAN_HAS_NPU_ANALYSIS "true" when the list contains leaks/decompose/inefficient/oom
+# ---------------------------------------------------------------------------
+msmemscope_analysis_flags() {
+    PRESCAN_HAS_HOST_LEAKS=false
+    PRESCAN_HAS_NPU_ANALYSIS=false
+    [[ -z "${PRESCAN_ANALYSIS}" ]] && return 0
+
+    local alist="${PRESCAN_ANALYSIS//，/,}"
+    local token
+    for token in ${alist//,/ }; do
+        case "${token}" in
+            host-leaks)
+                PRESCAN_HAS_HOST_LEAKS=true
+                ;;
+            leaks|decompose|inefficient|oom|oom:*)
+                PRESCAN_HAS_NPU_ANALYSIS=true
+                ;;
+        esac
+    done
 }
 
 # ---------------------------------------------------------------------------
@@ -71,14 +165,14 @@ msmemscope_validate_lib_path() {
     fi
 
     local all_missing=true
+    local so
     for so in "${MSMEMSCOPE_HOOK_SOS[@]}"; do
         if [[ -f "${LIB_PATH}/${so}" ]]; then
             all_missing=false
             break
         fi
     done
-
-    if $all_missing; then
+    if [[ "${all_missing}" == "true" && ! -f "${LIB_PATH}/${MSMEMSCOPE_HOST_HOOK_SO}" ]]; then
         echo "[msmemscope] WARNING: No hook .so files found in ${LIB_PATH}" >&2
         echo "[msmemscope] LD_PRELOAD will not be set. Please verify your installation." >&2
         return 1
@@ -97,6 +191,7 @@ msmemscope_path_contains() {
     local needle="$1"
     local haystack="$2"
     local saved_ifs="${IFS}"
+    local entry
     IFS=':'
     for entry in ${haystack}; do
         if [[ "${entry}" == "${needle}" ]]; then
@@ -109,18 +204,73 @@ msmemscope_path_contains() {
 }
 
 # ---------------------------------------------------------------------------
-# msmemscope_load_api_env
+# msmemscope_remove_conflicting_preload <mode>
+#
+# npu/host mutual exclusion (RFC 2026-08-08 §3.4.2.1): loading one mode
+# removes the other mode's entries from LD_PRELOAD. Entries not under
+# LIB_PATH (other tools) are untouched. Silently does nothing when no
+# conflicting entry is present.
+# ---------------------------------------------------------------------------
+msmemscope_remove_conflicting_preload() {
+    local mode="$1"
+    [[ -z "${LD_PRELOAD}" ]] && return 0
+
+    local new_preload=""
+    local removed=0
+    local entry drop
+    local saved_ifs="${IFS}"
+    IFS=':'
+    for entry in ${LD_PRELOAD}; do
+        drop=false
+        if [[ "${entry}" == "${LIB_PATH}/"* ]]; then
+            if [[ "${mode}" == "host" && "${entry}" != "${LIB_PATH}/${MSMEMSCOPE_HOST_HOOK_SO}" ]]; then
+                drop=true  # loading host: drop NPU hook chain entries
+            elif [[ "${mode}" == "npu" && "${entry}" == "${LIB_PATH}/${MSMEMSCOPE_HOST_HOOK_SO}" ]]; then
+                drop=true  # loading npu: drop the host hook so
+            fi
+        fi
+        if [[ "${drop}" == "true" ]]; then
+            removed=$((removed + 1))
+        elif [[ -z "${new_preload}" ]]; then
+            new_preload="${entry}"
+        else
+            new_preload="${new_preload}:${entry}"
+        fi
+    done
+    IFS="${saved_ifs}"
+
+    if [[ ${removed} -gt 0 ]]; then
+        if [[ -z "${new_preload}" ]]; then
+            unset LD_PRELOAD
+        else
+            export LD_PRELOAD="${new_preload}"
+        fi
+        echo "[msmemscope] LD_PRELOAD removed ${removed} conflicting entry/entries (${mode} mode)"
+    fi
+}
+
+# ---------------------------------------------------------------------------
+# msmemscope_load_api_env <mode>
 #
 # Idempotent: running multiple times does not duplicate entries.
 # Must be called inside a sourced script context.
+# mode: npu (default) loads the NPU hook chain; host loads only the host
+# memory leak hook so (RFC 2026-08-08).
 # ---------------------------------------------------------------------------
 msmemscope_load_api_env() {
+    local api_mode="${1:-npu}"
+
     # Guard: must be sourced
     if ! msmemscope_is_sourced; then
         echo "[msmemscope] ERROR: This command must be sourced so that environment" >&2
         echo "[msmemscope]        variable changes apply to the current shell." >&2
         echo "[msmemscope]" >&2
-        echo "[msmemscope] Usage:  source msmemscope --load-api-env" >&2
+        echo "[msmemscope] Usage:  source msmemscope --load-api-env[=npu|host]" >&2
+        return 1
+    fi
+
+    if [[ "${api_mode}" != "npu" && "${api_mode}" != "host" ]]; then
+        echo "[msmemscope] ERROR: invalid --load-api-env value '${api_mode}' (expected: npu|host)." >&2
         return 1
     fi
 
@@ -143,7 +293,6 @@ msmemscope_load_api_env() {
         echo "[msmemscope] LD_LIBRARY_PATH already contains ${LIB_PATH} -- skipped"
     fi
 
-    # -- LD_PRELOAD -------------------------------------------------------
     if ! msmemscope_validate_lib_path; then
         # lib64 missing or empty -- still set LD_LIBRARY_PATH (done above) but
         # skip LD_PRELOAD.
@@ -153,9 +302,12 @@ msmemscope_load_api_env() {
         return 0
     fi
 
-    local preload_added=0
-    for so in "${MSMEMSCOPE_HOOK_SOS[@]}"; do
-        local so_path="${LIB_PATH}/${so}"
+    # npu/host mutual exclusion: drop the other mode's entries before loading.
+    msmemscope_remove_conflicting_preload "${api_mode}"
+
+    if [[ "${api_mode}" == "host" ]]; then
+        # -- host mode: only the host hook so --------------------------------
+        local so_path="${LIB_PATH}/${MSMEMSCOPE_HOST_HOOK_SO}"
         if [[ -f "${so_path}" ]]; then
             if ! msmemscope_path_contains "${so_path}" "${LD_PRELOAD}"; then
                 if [[ -z "${LD_PRELOAD}" ]]; then
@@ -164,20 +316,42 @@ msmemscope_load_api_env() {
                     export LD_PRELOAD="${so_path}:${LD_PRELOAD}"
                 fi
                 echo "[msmemscope] LD_PRELOAD   + ${so_path}"
-                preload_added=$((preload_added + 1))
                 changed=true
             else
                 echo "[msmemscope] LD_PRELOAD   already contains ${so_path} -- skipped"
             fi
+            export MSMEMSCOPE_API_ENV="host"
         else
             echo "[msmemscope] LD_PRELOAD   WARNING: ${so_path} not found -- skipped" >&2
         fi
-    done
+    else
+        # -- npu mode: the regular hook chain (existing behaviour) ------------
+        local so so_path
+        for so in "${MSMEMSCOPE_HOOK_SOS[@]}"; do
+            so_path="${LIB_PATH}/${so}"
+            if [[ -f "${so_path}" ]]; then
+                if ! msmemscope_path_contains "${so_path}" "${LD_PRELOAD}"; then
+                    if [[ -z "${LD_PRELOAD}" ]]; then
+                        export LD_PRELOAD="${so_path}"
+                    else
+                        export LD_PRELOAD="${so_path}:${LD_PRELOAD}"
+                    fi
+                    echo "[msmemscope] LD_PRELOAD   + ${so_path}"
+                    changed=true
+                else
+                    echo "[msmemscope] LD_PRELOAD   already contains ${so_path} -- skipped"
+                fi
+            else
+                echo "[msmemscope] LD_PRELOAD   WARNING: ${so_path} not found -- skipped" >&2
+            fi
+        done
+        export MSMEMSCOPE_API_ENV="npu"
+    fi
 
     if ! $changed; then
         echo "[msmemscope] Environment already set up -- nothing to do."
     else
-        echo "[msmemscope] Environment setup completed (LD_PRELOAD: ${preload_added} .so(s) added)."
+        echo "[msmemscope] Environment setup completed (${api_mode} mode)."
     fi
 
     # Export helper variable so that msmemscope_unload_api_env can identify which
@@ -218,6 +392,7 @@ msmemscope_unload_api_env() {
         local new_ld_library_path=""
         local removed_lib=0
         local saved_ifs="${IFS}"
+        local entry
         IFS=':'
         for entry in ${LD_LIBRARY_PATH}; do
             if [[ "${entry}" == "${filter_path}" ]]; then
@@ -249,6 +424,7 @@ msmemscope_unload_api_env() {
         local new_ld_preload=""
         local removed_preload=0
         local saved_ifs="${IFS}"
+        local entry
         IFS=':'
         for entry in ${LD_PRELOAD}; do
             # Remove entries whose path starts with the msmemscope lib64
@@ -277,8 +453,9 @@ msmemscope_unload_api_env() {
         fi
     fi
 
-    # Clean up tracking variable
+    # Clean up tracking variables (unload clears both modes, RFC §3.4.2.1)
     unset MSMEMSCOPE_LIB_PATH 2>/dev/null || true
+    unset MSMEMSCOPE_API_ENV 2>/dev/null || true
 
     if ! $changed; then
         echo "[msmemscope] No msmemscope entries found in LD_PRELOAD or LD_LIBRARY_PATH -- nothing to unset."
@@ -288,22 +465,105 @@ msmemscope_unload_api_env() {
 }
 
 # ---------------------------------------------------------------------------
+# msmemscope_launch [args...]
+#
+# Launch mode: run msmemscope.bin with the given arguments. Wrapper-level
+# options (--load-api-env[=v]) are consumed here and never forwarded; every
+# other argument — including "--" and the whole user command — is passed
+# through verbatim. Sets MSMEMSCOPE_API_ENV (npu|host) for
+# Process::SetPreloadEnv to branch on (RFC 2026-08-08 §3.4.2.1).
+# ---------------------------------------------------------------------------
+msmemscope_launch() {
+    local mode="${PRESCAN_API_ENV}"
+    local explicit="${PRESCAN_API_ARG}"
+
+    # Validate the explicit --load-api-env value (when given)
+    if [[ "${explicit}" == "true" && "${mode}" != "npu" && "${mode}" != "host" ]]; then
+        echo "[msmemscope] ERROR: invalid --load-api-env value '${mode}' (expected: npu|host)." >&2
+        exit 1
+    fi
+
+    # analysis mutual exclusion / wrapper inference validation
+    msmemscope_analysis_flags
+    if [[ "${PRESCAN_HAS_HOST_LEAKS}" == "true" && "${PRESCAN_HAS_NPU_ANALYSIS}" == "true" ]]; then
+        echo "[msmemscope] ERROR: 'host-leaks' is mutually exclusive with" >&2
+        echo "[msmemscope]        leaks/decompose/inefficient/oom (host hook so cannot coexist" >&2
+        echo "[msmemscope]        with npu hook chains in the same target process)." >&2
+        exit 1
+    fi
+    if [[ "${explicit}" == "true" ]]; then
+        if [[ "${mode}" == "host" && -n "${PRESCAN_ANALYSIS}" && "${PRESCAN_HAS_HOST_LEAKS}" == "false" ]]; then
+            echo "[msmemscope] ERROR: --load-api-env=host conflicts with --analysis (host-leaks not set)." >&2
+            exit 1
+        fi
+        if [[ "${mode}" == "npu" && "${PRESCAN_HAS_HOST_LEAKS}" == "true" ]]; then
+            echo "[msmemscope] ERROR: --load-api-env=npu conflicts with --analysis=host-leaks." >&2
+            exit 1
+        fi
+    else
+        # Wrapper inference: --load-api-env may be omitted in launch mode
+        if [[ "${PRESCAN_HAS_HOST_LEAKS}" == "true" ]]; then
+            mode="host"
+        else
+            mode="npu"
+        fi
+    fi
+
+    export MSMEMSCOPE_API_ENV="${mode}"
+
+    # Build the forwarded argument list: filter out wrapper-level
+    # --load-api-env[=v] only; never touch positional/user arguments.
+    local fwd=()
+    local args=("$@")
+    local i arg
+    for ((i = 0; i < ${#args[@]}; i++)); do
+        arg="${args[$i]}"
+        if [[ "${arg}" == "--" ]]; then
+            # Everything from "--" onwards is forwarded verbatim.
+            fwd+=("${args[@]:$i}")
+            break
+        fi
+        case "${arg}" in
+            --load-api-env|--load-api-env=*)
+                # wrapper-level option: consumed, not forwarded
+                ;;
+            *)
+                fwd+=("${arg}")
+                ;;
+        esac
+    done
+
+    # Normal mode: set LD_LIBRARY_PATH so that msmemscope.bin can find its own
+    # .so files at runtime, then forward all arguments.
+    export LD_LIBRARY_PATH="${LIB_PATH}:${LD_LIBRARY_PATH}"
+    export LD_PRELOAD_PATH="${LIB_PATH}"
+    "${BIN_PATH}/msmemscope.bin" "${fwd[@]}"
+}
+
+# ---------------------------------------------------------------------------
 # Main entry point
 # ---------------------------------------------------------------------------
 
+# Pre-scan pass BEFORE any dispatch/consumption (RFC 2026-08-08 §3.4.2.1
+# implementation constraint: optional-value parsing must not consume or
+# rewrite positional arguments).
+msmemscope_prescan_args "$@"
+
 case "${1:-}" in
-    --load-api-env)
-        msmemscope_load_api_env
+    --load-api-env|--load-api-env=*)
+        if [[ "${PRESCAN_HAS_SEP}" == "true" ]]; then
+            # A user command follows "--": launch mode with an explicit api env.
+            msmemscope_launch "$@"
+        else
+            # Session mode: set env for the current shell (must be sourced).
+            msmemscope_load_api_env "${PRESCAN_API_ENV}"
+        fi
         ;;
     --unload-api-env)
         msmemscope_unload_api_env
         ;;
     *)
-        # Normal mode: existing behaviour unchanged.
-        # Set LD_LIBRARY_PATH so that msmemscope.bin can find its own .so
-        # files at runtime, then forward all arguments.
-        export LD_LIBRARY_PATH="${LIB_PATH}:${LD_LIBRARY_PATH}"
-        export LD_PRELOAD_PATH="${LIB_PATH}"
-        "${BIN_PATH}/msmemscope.bin" "$@"
+        # Normal mode: existing behaviour (with wrapper inference added).
+        msmemscope_launch "$@"
         ;;
 esac
