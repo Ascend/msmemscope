@@ -17,7 +17,9 @@
 
 #include <Python.h>
 
+#include <cstdlib>
 #include <cstring>
+#include <fstream>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -29,12 +31,79 @@
 #include "oom_handler.h"
 #include "op_handler.h"
 #include "recordfuncobject.h"
+#include "string_validator.h"
 #include "trace_manager/event_trace_manager.h"
 #include "tracerobject.h"
 #include "watcherobject.h"
 
 namespace MemScope
 {
+
+namespace
+{
+// host内存泄漏检测:python config()入口的preload状态校验。
+// /proc/self/maps为ground truth,MSMEMSCOPE_API_ENV标记(wrapper source时导出)作旁证,
+// 两者均未检测到才报错
+constexpr const char* HOST_HOOK_SO_NAME = "libmsmemscope_host_mem_hook.so";
+const char* const NPU_HOOK_SO_NAMES[] = {"libleaks_ascend_hal_hook.so", "libascend_mstx_hook.so",
+                                         "libascend_kernel_hook.so", "libatb_abi_0_hook.so", "libatb_abi_1_hook.so"};
+
+bool IsSoLoaded(const char* soName)
+{
+    std::ifstream mapsFile("/proc/self/maps");
+    if (!mapsFile.is_open())
+    {
+        return false;
+    }
+    std::string line;
+    while (std::getline(mapsFile, line))
+    {
+        if (line.find(soName) != std::string::npos)
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool IsNpuHookLoaded()
+{
+    for (const char* soName : NPU_HOOK_SO_NAMES)
+    {
+        if (IsSoLoaded(soName))
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool IsApiEnvMode(const char* mode)
+{
+    const char* env = std::getenv("MSMEMSCOPE_API_ENV");
+    return env != nullptr && std::string(env) == mode;
+}
+
+// 拆解analysis值中的token(中英文逗号兼容,与ParseAnalysis一致),识别host-leaks与
+// npu分析项(leaks/decompose/inefficient/oom前缀)两类标记
+void SplitAnalysisTokens(const std::string& analysisValue, bool& hasHostLeaks, bool& hasNpuAnalysis)
+{
+    hasHostLeaks = false;
+    hasNpuAnalysis = false;
+    std::vector<std::string> tokens = Utility::SplitString(analysisValue, "，,");
+    for (const std::string& token : tokens)
+    {
+        if (token == "host-leaks")
+        {
+            hasHostLeaks = true;
+        }
+        else if (token.rfind("oom", 0) == 0 || token == "leaks" || token == "decompose" || token == "inefficient")
+        {
+            hasNpuAnalysis = true;
+        }
+    }
+}
+}  // namespace
 
 PyDoc_STRVAR(MsmemscopeCModuleDoc,
              "The part of the module msmemscope that is implemented in CXX.\n\
@@ -79,13 +148,25 @@ PyDoc_STRVAR(ConfigDoc,
              "    - level: Data trace level, op | kernel\n"
              "    - events: Trace event types, alloc | free | launch | access | traceback | none\n"
              "    - call_stack: C/Python call stack, e.g. c:10,python:5\n"
-             "    - analysis: Analysis methods, leaks | decompose | inefficient | oom[:K] | none\n"
+             "    - analysis: Analysis methods, leaks | decompose | inefficient | oom[:K] | "
+             "host-leaks | none (comma-separated)\n"
+             "      host-leaks is mutually exclusive with leaks/decompose/inefficient/oom and "
+             "requires\n"
+             "      'source msmemscope --load-api-env=host' beforehand\n"
+             "    - host_leak_mode: Host leak report mode, event (default) | summary "
+             "(with host-leaks)\n"
+             "    - block_size_threshold: Only record host allocations with size >= N bytes "
+             "(with host-leaks, default 0 = collect all)\n"
+             "    - sample_rate: Explicit sampling, record 1/N of host allocations "
+             "(with host-leaks, default 1 = no sampling)\n"
              "    - watch: Watch mode, start[:outid],end[,full-content]\n"
              "    - format: Output file format, csv | db\n"
              "    - output_path: Output directory [default: ./memscopeDumpResults]\n\n"
              "Examples:\n"
              "    msmemscope.config(call_stack=\"c:10,python:5\", level=\"op\", format=\"db\", "
-             "output_path=\"./output\")");
+             "output_path=\"./output\")\n"
+             "    msmemscope.config(analysis=\"host-leaks\", host_leak_mode=\"summary\", "
+             "block_size_threshold=\"1024\")");
 static PyObject* MsmemscopeConfig(PyObject* self, PyObject* args, PyObject* kwargs)
 {
     if (PyTuple_Size(args) > 0)
@@ -120,6 +201,35 @@ static PyObject* MsmemscopeConfig(PyObject* self, PyObject* args, PyObject* kwar
             return nullptr;
         }
 
+        // analysis等参数支持list形式,逐元素逗号拼接后
+        // 走与字符串形式完全相同的解析路径
+        if (PyList_Check(value))
+        {
+            std::string joined;
+            const Py_ssize_t itemCount = PyList_Size(value);
+            for (Py_ssize_t itemPos = 0; itemPos < itemCount; itemPos++)
+            {
+                PyObject* item = PyList_GetItem(value, itemPos);  // borrowed reference
+                if (!PyUnicode_Check(item))
+                {
+                    PyErr_Format(PyExc_TypeError, "List items for argument '%s' must be strings", key_str);
+                    return nullptr;
+                }
+                const char* item_str = PyUnicode_AsUTF8(item);
+                if (!item_str)
+                {
+                    return nullptr;
+                }
+                if (!joined.empty())
+                {
+                    joined += ",";
+                }
+                joined += item_str;
+            }
+            cpp_config.emplace(key_str, joined);
+            continue;
+        }
+
         // 检查值是否为字符串类型（必须加引号）
         if (!PyUnicode_Check(value))
         {
@@ -134,6 +244,33 @@ static PyObject* MsmemscopeConfig(PyObject* self, PyObject* args, PyObject* kwar
         }
 
         cpp_config.emplace(key_str, value_str);
+    }
+
+    // preload状态校验:analysis请求与当前进程preload状态
+    // 必须一致,不一致报ValueError并提示需先source对应模式。校验放在SetConfig之前:
+    // SetConfig经UpdateAnalysisType→set_enabled开窗,前置可保证校验自身的内存分配
+    // 发生在钩子使能前,不被host钩子记账
+    auto analysisItr = cpp_config.find("analysis");
+    if (analysisItr != cpp_config.end())
+    {
+        bool hasHostLeaks = false;
+        bool hasNpuAnalysis = false;
+        SplitAnalysisTokens(analysisItr->second, hasHostLeaks, hasNpuAnalysis);
+        if (hasHostLeaks && !IsSoLoaded(HOST_HOOK_SO_NAME) && !IsApiEnvMode("host"))
+        {
+            PyErr_SetString(PyExc_ValueError,
+                            "analysis contains 'host-leaks' but the host memory hook is not preloaded; "
+                            "run 'source msmemscope --load-api-env=host' in this shell before starting python");
+            return nullptr;
+        }
+        if (hasNpuAnalysis && !IsNpuHookLoaded() && !IsApiEnvMode("npu"))
+        {
+            PyErr_SetString(PyExc_ValueError,
+                            "analysis contains npu analysis methods (leaks/decompose/inefficient/oom) but "
+                            "no npu hook is preloaded; run 'source msmemscope --load-api-env' in this shell "
+                            "before starting python");
+            return nullptr;
+        }
     }
 
     bool ret = ConfigManager::Instance().SetConfig(cpp_config);
