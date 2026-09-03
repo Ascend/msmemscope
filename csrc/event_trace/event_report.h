@@ -185,7 +185,11 @@ class EventReport
     // 已分配的HAL块地址 → 分配时device映射：FREE事件据此过滤未注册地址，
     // 并回填device（分配时语义，与MALLOC事件flag解析同源），保证FREE事件能按key(pid, device, addr)定位
     std::unordered_map<uint64_t, int32_t> halPtrs_;
-    std::unordered_set<uint64_t> hostPtrs_;  // Cross-channel active HOST address book (first-come-first-served)
+    // 跨通道存活HOST地址簿(先到先得): addr→登记通道(取值为HOST_PTR_FROM_*常量,
+    // 定义于event_report.cpp: 0=HAL锁页内存 1=cpu-tensor采集)。
+    // alloc侧已被任一通道占用即拒绝;free侧仅登记通道可归还——防他通道误擦致
+    // 占有方后续free被拒(块状态永久悬挂/假泄漏)
+    std::unordered_map<uint64_t, uint8_t> hostPtrs_;
     std::atomic<bool> destroyed_{false};
 
     // host堆钩子svc表(bind返回,进程生命周期内不变;null=钩子未装配)与窗口stop闩锁

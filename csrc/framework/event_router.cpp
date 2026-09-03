@@ -49,7 +49,7 @@ void EventRouter::Route(std::shared_ptr<EventBase> event) { EventHandler(event);
 // 影子FREE事件：按当前影子状态迁移生命周期
 static void HandleShadowEvent(std::shared_ptr<EventBase> event, MemoryState* state)
 {
-    if (event->eventType != EventBaseType::FREE || state == nullptr)
+    if (!IsFreeEventType(event->eventType) || state == nullptr)
     {
         return;
     }
@@ -87,7 +87,7 @@ static void AppendCleanUpFreeEvent(std::shared_ptr<EventBase> event, MemoryState
     if (!state->events.empty())
     {
         freeEvent->device = state->events[0]->device;
-        if (state->events[0]->eventType == EventBaseType::MALLOC)
+        if (IsAllocEventType(state->events[0]->eventType))
         {
             freeEvent->eventSubType = state->events[0]->eventSubType;
             freeEvent->isPinned = state->events[0]->isPinned;
@@ -231,7 +231,7 @@ void DispatchToAnalyzers(std::shared_ptr<EventBase> event, MemoryState* state)
 void CleanupMemoryState(std::shared_ptr<EventBase> event)
 {
     // 内存块生命周期结束，删除相关缓存数据
-    if (event->eventType == EventBaseType::FREE || event->eventType == EventBaseType::CLEAN_UP)
+    if (IsFreeEventType(event->eventType) || event->eventType == EventBaseType::CLEAN_UP)
     {
         // 影子事件的状态生命周期已在UpdateMemoryState中处理完毕，此处跳过
         if (auto memEvent = std::dynamic_pointer_cast<MemoryEvent>(event))
