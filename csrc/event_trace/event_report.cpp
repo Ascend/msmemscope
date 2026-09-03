@@ -31,6 +31,7 @@
 #include "describe_trace.h"
 #include "event_dispatcher.h"
 #include "health_analyzer.h"
+#include "host_leak_analyzer.h"
 #include "inefficient_analyzer.h"
 #include "json_manager.h"
 #include "kernel_hooks/runtime_prof_api.h"
@@ -543,6 +544,10 @@ EventReport::EventReport(MemScopeCommType type)
     {
         InefficientAnalyzer::GetInstance();
     }
+    if (analysisType.checkBit(static_cast<size_t>(AnalysisType::HOST_LEAK_ANALYSIS)))
+    {
+        HostLeakAnalyzer::GetInstance();
+    }
     Dump::GetInstance();
 
     // 注册通过EventDispatcher订阅的分析器（替代Process::SendEvent中的switch-case分发）
@@ -589,6 +594,17 @@ void EventReport::UpdateAnalysisType()
     {
         InefficientAnalyzer::GetInstance().UnSubscribe();
     }
+
+    if (analysisType.checkBit(static_cast<size_t>(AnalysisType::HOST_LEAK_ANALYSIS)))
+    {
+        HostLeakAnalyzer::GetInstance().Subscribe();
+    }
+    // 移除host-leaks时不再UnSubscribe:关窗(set_enabled(0))由钩子上报线程异步
+    // 派发STAGE_END/栈文本,若在此先退订,END与栈串派发到空订阅被整体丢弃——
+    // 分析器窗口残留"孤儿"(open恒true,endTs不落),退出时由~HostLeakAnalyzer兜底
+    // 出"Data integrity: unknown (process exit path)"+全栈unresolved的报告。
+    // 窗口关闭后分析器无开窗即忽略全部事件(HandleHost*入口的open检查),残留订阅
+    // 无副作用;重新加入host-leaks时Subscribe幂等,退订由析构(UnSubscribe)完成
 
     // host-leak窗口跟随analysis位迁移(移除host-leaks即闭窗,输出报告)
     UpdateHostMemWindow();
