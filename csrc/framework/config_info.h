@@ -81,6 +81,16 @@ enum class AnalysisType : uint8_t
     DECOMPOSE_ANALYSIS = 1,
     INEFFICIENCY_ANALYSIS = 2,
     OOM_ANALYSIS = 3,
+    // host内存泄漏检测:与leaks/decompose/inefficient/oom互斥
+    // (host钩子so与显存采集hook链不可共存于同一目标进程,CLI/python侧校验)
+    HOST_LEAK_ANALYSIS = 4,
+};
+
+// host泄漏上报模式:summary=仅按栈聚合报告(默认,分析器侧后处理);event=逐块事件+按栈聚合报告
+enum class HostLeakMode : uint8_t
+{
+    EVENT = 0,
+    SUMMARY,
 };
 
 enum class LogLv : uint8_t
@@ -130,6 +140,17 @@ struct Config
     uint8_t dumpEventType;
     uint8_t analysisType;
     uint16_t oomTopK = 10;
+    // host内存泄漏检测:上报模式(HostLeakMode)与块大小阈值(只记录size≥N的分配,默认0=全部)。
+    // 诚实性契约(见docs/rfc/2026-08-29重构):默认完整跟踪——块阈值0、采样率1,
+    // 显式配置才引入过滤/采样并整窗标注(报告truncated/sampled字段)。可用
+    // --block-size-threshold/--sample-rate覆盖
+    uint8_t hostLeakMode = static_cast<uint8_t>(HostLeakMode::SUMMARY);
+    uint64_t blockSizeThreshold = 0;
+    // 显式采样率倒数(2的幂,钩子开窗时归一化):每1/N次分配做一次记账(块表插入+
+    // 栈计数),被跳过的分配对钩子完全不可见(无块表条目、无计数),报告标注
+    // sampled=1/N的采样视图。默认1=不采样(全量),与块阈值同为显式降载手段;
+    // 账本始终为采样视图下的精确值,不做逐块丢包
+    uint32_t sampleRate = 1;
     uint8_t logLevel;
     uint8_t collectMode;
     char outputDir[PATH_MAX];

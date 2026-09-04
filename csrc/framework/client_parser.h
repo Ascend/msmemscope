@@ -20,17 +20,20 @@
 
 #include "config_info.h"
 
-namespace MemScope {
+namespace MemScope
+{
 constexpr uint32_t PATHSIZE = 2;
 constexpr uint32_t DEPTHCOUNT = 2;
 
 // 用于解析用户命令行
-class ClientParser {
-public:
+class ClientParser
+{
+   public:
     ClientParser() = default;
     void Interpretor(int32_t argc, char **argv);
     void InitialConfig(Config &config);
-private:
+
+   private:
     UserCommand Parse(int32_t argc, char **argv);
 };
 
@@ -43,9 +46,14 @@ void ParseWatchConfig(const std::string param, Config &config, bool &printHelpIn
 void ParseSelectSteps(const std::string &param, Config &config, bool &printHelpInfo);
 void ParseDataFormat(const std::string &param, Config &config, bool &printHelpInfo);
 void ParseCollectMode(const std::string &param, Config &config, bool &printHelpInfo);
+// host泄漏检测参数:CLI --host-leak-mode/--block-size-threshold/--sample-rate
+// 与python config键host_leak_mode/block_size_threshold/sample_rate共用)
+void ParseHostLeakMode(const std::string &param, Config &config, bool &printHelpInfo);
+void ParseBlockSizeThreshold(const std::string &param, Config &config, bool &printHelpInfo);
+void ParseSampleRate(const std::string &param, Config &config, bool &printHelpInfo);
 void ParseOutputPath(const std::string param, Config &config, bool &printHelpInfo);
 void SetEventDefaultConfig(Config &config);
 void SetAnalysisDefaultConfig(Config &config);
 void SetEffectiveConfig(Config &config);
-}
+}  // namespace MemScope
 #endif

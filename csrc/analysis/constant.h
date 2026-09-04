@@ -166,6 +166,8 @@ const std::unordered_map<EventSubType, std::string> EVENT_SUB_TYPE_MAP = {
     {EventSubType::OOM_TRIGGER, "OOM_TRIGGER"},
     {EventSubType::OOM_RECENT_ALLOC, "OOM_RECENT_ALLOC"},
     {EventSubType::OOM_TOP_ALLOC, "OOM_TOP_ALLOC"},
+    {EventSubType::HOST_LEAK_STAGE_START, "HOST_LEAK_STAGE_START"},
+    {EventSubType::HOST_LEAK_STAGE_END, "HOST_LEAK_STAGE_END"},
 };
 
 const std::vector<std::pair<std::string, std::string>> DUMP_RECORD_TABLE_SQL = {{"ID", "INTEGER"},

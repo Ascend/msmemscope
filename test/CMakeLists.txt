@@ -27,6 +27,10 @@ file(GLOB_RECURSE TEST_ORIGINAL_SOURCE ../csrc/framework/*.cpp
                                        ../csrc/utility/*.cpp
                                        ../platform/securec/src/*.c)
 list(FILTER TEST_ORIGINAL_SOURCE EXCLUDE REGEX ".*\/atb_hooks\/.*")
+# 测试工程红线:钩子源文件禁止glob进测试二进制——否则钩子的malloc族
+# 符号在测试进程自身内生效,gtest的每次分配都过钩子、real_malloc解析指向测试二进制自身。
+# 钩子so测试(test/event_trace/test_host_mem_hook.cpp)经独立子进程LD_PRELOAD驱动
+list(FILTER TEST_ORIGINAL_SOURCE EXCLUDE REGEX ".*\/host_mem_hooks\/.*")
 
 list(SORT TEST_ORIGINAL_SOURCE)
 file(GLOB_RECURSE TEST_SOURCE ./test.cpp)

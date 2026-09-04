@@ -67,6 +67,11 @@ enum class OptVal : int32_t
     INPUT_ALIAS,
     OUTPUT_ALIAS,
     DATA_FORMAT_ALIAS,
+    // host内存泄漏检测:上报模式与通用采集过滤阈值
+    HOST_LEAK_MODE,
+    BLOCK_SIZE_THRESHOLD,
+    // 显式采样率倒数(1=不采样)
+    SAMPLE_RATE,
 };
 constexpr uint16_t INPUT_STR_MAX_LEN = 4096;
 
@@ -79,69 +84,76 @@ void ShowHelpInfo()
 {
     std::cout << "Description:" << std::endl;
     ShowDescription();
-    std::cout << std::endl
-              << "Usage:" << std::endl
-              << "  msmemscope [options] -- <prog> [args]" << std::endl
-              << "  source msmemscope --load-api-env" << std::endl
-              << "  source msmemscope --unload-api-env" << std::endl
-              << std::endl
-              << "Environment setup (must be sourced):" << std::endl
-              << "      --load-api-env            Set LD_PRELOAD and LD_LIBRARY_PATH for Python API usage" << std::endl
-              << "      --unload-api-env          Clear msmemscope entries from LD_PRELOAD and LD_LIBRARY_PATH"
-              << std::endl
-              << std::endl
-              << "General options:" << std::endl
-              << "  -h, --help                    Show this help message" << std::endl
-              << "  -V, --version                 Show version information" << std::endl
-              << "  -v, --verbose                 Equivalent to --log-level=debug" << std::endl
-              << "  -q, --quiet                   Equivalent to --log-level=error" << std::endl
-              << "      --debug                   Equivalent to --log-level=debug" << std::endl
-              << std::endl
-              << "Collection options:" << std::endl
-              << "      --level <LEVEL>           Data trace level: op | kernel [default: op]" << std::endl
-              << "      --events <EVENT>          Trace event types: alloc | free | launch | access | traceback | none"
-              << std::endl
-              << "                                (comma-separated, default: alloc,free,launch; none = no events)"
-              << std::endl
-              << "      --steps <STEP>            Steps to collect memory info (comma-separated, max 5)" << std::endl
-              << "      --call-stack <TYPE>[:<DEPTH>]  Enable C/Python call stack (c[:depth], python[:depth],"
-              << std::endl
-              << "                                comma-separated, default depth: 50)" << std::endl
-              << "      --collect-mode <MODE>     Collect mode: immediate | deferred [default: immediate]" << std::endl
-              << "      --device <DEVICE>         Device(s): npu | npu:<SLOT> | cpu (comma-separated, default: npu)"
-              << std::endl
-              << std::endl
-              << "Analysis options:" << std::endl
-              << "      --analysis <TYPE>         Analysis methods: leaks | decompose | inefficient | oom[:K] | none"
-              << std::endl
-              << "                                (comma-separated, default: leaks)" << std::endl
-              << "                                oom[:K]: OOM detailed analysis, K for top-K records" << std::endl
-              << "                                (default: 10, range: [1,1000])" << std::endl
-              << "      --compare                 Enable memory comparison mode" << std::endl
-              << "      --watch <CONFIG>          Watch mode: start[:outid],end[,full-content]" << std::endl
-              << std::endl
-              << "Input / Output options:" << std::endl
-              << "  -i, --input-path <DIR>        Path(s) to input compare files (comma-separated, used with --compare)"
-              << std::endl
-              << "  -o, --output-path <DIR>       Output directory [default: ./memscopeDumpResults]" << std::endl
-              << "      --format <FORMAT>         Data format: csv | db [default: csv]" << std::endl
-              << std::endl
-              << "Other:" << std::endl
-              << "      --log-level <LEVEL>       Log level: debug | info | warning | error [default: info]"
-              << std::endl
-              << std::endl
-              << "Examples:" << std::endl
-              << "  # Collect memory events with default options" << std::endl
-              << "  msmemscope -- python train.py" << std::endl
-              << std::endl
-              << "  # Kernel-level tracing with call stacks" << std::endl
-              << "  msmemscope --level=kernel --call-stack=c:20,python:10 -- python train.py" << std::endl
-              << std::endl
-              << "  # Memory comparison" << std::endl
-              << "  msmemscope --compare --input-path=./baseline,./target" << std::endl
-              << std::endl
-              << "Output:" << std::endl
-              << "  Results are written to <output-path> (default: ./memscopeDumpResults)." << std::endl;
+    std::cout
+        << std::endl
+        << "Usage:" << std::endl
+        << "  msmemscope [options] -- <prog> [args]" << std::endl
+        << "  source msmemscope --load-api-env[=npu|host]" << std::endl
+        << "  source msmemscope --unload-api-env" << std::endl
+        << std::endl
+        << "Environment setup (must be sourced):" << std::endl
+        << "      --load-api-env[=npu|host]  Set LD_PRELOAD and LD_LIBRARY_PATH for Python API usage;" << std::endl
+        << "                                npu (default) = NPU hook chains, host = host memory leak hook" << std::endl
+        << "      --unload-api-env          Clear msmemscope entries from LD_PRELOAD and LD_LIBRARY_PATH" << std::endl
+        << std::endl
+        << "General options:" << std::endl
+        << "  -h, --help                    Show this help message" << std::endl
+        << "  -V, --version                 Show version information" << std::endl
+        << "  -v, --verbose                 Equivalent to --log-level=debug" << std::endl
+        << "  -q, --quiet                   Equivalent to --log-level=error" << std::endl
+        << "      --debug                   Equivalent to --log-level=debug" << std::endl
+        << std::endl
+        << "Collection options:" << std::endl
+        << "      --level <LEVEL>           Data trace level: op | kernel [default: op]" << std::endl
+        << "      --events <EVENT>          Trace event types: alloc | free | launch | access | traceback | none"
+        << std::endl
+        << "                                (comma-separated, default: alloc,free,launch; none = no events)"
+        << std::endl
+        << "      --steps <STEP>            Steps to collect memory info (comma-separated, max 5)" << std::endl
+        << "      --call-stack <TYPE>[:<DEPTH>]  Enable C/Python call stack (c[:depth], python[:depth]," << std::endl
+        << "                                comma-separated, default depth: 50)" << std::endl
+        << "      --collect-mode <MODE>     Collect mode: immediate | deferred [default: immediate]" << std::endl
+        << "      --device <DEVICE>         Device(s): npu | npu:<SLOT> | cpu (comma-separated, default: npu)"
+        << std::endl
+        << std::endl
+        << "Analysis options:" << std::endl
+        << "      --analysis <TYPE>         Analysis methods: leaks | decompose | inefficient | oom[:K] |" << std::endl
+        << "                                host-leaks | none (comma-separated, default: leaks)" << std::endl
+        << "                                oom[:K]: OOM detailed analysis, K for top-K records" << std::endl
+        << "                                (default: 10, range: [1,1000])" << std::endl
+        << "                                host-leaks: host heap leak detection (interval-unfreed);" << std::endl
+        << "                                mutually exclusive with leaks/decompose/inefficient/oom" << std::endl
+        << "      --compare                 Enable memory comparison mode" << std::endl
+        << "      --watch <CONFIG>          Watch mode: start[:outid],end[,full-content]" << std::endl
+        << std::endl
+        << "Host leak options (with --analysis=host-leaks):" << std::endl
+        << "      --host-leak-mode <MODE>   Report mode: event | summary [default: summary]" << std::endl
+        << "      --block-size-threshold <N>  Only record allocations with size >= N bytes (default: 0 = collect all)"
+        << std::endl
+        << "      --sample-rate <N>         Explicit sampling: record 1/N of allocations (default: 1 = no" << std::endl
+        << "                                sampling; power of 2, rounded down)" << std::endl
+        << std::endl
+        << "Input / Output options:" << std::endl
+        << "  -i, --input-path <DIR>        Path(s) to input compare files (comma-separated, used with --compare)"
+        << std::endl
+        << "  -o, --output-path <DIR>       Output directory [default: ./memscopeDumpResults]" << std::endl
+        << "      --format <FORMAT>         Data format: csv | db [default: csv]" << std::endl
+        << std::endl
+        << "Other:" << std::endl
+        << "      --log-level <LEVEL>       Log level: debug | info | warning | error [default: info]" << std::endl
+        << std::endl
+        << "Examples:" << std::endl
+        << "  # Collect memory events with default options" << std::endl
+        << "  msmemscope -- python train.py" << std::endl
+        << std::endl
+        << "  # Kernel-level tracing with call stacks" << std::endl
+        << "  msmemscope --level=kernel --call-stack=c:20,python:10 -- python train.py" << std::endl
+        << std::endl
+        << "  # Memory comparison" << std::endl
+        << "  msmemscope --compare --input-path=./baseline,./target" << std::endl
+        << std::endl
+        << "Output:" << std::endl
+        << "  Results are written to <output-path> (default: ./memscopeDumpResults)." << std::endl;
 }
 
 void ShowVersion()
@@ -204,7 +216,11 @@ void SetAnalysisDefaultConfig(Config &config)
         {AnalysisType::INEFFICIENCY_ANALYSIS, EventType::ACCESS_EVENT},
         {AnalysisType::INEFFICIENCY_ANALYSIS, EventType::LAUNCH_EVENT},
         {AnalysisType::OOM_ANALYSIS, EventType::ALLOC_EVENT},
-        {AnalysisType::OOM_ANALYSIS, EventType::FREE_EVENT}};
+        {AnalysisType::OOM_ANALYSIS, EventType::FREE_EVENT},
+        // host-leak联动:单账本重构后host堆钩子不产生分配/释放事件(STAGE窗口事件
+        // 为分析器唯一驱动,经dump_*拉闭窗快照),此处联动仅为语义一致性,不开启dump落盘
+        {AnalysisType::HOST_LEAK_ANALYSIS, EventType::ALLOC_EVENT},
+        {AnalysisType::HOST_LEAK_ANALYSIS, EventType::FREE_EVENT}};
 
     BitField<decltype(config.analysisType)> analysisTypeBit(config.analysisType);
     BitField<decltype(config.eventType)> eventTypeBit(config.eventType);
@@ -291,6 +307,10 @@ std::vector<option> GetLongOptArray()
         {"log-level", required_argument, nullptr, static_cast<int32_t>(OptVal::LOG_LEVEL)},
         {"collect-mode", required_argument, nullptr, static_cast<int32_t>(OptVal::COLLECT_MODE)},
         {"device", required_argument, nullptr, static_cast<int32_t>(OptVal::DEVICE)},
+        // host内存泄漏检测:与--analysis=host-leaks配套
+        {"host-leak-mode", required_argument, nullptr, static_cast<int32_t>(OptVal::HOST_LEAK_MODE)},
+        {"block-size-threshold", required_argument, nullptr, static_cast<int32_t>(OptVal::BLOCK_SIZE_THRESHOLD)},
+        {"sample-rate", required_argument, nullptr, static_cast<int32_t>(OptVal::SAMPLE_RATE)},
         {nullptr, 0, nullptr, 0},
     };
     return longOpts;
@@ -383,6 +403,8 @@ void ParseAnalysis(const std::string &param, Config &config, bool &printHelpInfo
         {"leaks", AnalysisType::LEAKS_ANALYSIS},
         {"decompose", AnalysisType::DECOMPOSE_ANALYSIS},
         {"inefficient", AnalysisType::INEFFICIENCY_ANALYSIS},
+        // host堆泄漏检测:host钩子so与显存采集hook链不可共存,与其余分析项互斥
+        {"host-leaks", AnalysisType::HOST_LEAK_ANALYSIS},
     };
     while (it != end)
     {
@@ -432,6 +454,20 @@ void ParseAnalysis(const std::string &param, Config &config, bool &printHelpInfo
             }
         }
         it++;
+    }
+
+    // host-leaks与其余分析项互斥:host钩子so与显存采集hook链不可共存于同一
+    // 目标进程;CLI/python共用本解析(CLI报错退出,python经SetConfig返回false)
+    BitField<decltype(config.analysisType)> hostLeakOnlyBit;
+    hostLeakOnlyBit.setBit(static_cast<size_t>(AnalysisType::HOST_LEAK_ANALYSIS));
+    if (analysisTypeBit.checkBit(static_cast<size_t>(AnalysisType::HOST_LEAK_ANALYSIS)) &&
+        analysisTypeBit.getValue() != hostLeakOnlyBit.getValue())
+    {
+        std::cout << "[msmemscope] Error: 'host-leaks' is mutually exclusive with "
+                  << "'leaks'/'decompose'/'inefficient'/'oom' (host hook so cannot coexist with npu "
+                  << "hook chains in the same target process)." << std::endl;
+        printHelpInfo = true;
+        return;
     }
 
     config.analysisType = analysisTypeBit.getValue();
@@ -958,6 +994,67 @@ void ParseCollectMode(const std::string &param, Config &config, bool &printHelpI
     return;
 }
 
+// host泄漏上报模式:summary=仅按栈聚合报告(默认)/
+// event=逐块事件+按栈聚合报告;CLI/python共用(python config键host_leak_mode)
+void ParseHostLeakMode(const std::string &param, Config &config, bool &printHelpInfo)
+{
+    auto parseFailed = [&printHelpInfo](void)
+    {
+        std::cout << "[msmemscope] Error: --host-leak-mode param is invalid. "
+                  << "Host leak mode can only be set to event,summary." << std::endl;
+        printHelpInfo = true;
+    };
+    if (param == "event")
+    {
+        config.hostLeakMode = static_cast<uint8_t>(HostLeakMode::EVENT);
+    }
+    else if (param == "summary")
+    {
+        config.hostLeakMode = static_cast<uint8_t>(HostLeakMode::SUMMARY);
+    }
+    else
+    {
+        return parseFailed();
+    }
+
+    return;
+}
+
+// host泄漏通用采集过滤阈值:只记录size≥N的分配,0=全部
+void ParseBlockSizeThreshold(const std::string &param, Config &config, bool &printHelpInfo)
+{
+    uint64_t value = 0;
+    Utility::IntValidateRule verRule;
+    verRule.minValue = 0;
+    if (!Utility::IsValidInteger(param, verRule) || !Utility::StrToUint64(value, param))
+    {
+        std::cout << "[msmemscope] Error: --block-size-threshold param is invalid. "
+                  << "Threshold must be a non-negative integer (0 = collect all)." << std::endl;
+        printHelpInfo = true;
+        return;
+    }
+    config.blockSizeThreshold = value;
+    return;
+}
+
+// 显式采样率倒数:每1/N次分配做一次记账(块表插入+栈计数),被跳过分配对钩子
+// 完全不可见;1=不采样(默认,全量)。非2的幂输入按向下归一(钩子开窗时还会再归一)
+void ParseSampleRate(const std::string &param, Config &config, bool &printHelpInfo)
+{
+    uint64_t value = 0;
+    Utility::IntValidateRule verRule;
+    verRule.minValue = 1;
+    if (!Utility::IsValidInteger(param, verRule) || !Utility::StrToUint64(value, param) || value > 0xFFFFFFFFULL)
+    {
+        std::cout << "[msmemscope] Error: --sample-rate param is invalid. "
+                  << "Rate must be a positive integer within uint32 (1 = no sampling)." << std::endl;
+        printHelpInfo = true;
+        return;
+    }
+    config.sampleRate = static_cast<uint32_t>(value);
+    return;
+}
+
 static void ResolveLogLevel(UserCommand &userCommand)
 {
     // 日志等级冲突裁决（与参数出现顺序无关）：
@@ -1064,6 +1161,15 @@ void ParseUserCommand(const int32_t &opt, const std::string &param, UserCommand 
             break;
         case static_cast<int32_t>(OptVal::COLLECT_MODE):
             ParseCollectMode(param, userCommand.config, userCommand.printHelpInfo);
+            break;
+        case static_cast<int32_t>(OptVal::HOST_LEAK_MODE):
+            ParseHostLeakMode(param, userCommand.config, userCommand.printHelpInfo);
+            break;
+        case static_cast<int32_t>(OptVal::BLOCK_SIZE_THRESHOLD):
+            ParseBlockSizeThreshold(param, userCommand.config, userCommand.printHelpInfo);
+            break;
+        case static_cast<int32_t>(OptVal::SAMPLE_RATE):
+            ParseSampleRate(param, userCommand.config, userCommand.printHelpInfo);
             break;
         default:;
     }

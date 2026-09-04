@@ -69,6 +69,7 @@ class JsonManager
     void GetCharListValue(const std::string& key, char* buffer, size_t bufferSize);
     void GetUint8Value(const std::string& key, uint8_t& value);
     void GetUint32Value(const std::string& key, uint32_t& value);
+    void GetUint64Value(const std::string& key, uint64_t& value);  // host-leak块阈值
     void GetBoolValue(const std::string& key, bool& value);
     void GetVectorIntValue(const std::string& key, std::vector<int>& value);
     void GetUint32ListsValue(const std::string& key, uint32_t* lists, size_t length);

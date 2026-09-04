@@ -119,8 +119,19 @@ enum class EventSubType : uint8_t
     OOM_RECENT_ALLOC,
     OOM_TOP_ALLOC,
 
+    // host内存泄漏检测窗口边界系统事件(挂SYSTEM基础类型,由钩子经bind回调report_stage上报,
+    // 分析器窗口状态只由该对事件驱动,不感知config回调)
+    HOST_LEAK_STAGE_START,
+    HOST_LEAK_STAGE_END,
+
     INVALID,
 };
+
+// 分配/释放事件谓词(一处定义,event_router与MemoryStateManager共用):
+// 统一覆盖MALLOC/FREE,替换散落的eventType == MALLOC硬编码
+inline bool IsAllocEventType(const EventBaseType& type) { return type == EventBaseType::MALLOC; }
+
+inline bool IsFreeEventType(const EventBaseType& type) { return type == EventBaseType::FREE; }
 
 class EventBase : public DataBase
 {

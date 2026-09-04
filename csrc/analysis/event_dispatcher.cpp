@@ -18,6 +18,7 @@
 #include "event_dispatcher.h"
 
 #include <algorithm>
+#include <cstdio>
 #include <vector>
 
 #include "utility/log.h"
@@ -36,6 +37,7 @@ void EventDispatcher::Subscribe(const SubscriberId& id, const std::vector<EventB
 {
     Subscriber newSubscriber{id, priority, func};
 
+    std::lock_guard<std::timed_mutex> lock(mutex_);
     for (auto eventType : eventTypes)
     {
         // operator[]在缺失时默认构造空vector，一次查找完成
@@ -52,6 +54,7 @@ void EventDispatcher::Subscribe(const SubscriberId& id, const std::vector<EventB
 
 void EventDispatcher::UnSubscribe(const SubscriberId& id)
 {
+    std::lock_guard<std::timed_mutex> lock(mutex_);
     for (auto& pair : eventSubscribers_)
     {
         auto& subscribers = pair.second;
@@ -65,6 +68,17 @@ void EventDispatcher::UnSubscribe(const SubscriberId& id)
 
 void EventDispatcher::DispatchEvent(std::shared_ptr<EventBase>& event, MemoryState* state)
 {
+    // 退出期逃生:持有dispatcher锁的handler若死锁(持锁不还),正常加锁会永久阻塞
+    // 上报线程→进程退出挂起(实测竞态曾致钩子闭窗变体交付挂起>120s)。
+    // try_lock_for(15s)超时则跳过本次派发(事件丢失,完整度如实下降;由
+    // ~HostLeakAnalyzer析构兜底报告),进程得以退出;正常路径锁竞争毫秒级,15s不可达。
+    if (!mutex_.try_lock_for(std::chrono::seconds(15)))
+    {
+        fprintf(stderr, "[msmemscope] event dispatcher lock busy >15s, dispatch skipped (eventType=%d)\n",
+                static_cast<int>(event->eventType));
+        return;
+    }
+    std::lock_guard<std::timed_mutex> lock(mutex_, std::adopt_lock);
     auto it = eventSubscribers_.find(event->eventType);
     if (it != eventSubscribers_.end())
     {
