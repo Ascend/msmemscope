@@ -12,17 +12,17 @@ If you need to upgrade this tool separately or use the latest version, you can i
 
 ### 2.1 Online Installation
 
-If your device has Internet access, you can run a single command to automatically download and install the tool. Visit the [Ascend community](https://www.hiascend.com/en/developer/software/mindstudio/download?versionId=143&ids=45%2C42671e3507254c1fb6f56b379948506f%2C127%2C49%2C), select the target CANN version, and choose "online installation". The system will guide you through the subsequent operations.
+If your device has Internet access, you can run a single command to automatically download and install the tool. Visit the [Ascend community](https://www.hiascend.com/en/developer/software/mindstudio/download?versionId=152&ids=45%2Cb1e62037594d4e5c9a0fd797ff490006%2C127%2C49%2C), select the target CANN version, and choose "online installation". The system will guide you through the subsequent operations.
 
 ### 2.2 Offline Installation
 
-For devices that are not connected to the Internet, such as those on an enterprise intranet, download the complete offline installation package on a device that has Internet access and then transfer the package to the target device for installation. Visit the [Ascend community](https://www.hiascend.com/en/developer/software/mindstudio/download?versionId=143&ids=45%2C42671e3507254c1fb6f56b379948506f%2C127%2C50%2C), select the target CANN version, and choose "offline installation". The system will guide you through the subsequent operations.
+For devices that are not connected to the Internet, such as those on an enterprise intranet, download the complete offline installation package on a device that has Internet access and then transfer the package to the target device for installation. Visit the [Ascend community](https://www.hiascend.com/en/developer/software/mindstudio/download?versionId=152&ids=45%2Cb1e62037594d4e5c9a0fd797ff490006%2C127%2C50%2C), select the target CANN version, and choose "offline installation". The system will guide you through the subsequent operations.
 
 ### 2.3 Installation from Source
 
 #### 2.3.1 Installing Dependencies
 
-Before the installation, ensure that the Git and Python environments are available. For details, see [version requirements](./development_guide/development_guide.md#development environment-settings). If requirements are not met, run the following command to install dependencies.
+Before the installation, ensure that the Git and Python environments are available. For details, see [version requirements](../development_guide/development_guide.md#1-development-environment-settings). If requirements are not met, run the following command to install dependencies.
 
 Debian:
 
