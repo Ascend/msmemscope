@@ -938,3 +938,1004 @@ struct BlockShard
 };
 
 __attribute__((init_priority(105))) BlockShard g_blockShards[BLOCK_SHARDS];  // 顺序保护,同g_stackShards
+
+inline size_t BlockShardIndex(uint64_t addr)
+{
+    return static_cast<size_t>(addr >> 4) & static_cast<size_t>(BLOCK_SHARDS - 1);
+}
+
+// 块表桶定位(斐波那契乘法散列取高位):malloc地址低4位恒0(16B对齐)且高位段
+// 段内变化少,乘以2^64/φ奇常数后截取高32位混合,再按掩码取所需位
+inline uint32_t BlockBucketOf(uint64_t addr, uint32_t mask)
+{
+    return static_cast<uint32_t>((addr * 11400714785074694791ull) >> 32) & mask;
+}
+
+// 容量翻倍重哈希(必持分片锁):新表逐条重插(纯探测写,无分配);失败(OOM)返回
+// false,旧表原样保留(调用方按表满降级计丢包)
+bool BlockShardGrowLocked(BlockShard& shard)
+{
+    if (shard.capMask > (UINT32_MAX >> 1))
+    {
+        return false;  // 容量上界护栏(2^31槽=16TB键数组,仅畸形env可达),防翻倍回绕
+    }
+    const uint32_t newCap = (shard.capMask + 1) << 1;
+    uint64_t* nk = static_cast<uint64_t*>(RealMalloc(static_cast<size_t>(newCap) * sizeof(uint64_t)));
+    BlockEntry* nv = static_cast<BlockEntry*>(RealMalloc(static_cast<size_t>(newCap) * sizeof(BlockEntry)));
+    if (nk == nullptr || nv == nullptr)
+    {
+        RealFree(nk);
+        RealFree(nv);
+        return false;
+    }
+    memset(nk, 0, static_cast<size_t>(newCap) * sizeof(uint64_t));
+    const uint32_t nm = newCap - 1;
+    for (uint32_t i = 0; i <= shard.capMask; ++i)
+    {
+        if (shard.keys[i] == 0)
+        {
+            continue;
+        }
+        uint32_t p = BlockBucketOf(shard.keys[i], nm);
+        while (nk[p] != 0)
+        {
+            p = (p + 1) & nm;
+        }
+        nk[p] = shard.keys[i];
+        nv[p] = shard.vals[i];
+    }
+    RealFree(shard.keys);
+    RealFree(shard.vals);
+    shard.keys = nk;
+    shard.vals = nv;
+    shard.capMask = nm;
+    return true;
+}
+
+// 容量保障(必持分片锁):懒分配(首块落片时建1024槽)/负载越限(7/10)翻倍。
+// 硬护栏count+1>=cap:线性探测至少留1空槽保证查找/插入可终止(仅持续OOM下
+// 扩容反复失败时可达);返回false=不可得容量,调用方按表满降级
+bool BlockShardEnsureRoomLocked(BlockShard& shard)
+{
+    if (shard.keys != nullptr)
+    {
+        const uint32_t cap = shard.capMask + 1;
+        if (static_cast<uint64_t>(shard.count + 1) * 10 <= static_cast<uint64_t>(cap) * 7)
+        {
+            return true;  // 负载内
+        }
+        if (shard.count + 1 >= cap)
+        {
+            return false;  // 硬护栏(扩容失败后满载:拒绝防探测不终止)
+        }
+        return BlockShardGrowLocked(shard);
+    }
+    constexpr uint32_t kInitCap = 1024;  // 首配容量(负载上限716条,覆盖小窗口零增长)
+    shard.keys = static_cast<uint64_t*>(RealMalloc(kInitCap * sizeof(uint64_t)));
+    shard.vals = static_cast<BlockEntry*>(RealMalloc(kInitCap * sizeof(BlockEntry)));
+    if (shard.keys == nullptr || shard.vals == nullptr)
+    {
+        RealFree(shard.keys);
+        RealFree(shard.vals);
+        shard.keys = nullptr;
+        shard.vals = nullptr;
+        return false;
+    }
+    memset(shard.keys, 0, kInitCap * sizeof(uint64_t));
+    shard.capMask = kInitCap - 1;
+    return true;
+}
+
+// 后向位移删除(必持分片锁):摘除keys[i]后从空洞向前扫描,把"home在本空洞之前"
+// 的后续条目逐个上移(条件(新位移<=旧位移):home在j..k区间的条目上移会越过
+// 其home致查找失效,跳过继续扫),每条目仍位于其home的探测路径上,无墓碑
+void BlockShardRemoveAtLocked(BlockShard& shard, uint32_t i)
+{
+    const uint32_t mask = shard.capMask;
+    uint32_t j = i;
+    for (;;)
+    {
+        shard.keys[j] = 0;  // 挖空洞(先清后扫:簇即结束则该槽就此留空)
+        uint32_t k = j;
+        for (;;)
+        {
+            k = (k + 1) & mask;
+            if (shard.keys[k] == 0)
+            {
+                return;  // 空槽=簇结束,空洞j保持空
+            }
+            const uint32_t home = BlockBucketOf(shard.keys[k], mask);
+            if (((j - home) & mask) <= ((k - home) & mask))
+            {
+                break;  // k处条目可合法上移到j(新位移不小于0且不越过home)
+            }
+        }
+        shard.keys[j] = shard.keys[k];
+        shard.vals[j] = shard.vals[k];
+        j = k;  // 空洞移到k,继续填补
+    }
+}
+
+// 纯插入(必持分片锁,调用方保证addr不在表):false=表满/容量不可得(计丢包)
+bool BlockShardInsertLocked(BlockShard& shard, uint64_t addr, const BlockEntry& rec)
+{
+    if (shard.count >= g_maxBlocksPerShard)
+    {
+        return false;  // 表满: 放弃记账该块(假泄漏规避)
+    }
+    if (!BlockShardEnsureRoomLocked(shard))
+    {
+        return false;
+    }
+    const uint32_t mask = shard.capMask;
+    uint32_t i = BlockBucketOf(addr, mask);
+    while (shard.keys[i] != 0)
+    {
+        i = (i + 1) & mask;
+    }
+    shard.keys[i] = addr;
+    shard.vals[i] = rec;
+    shard.count += 1;
+    g_blockCount.fetch_add(1, std::memory_order_relaxed);
+    return true;
+}
+
+// 栈表分片定位:键缓存哈希低6位(与桶定位同一哈希值,xxHash64终结雪崩充分)
+inline size_t StackShardIndex(const StackKey& key)
+{
+    return static_cast<size_t>(key.hash) & static_cast<size_t>(STACK_SHARDS - 1);
+}
+// stackId低6位=分片号(保留时编码),供free路径/上报线程按id定位分片
+inline uint64_t MakeStackId(size_t shardIdx)
+{
+    return (g_stackIdCounter.fetch_add(1, std::memory_order_relaxed) << 6) | static_cast<uint64_t>(shardIdx);
+}
+
+inline size_t ShardOfStackId(uint64_t stackId)
+{
+    return static_cast<size_t>(stackId) & static_cast<size_t>(STACK_SHARDS - 1);
+}
+
+// =============================================================================
+// 钩子自身帧过滤:以本so自身地址区间动态判定
+// =============================================================================
+// 本so装载区间(构造期一次写入;写入先于宿主main,而采栈仅发生在开窗后,无并发写)
+uintptr_t g_hookSoLo = 0;
+uintptr_t g_hookSoHi = 0;
+
+inline bool InHookSoRange(uintptr_t pc) { return pc >= g_hookSoLo && pc < g_hookSoHi; }
+
+struct HookSoSpan
+{
+    uintptr_t lo;
+    uintptr_t hi;
+};
+
+// dl_iterate_phdr回调:以自身函数地址为锚点(匿名命名空间,必属本so,不受其他
+// preload库劫持影响)定位本so对象,累计其全部PT_LOAD段span(覆盖text/rodata/
+// data/bss;栈上的PC均为返回地址,只会落入可执行段,区间偏宽无副作用)
+int HookSoRangeCb(dl_phdr_info* info, size_t size, void* data)
+{
+    (void)size;
+    auto* span = static_cast<HookSoSpan*>(data);
+    const uintptr_t anchor = reinterpret_cast<uintptr_t>(&HookSoRangeCb);
+    uintptr_t lo = UINTPTR_MAX;
+    uintptr_t hi = 0;
+    bool hit = false;
+    for (int i = 0; i < info->dlpi_phnum; ++i)
+    {
+        const ElfW(Phdr)& ph = info->dlpi_phdr[i];
+        if (ph.p_type != PT_LOAD)
+        {
+            continue;
+        }
+        const uintptr_t segLo = static_cast<uintptr_t>(info->dlpi_addr + ph.p_vaddr);
+        const uintptr_t segHi = segLo + static_cast<uintptr_t>(ph.p_memsz);
+        lo = segLo < lo ? segLo : lo;
+        hi = segHi > hi ? segHi : hi;
+        if (anchor >= segLo && anchor < segHi)
+        {
+            hit = true;
+        }
+    }
+    if (hit)
+    {
+        span->lo = lo;
+        span->hi = hi;
+        return 1;  // 命中本so,终止迭代
+    }
+    return 0;
+}
+
+// 构造期解析本so区间(dl_load_lock为递归锁,构造期重入安全);失败(理论不可达)
+// 区间保持[0,0)恒不匹配→钩子帧全保留,降级可见而非静默失真
+void ResolveHookSoRange()
+{
+    HookSoSpan span{0, 0};
+    if (dl_iterate_phdr(HookSoRangeCb, &span) > 0 && span.lo < span.hi)
+    {
+        g_hookSoLo = span.lo;
+        g_hookSoHi = span.hi;
+    }
+}
+
+// =============================================================================
+// 帧指针快速走栈: 模块可执行段区间快照 + 线程栈界缓存 + fp链遍历
+// =============================================================================
+
+// ----- 模块可执行段区间快照(FP走栈pc校验依据) -----
+// dl_iterate_phdr持加载器锁,不可在采栈热路径调用,故快照化:构造期+每次开窗+
+// 预热线程1Hz(开窗态)刷新,4槽环形缓冲,写入"下一槽"后release发布,读取侧
+// acquire取槽无锁。槽被复写最早发生在3次刷新后(≥3s),而单次走栈μs级,读侧
+// 不可能读到复写中的槽;理论极端(读线程被抢占跨越3次刷新)下撕裂值仅影响校验
+// 判定(误拒→截断回退backtrace/误纳→等价于无校验),无内存安全风险
+constexpr uint32_t EXEC_SPAN_MAX = 2048;  // 可执行段容量上限:常规进程模块数百个,极端插件群千级
+constexpr uint32_t EXEC_SNAP_SLOTS = 4;   // 环形槽数(复写宽限=槽数-1次刷新)
+constexpr uint32_t EXEC_NAME_LEN = 64;    // 模块名截断长度(快照内拷贝,dlclose后加载器内存失效)
+
+struct ExecSpan
+{
+    uintptr_t lo;
+    uintptr_t hi;
+    uintptr_t base;  // dlpi_addr:模块加载基址(pc-base=模块内偏移,与dladdr的dli_fbase同语义)
+    char name[EXEC_NAME_LEN];
+};
+
+struct ExecRangeSnapshot
+{
+    uint32_t count;
+    ExecSpan spans[EXEC_SPAN_MAX];
+};
+
+ExecRangeSnapshot g_execSnaps[EXEC_SNAP_SLOTS];  // bss零初始化,count==0即"未就绪"
+std::atomic<uint32_t> g_execSnapPub{0};          // 当前发布槽号
+// 刷新互斥:开窗(配置线程)与预热线程1Hz可能并发刷新,二者计算"下一槽"相同
+// 会互相复写,互斥后串行化(冷路径,无争用)
+pthread_mutex_t g_execSnapMtx = PTHREAD_MUTEX_INITIALIZER;
+
+// pc∈任一可执行段?spans已按lo排序(刷新侧冷路径排序),二分定位最后一个
+// lo≤pc的span后单次区间判定;模块段实际互不重叠,未命中即不命中。
+// 返回命中span指针(供调用方做段内偏移安全判定),未命中返回nullptr
+inline const ExecSpan* FindExecSpan(uintptr_t pc, const ExecRangeSnapshot& snap)
+{
+    uint32_t lo = 0;
+    uint32_t hi = snap.count;
+    while (lo < hi)
+    {
+        const uint32_t mid = lo + (hi - lo) / 2;
+        if (snap.spans[mid].lo <= pc)
+        {
+            lo = mid + 1;
+        }
+        else
+        {
+            hi = mid;
+        }
+    }
+    if (lo == 0 || pc >= snap.spans[lo - 1].hi)
+    {
+        return nullptr;
+    }
+    return &snap.spans[lo - 1];
+}
+
+int ExecSpanCb(dl_phdr_info* info, size_t size, void* data)
+{
+    (void)size;
+    auto& snap = *static_cast<ExecRangeSnapshot*>(data);
+    for (int i = 0; i < info->dlpi_phnum; ++i)
+    {
+        const ElfW(Phdr)& ph = info->dlpi_phdr[i];
+        if (ph.p_type != PT_LOAD || (ph.p_flags & PF_X) == 0)
+        {
+            continue;  // 仅可执行PT_LOAD段:栈上的PC均为返回地址,只可能落在其中
+        }
+        if (snap.count >= EXEC_SPAN_MAX)
+        {
+            return 1;  // 容量满:截断(罕见;未收录模块的pc校验不通过→该等调用点回退backtrace)
+        }
+        const uintptr_t lo = static_cast<uintptr_t>(info->dlpi_addr + ph.p_vaddr);
+        ExecSpan& span = snap.spans[snap.count];
+        span.lo = lo;
+        span.hi = lo + static_cast<uintptr_t>(ph.p_memsz);
+        span.base = static_cast<uintptr_t>(info->dlpi_addr);
+        // 模块名截断拷贝(加载器内部内存,dlclose后失效——快照必须自持拷贝);
+        // 取路径尾基名(与dladdr输出同风格),空名兜底"?"
+        const char* n = (info->dlpi_name != nullptr) ? info->dlpi_name : "";
+        const char* slash = strrchr(n, '/');
+        const char* baseName = (slash != nullptr) ? slash + 1 : n;
+        if (baseName[0] == '\0')
+        {
+            baseName = "?";
+        }
+        strncpy(span.name, baseName, EXEC_NAME_LEN - 1);
+        span.name[EXEC_NAME_LEN - 1] = '\0';
+        snap.count += 1;
+    }
+    return 0;
+}
+
+void RefreshExecRanges()
+{
+    pthread_mutex_lock(&g_execSnapMtx);
+    const uint32_t prev = g_execSnapPub.load(std::memory_order_relaxed);
+    const uint32_t slot = (prev + 1) % EXEC_SNAP_SLOTS;
+    ExecRangeSnapshot& snap = g_execSnaps[slot];
+    snap.count = 0;  // 先清计数:该槽此刻对读侧不可见(发布的是prev槽),写入顺序无关紧要
+    dl_iterate_phdr(ExecSpanCb, &snap);
+    std::sort(snap.spans, snap.spans + snap.count,
+              [](const ExecSpan& a, const ExecSpan& b) { return a.lo < b.lo; });  // 读侧二分前提
+    g_execSnapPub.store(slot, std::memory_order_release);  // 发布(store前的span写入对acquire读侧可见)
+    pthread_mutex_unlock(&g_execSnapMtx);
+}
+
+// ----- 线程栈边界(TLS缓存,线程首走一次) -----
+struct ThreadStackBounds
+{
+    uintptr_t lo;
+    uintptr_t hi;
+    bool ok;
+};
+
+thread_local ThreadStackBounds t_stackBounds{0, 0, false};
+
+// pthread_getattr_np取本线程栈界(主线程返回初始栈范围,对走栈校验是安全上界);
+// 线程生命周期内不变,缓存后零成本。内部无堆分配,可在钩子热路径首次调用
+const ThreadStackBounds& GetThreadStackBounds()
+{
+    if (!t_stackBounds.ok)
+    {
+        pthread_attr_t attr;
+        if (pthread_getattr_np(pthread_self(), &attr) == 0)
+        {
+            void* base = nullptr;
+            size_t size = 0;
+            if (pthread_attr_getstack(&attr, &base, &size) == 0 && base != nullptr && size >= 2 * sizeof(uintptr_t))
+            {
+                t_stackBounds.lo = reinterpret_cast<uintptr_t>(base);
+                t_stackBounds.hi = t_stackBounds.lo + static_cast<uintptr_t>(size);
+                t_stackBounds.ok = true;
+            }
+            pthread_attr_destroy(&attr);
+        }
+    }
+    return t_stackBounds;
+}
+
+// 取当前帧指针(x86_64=rbp,aarch64=x29);未适配架构返回0→走栈不可用直接回退。
+// 注意AT&T与AArch64汇编的操作数方向相反:前者源在左、后者目的在左
+inline uintptr_t CurrentFramePointer()
+{
+#if defined(__x86_64__)
+    uintptr_t fp;
+    asm volatile("movq %%rbp, %0" : "=r"(fp));
+    return fp;
+#elif defined(__aarch64__)
+    uintptr_t fp;
+    asm volatile("mov %0, x29" : "=r"(fp));
+    return fp;
+#else
+    return 0;
+#endif
+}
+
+// 帧指针快速走栈: 沿fp链逐帧取返回地址写入out(含钩子机械帧在内的
+// 原始帧,头部过滤由调用方统一做),返回帧数;reachedBottom=true表示走至链底
+// (nextFp==0——ELF入口_start按ABI清零帧指针标记最外层帧)而非被校验截断。
+// 全程只读[初始fp,栈顶)——该区间被当前调用链占据,必已映射,无SIGSEGV风险
+int WalkFramePointers(uintptr_t* out, int maxOut, bool& reachedBottom)
+{
+    reachedBottom = false;
+    if (maxOut <= 0)
+    {
+        return 0;
+    }
+    const ThreadStackBounds& sb = GetThreadStackBounds();
+    if (!sb.ok)
+    {
+        return 0;
+    }
+    const ExecRangeSnapshot& snap = g_execSnaps[g_execSnapPub.load(std::memory_order_acquire)];
+    if (snap.count == 0)
+    {
+        return 0;  // 快照未就绪(构造期前):交由backtrace兜底
+    }
+    uintptr_t fp = CurrentFramePointer();
+    int n = 0;
+    while (n < maxOut && fp >= sb.lo && fp + 2 * sizeof(uintptr_t) <= sb.hi && (fp & 0xf) == 0)
+    {
+        // [fp]=上层帧指针,[fp+8]=本帧返回地址(先出帧再走链)
+        const uintptr_t nextFp = *reinterpret_cast<const uintptr_t*>(fp);
+        const uintptr_t pc = *reinterpret_cast<const uintptr_t*>(fp + sizeof(uintptr_t));
+        if (FindExecSpan(pc, snap) == nullptr)
+        {
+            break;  // pc不在任何可执行段:毁链后落入数据区的垃圾帧,截断
+        }
+        out[n++] = pc;
+        if (nextFp == 0)
+        {
+            reachedBottom = true;
+            break;
+        }
+        if (nextFp <= fp)
+        {
+            break;  // 非递增(合法链必严格递增):截断
+        }
+        fp = nextFp;
+    }
+    return n;
+}
+
+// 采栈: 过滤头部钩子帧后返回有效帧数(≤maxOut)。跳过头部落在本so区间内的连续帧,
+// 但保留其中最后一帧(malloc/calloc等劫持入口:报告的分配接口锚点,亦参与去重键——
+// 不同分配接口同深调用链天然不合并);其余头部帧(backtrace蹦床/CaptureFrames/
+// RecordMalloc)为纯钩子机械帧,整段跳过。深部不过滤:主线程回栈尾部的宿主main
+// 边界trampoline帧是真实调用链组成部分,剔除会使main与__libc_start_main之间断链,
+// 回溯不清晰——设计选择保留(主线程栈含两帧本so帧:头部锚点+栈底trampoline)
+int CaptureFrames(uintptr_t* out, int maxOut)
+{
+    if (maxOut <= 0)
+    {
+        return 0;
+    }
+    // 热路径(maxOut≤STACK_KEY_FRAMES)用栈上缓冲;全深度登记(maxOut可达MAX_STACK_DEPTH)
+    // 需临时堆缓冲——固定浅缓冲会把深度采集静默截断
+    uintptr_t localBuf[STACK_KEY_FRAMES + HOOK_FRAME_HEADROOM];
+    uintptr_t* buf = localBuf;
+    int cap = STACK_KEY_FRAMES + HOOK_FRAME_HEADROOM;
+    uintptr_t* heapBuf = nullptr;
+    const int want = maxOut + HOOK_FRAME_HEADROOM;  // 多采头部余量,过滤后仍有maxOut帧
+    if (want > cap)
+    {
+        heapBuf = static_cast<uintptr_t*>(RealMalloc(static_cast<size_t>(want) * sizeof(uintptr_t)));
+        if (heapBuf != nullptr)
+        {
+            buf = heapBuf;
+            cap = want;
+        }
+        // 堆分配失败退化为栈上容量(采栈截断,不丢整块记账)
+    }
+    // 采栈方法:FP快走栈为默认路径,采满请求帧数或走至链底才采用,
+    // 否则回退backtrace。同一调用路径链长确定→逐次走同一分支,去重键稳定;
+    // 新装载模块进入快照前后(≤1s)同一调用点可能先后走两法各登记一栈,短暂
+    // 重复但语义正确。头部帧两种来源均在钩子so内(本so整体保留帧指针),动态
+    // 头部过滤对两法统一生效
+    const int target = want > cap ? cap : want;
+    bool reachedBottom = false;
+    int n = WalkFramePointers(buf, target, reachedBottom);
+    if (n < target && !reachedBottom)
+    {
+        n = backtrace(reinterpret_cast<void**>(buf), target);
+    }
+    int lead = 0;
+    while (lead < n && InHookSoRange(buf[lead]))
+    {
+        ++lead;
+    }
+    const int skip = lead > 0 ? lead - 1 : 0;  // 保留最后一帧钩子帧(劫持入口帧)
+    int cnt = n - skip;
+    if (cnt > maxOut)
+    {
+        cnt = maxOut;
+    }
+    if (cnt > 0)
+    {
+        memcpy(out, buf + skip, static_cast<size_t>(cnt) * sizeof(uintptr_t));
+    }
+    RealFree(heapBuf);
+    return cnt;
+}
+
+// 显式采样门控: 每线程去相关采样器(xorshift32状态线程本地)。不用共享原子
+// 计数器(缓存行乒乓)也不用"线程内计数%rate"(全部业务线程同相位,采样点与周期性
+// 节拍——DataLoader批迭代/算子注册批——对齐时产生系统性偏差:恰好总采到批首
+// 或总漏掉同一相位)。种子混合tid与单调钟防同批线程同序列。rate为2的幂
+// (开窗快照时规范化),掩码判定单周期;rate<=1(不采样)直接返回true——
+// 默认路径门控零额外开销
+thread_local uint32_t t_sampleState = 0;
+
+bool SampleGateHit()
+{
+    const uint32_t rate = g_sampleRate.load(std::memory_order_relaxed);
+    if (rate <= 1)
+    {
+        return true;  // 不采样: 全部通过(默认)
+    }
+    uint32_t x = t_sampleState;
+    if (x == 0)
+    {
+        // 首次调用:播种(tid混单调钟;xorshift拒绝0状态,全0则换金比例常数)
+        x = static_cast<uint32_t>(CurrentTid()) ^ static_cast<uint32_t>(MonotonicNs() >> 4);
+        if (x == 0)
+        {
+            x = 0x9e3779b9u;
+        }
+    }
+    x ^= x << 13;
+    x ^= x >> 17;
+    x ^= x << 5;
+    t_sampleState = x;
+    return (x & (rate - 1)) == 0;
+}
+
+// 死栈桶采样淘汰(必持栈分片锁,表满登记路径调用): 栈表触顶时回收"死栈"
+// (refs==1=仅pin,零存活块零在途)条目,让表占用与持有存活内存的路径对齐。
+// 采样: 8个随机桶(xorshift64,种子为全局原子递增计数器,每次调用取新种子),
+// 收集桶链上候选;受害者=候选中refs==1且allocCount最小者(空条目allocCount=0
+// 优先回收=自洁性;refs==1⟹liveBytes==0,预热top-K(liveBytes>0)候选按构造
+// 不相交,淘汰不伤符号化预热)。拆除(全部锁内): 折叠计数→RealFree(fullPcs)→
+// map.erase→g_stackCount.fetch_sub。每次最多淘汰1个,不循环不滞回;返回true=
+// 已淘汰(调用方继续登记),false=采样无可淘汰者(全活表,调用方置bit1+转未知桶)。
+// 内存序: 本函数持栈分片锁,与全部refs+1(除InsertBlock块引用+1在块表锁内,其
+// 有调用方在途ref兜底,期间refs恒>=2)的释放侧同锁串行——release-acquire边保证
+// 读到一切已完成的lookup+1;锁外-1(dispose)只发生在该线程对条目最后一次触碰,
+// 与淘汰判读(refs==1)不并发
+bool EvictDeadStackLocked(StackShard& shard)
+{
+    constexpr size_t kEvictSampleBuckets = 8;
+    static std::atomic<uint64_t> sEvictSeed{0x9e3779b97f4a7c15ull};  // 原子递增种子
+    uint64_t state = sEvictSeed.fetch_add(1, std::memory_order_relaxed) | 1ull;
+    const size_t bucketCount = shard.map.bucket_count();
+    if (bucketCount == 0)
+    {
+        return false;
+    }
+    StackKey victimKey{};  // 记录受害者键,采样后find定位(锁内无并发修改,必命中)
+    bool found = false;
+    uint64_t bestAlloc = UINT64_MAX;
+    for (size_t i = 0; i < kEvictSampleBuckets; ++i)
+    {
+        state ^= state << 13;
+        state ^= state >> 7;
+        state ^= state << 17;
+        const size_t b = static_cast<size_t>(state) % bucketCount;
+        for (auto it = shard.map.begin(b); it != shard.map.end(b); ++it)
+        {
+            StackEntry& e = it->second;
+            if (e.refs.load(std::memory_order_relaxed) != 1)
+            {
+                continue;  // 存活块/在途lookup: 不可淘汰(非零即owner悬垂)
+            }
+            const uint64_t ac = e.allocCount.load(std::memory_order_relaxed);
+            if (ac < bestAlloc)
+            {
+                bestAlloc = ac;
+                victimKey = it->first;  // 拷贝键(冷路径:淘汰频率=表满登记频率)
+                found = true;
+            }
+        }
+    }
+    if (!found)
+    {
+        return false;  // 全活表: 采样无可淘汰者
+    }
+    auto vit = shard.map.find(victimKey);  // 锁内无并发修改,必命中(防御兜底)
+    if (vit == shard.map.end())
+    {
+        return false;
+    }
+    // 折叠计数(refs==1⟹零存活块⟹unfreed折叠为零,释放=alloc-未释放派生算术
+    // 自洽,"申请=释放+未释放"不变量保持;折叠并入未知桶行,evicted*另行交付)
+    const uint64_t ac = vit->second.allocCount.load(std::memory_order_relaxed);
+    const uint64_t ab = vit->second.allocBytes.load(std::memory_order_relaxed);
+    g_unknownAllocCount.fetch_add(ac, std::memory_order_relaxed);
+    g_unknownAllocBytes.fetch_add(ab, std::memory_order_relaxed);
+    g_evictedStackCount.fetch_add(1, std::memory_order_relaxed);
+    g_evictedAllocCount.fetch_add(ac, std::memory_order_relaxed);
+    g_evictedAllocBytes.fetch_add(ab, std::memory_order_relaxed);
+    RealFree(vit->second.fullPcs);  // 符号化PC释放(可null,RealFree防御)
+    shard.map.erase(vit);
+    g_stackCount.fetch_sub(1, std::memory_order_relaxed);
+    return true;
+}
+
+// 栈表查找/登记(热路径):
+// 命中→返回条目指针(锁内refs+1=在途lookup引用,调用方记账后恰一次dispose);
+// 未命中→(无锁全深度采栈)→重查→插入(新条目refs=1建表+锁内+1在途)。
+// 纯查找不直接计数: 栈计数(allocCount/allocBytes/refs/liveBytes)由
+// InsertBlock在块表分片锁临界区内与条目存在性原子更新——块表插入成功
+// 才计数(块引用refs+1),失败不计数,闭窗快照下"申请=释放+未释放"恒等精确成立。
+// 表满: 先尝试EvictDeadStackLocked回收死栈(refs==1)腾位继续登记;采样无可
+// 淘汰者(全活表)→nullptr并计未归因(块转未知桶stackId=0继续记账,只损失
+// 归因粒度)+置bit1。trylock失败→nullptr计未归因。malloc路径trylock不做
+// 自旋重试,守住热路径延迟预算
+StackEntry* LookupOrRegisterStack(const StackKey& key)
+{
+    StackShard& shard = g_stackShards[StackShardIndex(key)];
+    if (pthread_mutex_trylock(&shard.mtx) != 0)
+    {
+        return nullptr;
+    }
+    auto it = shard.map.find(key);
+    if (it != shard.map.end())
+    {
+        // 快路径: 同一分配点重复命中(AI场景核心优化),不采全深度不符号化
+        it->second.refs.fetch_add(1, std::memory_order_relaxed);  // 在途lookup+1(锁内)
+        pthread_mutex_unlock(&shard.mtx);
+        return &it->second;
+    }
+    pthread_mutex_unlock(&shard.mtx);
+
+    // 慢路径: 先无锁全深度采栈(避免持锁做μs级 unwind),再重锁复查(期间他线程可能已插入)
+    uint32_t depth = g_stackDepth.load(std::memory_order_relaxed);
+    if (depth == 0 || depth > MAX_STACK_DEPTH)
+    {
+        depth = DEFAULT_STACK_DEPTH;
+    }
+    uintptr_t* fullPcs = static_cast<uintptr_t*>(RealMalloc(depth * sizeof(uintptr_t)));
+    uint32_t fullCount = 0;
+    if (fullPcs != nullptr)
+    {
+        fullCount = static_cast<uint32_t>(CaptureFrames(fullPcs, static_cast<int>(depth)));
+    }
+
+    if (pthread_mutex_trylock(&shard.mtx) != 0)
+    {
+        RealFree(fullPcs);
+        return nullptr;
+    }
+    it = shard.map.find(key);
+    if (it != shard.map.end())
+    {
+        // 竞争插入: 他线程已登记,复用其条目
+        it->second.refs.fetch_add(1, std::memory_order_relaxed);  // 在途lookup+1(锁内)
+        pthread_mutex_unlock(&shard.mtx);
+        RealFree(fullPcs);
+        return &it->second;
+    }
+    if (shard.map.size() >= g_maxStacksPerShard)
+    {
+        // 表满: 先尝试死栈淘汰(回收refs==1的零存活块条目腾位,见
+        // EvictDeadStackLocked)。实测400k栈约64%为死栈,回收让表占用与持有存活
+        // 内存的路径对齐;采样无可淘汰者(全活表)→新栈登记失败,块转未知桶继续
+        // 记账(深键假链风暴下栈表可被灌满,丢块会把账本完整度一并拖垮;只丢归因,
+        // 未归因计数可观测)+置截断标注bit1(死栈回收已激活,仍无法腾位→兜底未知桶)
+        if (!EvictDeadStackLocked(shard))
+        {
+            g_truncated.fetch_or(2u, std::memory_order_relaxed);
+            pthread_mutex_unlock(&shard.mtx);
+            RealFree(fullPcs);
+            return nullptr;
+        }
+        // 淘汰成功: 表内有位,继续登记
+    }
+
+    StackEntry* entry = nullptr;
+    try
+    {
+        // StackEntry含std::atomic成员,不可拷贝/移动:piecewise_construct原地
+        // 默认构造节点,随后填字段(emplace(key, lvalue)需拷贝构造pair,编译不过)
+        auto ins = shard.map.emplace(std::piecewise_construct, std::forward_as_tuple(key), std::forward_as_tuple());
+        if (ins.second)
+        {
+            entry = &ins.first->second;
+            entry->stackId = MakeStackId(StackShardIndex(key));
+            entry->fullPcs = fullPcs;
+            entry->fullCount = fullCount;
+            entry->refs.fetch_add(1, std::memory_order_relaxed);  // 在途lookup+1(锁内,建条目后)
+            g_stackCount.fetch_add(1, std::memory_order_relaxed);
+        }
+        else
+        {
+            // find刚miss而emplace命中: 容器内部不一致,块转未知桶(计未归因)
+        }
+    }
+    catch (...)
+    {
+        // 节点/bucket分配失败(bad_alloc,libstdc++强异常保证下表不变):
+        // 块转未知桶继续记账(计未归因)——异常绝不允许穿出malloc入口杀死宿主
+    }
+    pthread_mutex_unlock(&shard.mtx);
+    if (entry == nullptr)
+    {
+        RealFree(fullPcs);
+        return nullptr;
+    }
+    return entry;
+}
+
+// 块表插入结果:
+// kTable=成功入块表(归因粒度完整); kOverflow=块表满转溢出账本(记账继续,归因退化
+// 为整体); kFailed=未记账(trylock瞬时竞争静默跳过,或溢出账本亦满→bit2记账停止)
+enum class BlockInsertResult
+{
+    kTable,
+    kOverflow,
+    kFailed
+};
+// 块表捕获结果: kBlock=命中块表(释放记账已做); kOverflow=命中溢出账本(逆向修正
+// 已做); kMiss=均未命中(开窗前free,调用方独立通道统计); kLockFailed=有界自旋耗尽
+// (块可能在表但未取到锁,条目残留→假泄漏风险有界且极罕见——静默跳过,不置截断:
+// 瞬时竞争非数据降级)
+enum class BlockRemoveResult
+{
+    kBlock,
+    kOverflow,
+    kMiss,
+    kLockFailed
+};
+
+// 溢出账本插入(必持分片锁): 块表满降级时addr→size入set并累计溢出申请统计。
+// 成功返回true;set满(安全阀,防无容量增长OOM)/OOM→bit2记账停止,
+// 返回false。totalAlloc由调用方并入(InsertBlock转出时并入;ReinsertBlock为回插
+// 不重复并入——块已在窗口内申请过一次)
+bool InsertOverflowLocked(BlockShard& shard, uint64_t addr, uint64_t size)
+{
+    if (shard.overflow.size() >= g_maxOverflowPerShard)
+    {
+        g_truncated.fetch_or(4u, std::memory_order_relaxed);  // 溢出通道触顶: 记账停止
+        return false;
+    }
+    try
+    {
+        shard.overflow[addr] = size;  // operator[]覆盖陈旧同名(残留自愈)
+    }
+    catch (...)
+    {
+        g_truncated.fetch_or(4u, std::memory_order_relaxed);  // 溢出账本OOM: 记账停止
+        return false;
+    }
+    g_overflowAllocCount.fetch_add(1, std::memory_order_relaxed);
+    g_overflowAllocBytes.fetch_add(size, std::memory_order_relaxed);
+    return true;
+}
+
+// 块表插入(热路径): 成功返回kTable;trylock失败/表满/容量不可得→降级处理:
+// 表满→转溢出账本(记账继续,kOverflow);溢出亦满→kFailed(bit2已置位);
+// trylock瞬时竞争→kFailed(静默跳过,不置截断——瞬时态非数据降级)。
+// 记账契约(全部在块表分片锁临界区内完成,与条目存在性原子):
+//   ① 插入成功才计数: owner!=nullptr→其allocCount/allocBytes/refs/liveBytes
+//      原子自增(块引用+1: 调用方在途ref兜底,期间refs恒>=2,淘汰判读refs==1
+//      与之互斥,锁内直接fetch_add无需取栈表锁——跨分片并发更新由原子性保证);
+//      owner==nullptr(未知桶)→g_unknownAllocCount/Bytes自增;恒有
+//      g_totalAllocCount/Bytes自增。
+//      溢出转出亦并入g_totalAllocCount/Bytes(累计值符合区间内实际内存变化),
+//      溢出块无栈归因不计owner
+//   ② 同地址覆盖(前次FREE未达/竞态残留后地址复用)=虚拟释放: 被覆盖旧记录
+//      按其owner递减refs/liveBytes(块引用-1)并g_totalFreedCount/Bytes按旧size
+//      自增——再按新分配记账。由此"申请=释放+未释放"在所有交织下精确成立
+//   ③ 入表成功即清理溢出账本同名残留: 溢出账本中残留的该地址条目
+//      (地址复用/锁耗尽未达free)现转入块表,必须移除防双记账——两账本互斥,
+//      同一地址任一时刻只在一处记账
+BlockInsertResult InsertBlock(uint64_t addr, uint64_t size, uint64_t ts, StackEntry* owner)
+{
+    BlockShard& shard = g_blockShards[BlockShardIndex(addr)];
+    if (pthread_mutex_trylock(&shard.mtx) != 0)
+    {
+        return BlockInsertResult::kFailed;  // 瞬时竞争: 静默跳过(不置截断)
+    }
+    if (shard.count >= g_maxBlocksPerShard || !BlockShardEnsureRoomLocked(shard))
+    {
+        // 表满(条数上限)/容量不可得(OOM): 转溢出账本降级记账。
+        // 记账继续,仅归因粒度退化为整体(无栈)
+        if (!InsertOverflowLocked(shard, addr, size))
+        {
+            pthread_mutex_unlock(&shard.mtx);
+            return BlockInsertResult::kFailed;  // 溢出账本亦满: bit2已置位
+        }
+        g_totalAllocCount.fetch_add(1, std::memory_order_relaxed);
+        g_totalAllocBytes.fetch_add(size, std::memory_order_relaxed);
+        pthread_mutex_unlock(&shard.mtx);
+        return BlockInsertResult::kOverflow;
+    }
+    const uint32_t mask = shard.capMask;
+    uint32_t i = BlockBucketOf(addr, mask);
+    while (shard.keys[i] != 0 && shard.keys[i] != addr)
+    {
+        i = (i + 1) & mask;
+    }
+    if (shard.keys[i] == addr)
+    {
+        // 同地址遗留记录(前次FREE未达/竞态残留后地址复用): 覆盖=虚拟释放旧块
+        const BlockEntry& old = shard.vals[i];
+        if (old.owner != nullptr)
+        {
+            old.owner->refs.fetch_sub(1, std::memory_order_relaxed);  // 旧块引用-1(虚拟释放)
+            old.owner->liveBytes.fetch_sub(static_cast<int64_t>(old.size), std::memory_order_relaxed);
+        }
+        g_totalFreedCount.fetch_add(1, std::memory_order_relaxed);
+        g_totalFreedBytes.fetch_add(old.size, std::memory_order_relaxed);
+        shard.vals[i].owner = owner;
+        shard.vals[i].size = size;
+        shard.vals[i].allocTs = ts;
+    }
+    else
+    {
+        shard.keys[i] = addr;
+        shard.vals[i] = BlockEntry{owner, size, ts};
+        shard.count += 1;
+        g_blockCount.fetch_add(1, std::memory_order_relaxed);
+    }
+    // 残留自愈: 入表成功即移除溢出账本同名(见契约③)
+    if (!shard.overflow.empty())
+    {
+        shard.overflow.erase(addr);
+    }
+    // 新分配记账(成功插入才计数,见函数头契约①)
+    if (owner != nullptr)
+    {
+        owner->allocCount.fetch_add(1, std::memory_order_relaxed);
+        owner->allocBytes.fetch_add(size, std::memory_order_relaxed);
+        owner->refs.fetch_add(1, std::memory_order_relaxed);  // 块引用+1(调用方在途ref兜底)
+        owner->liveBytes.fetch_add(static_cast<int64_t>(size), std::memory_order_relaxed);
+    }
+    else
+    {
+        g_unknownAllocCount.fetch_add(1, std::memory_order_relaxed);
+        g_unknownAllocBytes.fetch_add(size, std::memory_order_relaxed);
+    }
+    g_totalAllocCount.fetch_add(1, std::memory_order_relaxed);
+    g_totalAllocBytes.fetch_add(size, std::memory_order_relaxed);
+    pthread_mutex_unlock(&shard.mtx);
+    return BlockInsertResult::kTable;
+}
+
+// 块表查询并删除(free/realloc捕获路径): 返回BlockRemoveResult——
+// kBlock=命中块表(释放记账已在锁内完成: 减liveBytes+增g_totalFreed*;块引用refs
+// 不减——捕获即转移给out,调用方持有并终态恰一次dispose,见引用契约);
+// kOverflow=命中溢出账本(逆向修正已在锁内完成: 增g_overflowFreed*+增g_totalFreed*,
+// 条目已移除——溢出申请已并入g_totalAlloc*,其释放须回扣g_totalFreed*维持全局
+// 不变量);
+// kMiss=两账本均未命中(开窗前分配/记账被跳过→调用方独立通道统计);
+// kLockFailed=有界自旋耗尽(块可能在表但未取到锁: 静默跳过,条目残留→假泄漏风险
+// 有界且极罕见——瞬时竞争非数据降级,不置截断标注)。
+// 命中块表时防御性清除溢出账本同名残留(地址复用/锁耗尽残留下同一地址
+// 两账本互斥,防双记账)
+BlockRemoveResult CaptureAndRemoveBlock(uint64_t addr, BlockEntry& out)
+{
+    BlockShard& shard = g_blockShards[BlockShardIndex(addr)];
+    for (int spin = 0; spin < BLOCK_LOCK_SPINS; ++spin)
+    {
+        if (pthread_mutex_trylock(&shard.mtx) != 0)
+        {
+            CpuRelax();
+            continue;
+        }
+        if (shard.keys != nullptr)
+        {
+            const uint32_t mask = shard.capMask;
+            uint32_t i = BlockBucketOf(addr, mask);
+            while (shard.keys[i] != 0)
+            {
+                if (shard.keys[i] == addr)
+                {
+                    out = shard.vals[i];
+                    BlockShardRemoveAtLocked(shard, i);
+                    shard.count -= 1;
+                    g_blockCount.fetch_sub(1, std::memory_order_relaxed);
+                    if (out.owner != nullptr)
+                    {
+                        // 块引用转移: 捕获即转移给out,调用方持有并终态恰一次dispose,
+                        // 此处不减refs——realloc在途窗口靠此引用钉住条目(见引用契约)
+                        out.owner->liveBytes.fetch_sub(static_cast<int64_t>(out.size), std::memory_order_relaxed);
+                    }
+                    g_totalFreedCount.fetch_add(1, std::memory_order_relaxed);
+                    g_totalFreedBytes.fetch_add(out.size, std::memory_order_relaxed);
+                    // 残留自愈: 命中块表即移除溢出账本同名
+                    if (!shard.overflow.empty())
+                    {
+                        shard.overflow.erase(addr);
+                    }
+                    pthread_mutex_unlock(&shard.mtx);
+                    return BlockRemoveResult::kBlock;
+                }
+                i = (i + 1) & mask;
+            }
+        }
+        // 块表未命中→溢出账本查询: 命中即逆向修正
+        const auto it = shard.overflow.find(addr);
+        if (it != shard.overflow.end())
+        {
+            out.size = it->second;
+            out.owner = nullptr;
+            out.allocTs = 0;
+            shard.overflow.erase(it);
+            g_overflowFreedCount.fetch_add(1, std::memory_order_relaxed);
+            g_overflowFreedBytes.fetch_add(out.size, std::memory_order_relaxed);
+            g_totalFreedCount.fetch_add(1, std::memory_order_relaxed);
+            g_totalFreedBytes.fetch_add(out.size, std::memory_order_relaxed);
+            pthread_mutex_unlock(&shard.mtx);
+            return BlockRemoveResult::kOverflow;
+        }
+        pthread_mutex_unlock(&shard.mtx);
+        return BlockRemoveResult::kMiss;  // 两账本均未命中: 开窗前free,调用方独立通道
+    }
+    // 有界重试耗尽: 静默跳过(不置截断标注,见函数头注释)
+    return BlockRemoveResult::kLockFailed;
+}
+
+// 块表回插(realloc失败恢复,源为块表kBlock): 捕获记录原样放回,并恢复
+// CaptureAndRemoveBlock已做的释放记账(重增liveBytes+回扣g_totalFreed*)——
+// 每个在途realloc在闭窗边界都完整表现为"in"或"out",不变量不被撕裂。
+// 引用契约: 捕获时块引用已转移给rec(调用方持有),回插成功=引用归块(不增不减,
+// 无fetch_add);转溢出/转溢出失败/自旋耗尽=块离开栈归因或不可见,转移引用
+// 恰一次dispose(refs-1)。
+// 表满/容量不可得→转溢出账本(与InsertBlock同降级语义,记账继续): 撤销捕获时的
+// 释放记账(块仍存活,回扣g_totalFreed*)并计入溢出通道(g_overflowAlloc*,不重复
+// g_totalAlloc*——块已在原分配时计数);owner计数不恢复(块离开原栈归因,转入
+// 无栈溢出通道)。溢出账本亦满(InsertOverflowLocked失败,bit2已置位)→块自此
+// 不可见,尽力而为(记账已停止,超出截断点的边界行为不保证)
+// trylock失败→有界自旋重试(失败=块表缺口,后续free未命中,该块自窗口报告消失);
+// 重试耗尽静默跳过(不置截断标注,同CaptureAndRemoveBlock——瞬时竞争非数据降级)
+void ReinsertBlock(uint64_t addr, const BlockEntry& rec)
+{
+    BlockShard& shard = g_blockShards[BlockShardIndex(addr)];
+    for (int spin = 0; spin < BLOCK_LOCK_SPINS; ++spin)
+    {
+        if (pthread_mutex_trylock(&shard.mtx) != 0)
+        {
+            CpuRelax();
+            continue;
+        }
+        // addr刚被本线程捕获移除,必不在表(真分配器未归还该地址),纯插入;
+        // 表满/容量不可得→转溢出账本降级(见InsertBlock同款语义)
+        if (!BlockShardInsertLocked(shard, addr, rec))
+        {
+            if (InsertOverflowLocked(shard, addr, rec.size))
+            {
+                // 转溢出成功: 撤销捕获时的释放记账(块仍存活);overflowAlloc已随
+                // InsertOverflowLocked自增,totalAlloc不重复(原分配已计数)
+                g_totalFreedCount.fetch_sub(1, std::memory_order_relaxed);
+                g_totalFreedBytes.fetch_sub(rec.size, std::memory_order_relaxed);
+            }
+            // 转溢出失败: bit2已置位(记账停止),块自此不可见(尽力而为)
+            if (rec.owner != nullptr)
+            {
+                rec.owner->refs.fetch_sub(1, std::memory_order_relaxed);  // 离开栈归因,dispose转移引用
+            }
+        }
+        else
+        {
+            if (rec.owner != nullptr)
+            {
+                // 回插成功: 引用归块(捕获时已转移,不增不减);重增liveBytes
+                rec.owner->liveBytes.fetch_add(static_cast<int64_t>(rec.size), std::memory_order_relaxed);
+            }
+            g_totalFreedCount.fetch_sub(1, std::memory_order_relaxed);
+            g_totalFreedBytes.fetch_sub(rec.size, std::memory_order_relaxed);
+        }
+        pthread_mutex_unlock(&shard.mtx);
+        return;
+    }
+    // 有界重试耗尽: 静默跳过(块自此不可见,尽力而为,不置截断标注)
+    if (rec.owner != nullptr)
+    {
+        rec.owner->refs.fetch_sub(1, std::memory_order_relaxed);  // 块不可见,dispose转移引用
+    }
+}
+
+// 溢出账本回插(realloc失败恢复,源为溢出账本kOverflow): 撤销CaptureAndRemoveBlock
+// 已做的逆向修正(回扣g_overflowFreed*+g_totalFreed*),addr→size按原值重新入set。
+// set刚移除该addr,容量必有余量;rehash OOM理论可能→try/catch静默(块自此不可见,
+// 尽力而为)。trylock耗尽静默跳过(同ReinsertBlock,不置截断)
+void ReinsertOverflowBlock(uint64_t addr, uint64_t size)
+{
+    BlockShard& shard = g_blockShards[BlockShardIndex(addr)];
+    for (int spin = 0; spin < BLOCK_LOCK_SPINS; ++spin)
+    {
+        if (pthread_mutex_trylock(&shard.mtx) != 0)
+        {
+            CpuRelax();
+            continue;
+        }
+        try
+        {
+            shard.overflow[addr] = size;  // 刚移除,必能插入;operator[]覆盖同名
+        }
+        catch (...)
+        {
+            // rehash OOM: 块自此不可见(尽力而为)
+        }
+        g_overflowFreedCount.fetch_sub(1, std::memory_order_relaxed);
+        g_overflowFreedBytes.fetch_sub(size, std::memory_order_relaxed);
+        g_totalFreedCount.fetch_sub(1, std::memory_order_relaxed);
+        g_totalFreedBytes.fetch_sub(size, std::memory_order_relaxed);
+        pthread_mutex_unlock(&shard.mtx);
+        return;
+    }
+    // 有界重试耗尽: 静默跳过(块自此不可见,尽力而为,不置截断标注)
+}
+
+// 块大小→排布桶下标: g_sizeBucketBounds为各桶下界(升序),桶数=bounds+1;
+// 末桶[最后下界, UINT64_MAX)。线性扫描(bounds数≤16,块遍历的常数开销)。
+// 记账主流程与闭窗聚合共用(RecordFree开窗前free归桶/CloseAggregate未释放归桶)
