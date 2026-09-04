@@ -189,6 +189,25 @@ void JsonManager::GetUint32Value(const std::string& key, uint32_t& value)
     }
 }
 
+void JsonManager::GetUint64Value(const std::string& key, uint64_t& value)
+{
+    nlohmann::json current = jsonConfig_;
+    if (!CheckKeyIsValid(key, current))
+    {
+        return;
+    }
+
+    try
+    {
+        value = current.get<uint64_t>();
+    }
+    catch (const std::exception& e)
+    {
+        std::cout << "[msmemscope] Error: Exception while reading nested key " << key << ": " << e.what() << std::endl;
+        return;
+    }
+}
+
 void JsonManager::GetBoolValue(const std::string& key, bool& value)
 {
     nlohmann::json current = jsonConfig_;
@@ -290,6 +309,11 @@ void JsonConfig::SaveConfigToJson(const MemScope::Config& config)
     Utility::JsonManager::GetInstance().SetValue("dumpEventType", config.dumpEventType);
     Utility::JsonManager::GetInstance().SetValue("analysisType", config.analysisType);
     Utility::JsonManager::GetInstance().SetValue("oomTopK", config.oomTopK);
+    // host内存泄漏检测:上报模式与块大小阈值随config持久化(CLI经json传递给目标进程)
+    Utility::JsonManager::GetInstance().SetValue("hostLeakMode", config.hostLeakMode);
+    Utility::JsonManager::GetInstance().SetValue("blockSizeThreshold", config.blockSizeThreshold);
+    // 显式采样率倒数(默认1=不采样),同样经json传递
+    Utility::JsonManager::GetInstance().SetValue("sampleRate", config.sampleRate);
     Utility::JsonManager::GetInstance().SetValue("collectMode", config.collectMode);
     Utility::JsonManager::GetInstance().SetValue("outputDir", config.outputDir);
     Utility::JsonManager::GetInstance().SetValue("dataFormat", config.dataFormat);
@@ -346,6 +370,11 @@ bool JsonConfig::ReadJsonConfig(MemScope::Config& config)
     uint32_t oomTopK = config.oomTopK;
     Utility::JsonManager::GetInstance().GetUint32Value("oomTopK", oomTopK);
     config.oomTopK = static_cast<uint16_t>(oomTopK);
+    // host内存泄漏检测:CLI模式下目标进程经MSMEMSCOPE_CONFIG_PATH读回
+    Utility::JsonManager::GetInstance().GetUint8Value("hostLeakMode", config.hostLeakMode);
+    Utility::JsonManager::GetInstance().GetUint64Value("blockSizeThreshold", config.blockSizeThreshold);
+    // 显式采样率倒数;键缺失(旧json)时保持config默认值(1=不采样)
+    Utility::JsonManager::GetInstance().GetUint32Value("sampleRate", config.sampleRate);
     Utility::JsonManager::GetInstance().GetUint8Value("collectMode", config.collectMode);
     Utility::JsonManager::GetInstance().GetUint8Value("dataFormat", config.dataFormat);
     Utility::JsonManager::GetInstance().GetUint8Value("eventType", config.eventType);
