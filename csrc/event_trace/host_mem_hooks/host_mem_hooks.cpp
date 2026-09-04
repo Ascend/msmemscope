@@ -2841,3 +2841,975 @@ void CloseAggregate()
 // =============================================================================
 // SVC实现(bind返回的服务表)
 // =============================================================================
+
+void SvcSetEnabled(int enabled)
+{
+    pthread_mutex_lock(&g_svcMtx);
+    if (enabled != 0)
+    {
+        if (!g_ctorDone)
+        {
+            // 构造未完成(采集库静态初始化先于本so构造,见g_ctorDone注释):暂存
+            // 开窗请求,HostMemHookInit末尾按已解析配置补开
+            g_openPending = true;
+            pthread_mutex_unlock(&g_svcMtx);
+            return;
+        }
+        if (g_enabled.load(std::memory_order_relaxed))
+        {
+            pthread_mutex_unlock(&g_svcMtx);
+            return;  // 幂等: 窗口已开
+        }
+        if (g_exiting.load(std::memory_order_relaxed))
+        {
+            pthread_mutex_unlock(&g_svcMtx);
+            return;  // 退出期不再开窗(生产者已被g_exiting压住,开了也无事件)
+        }
+        if (g_forked.load(std::memory_order_acquire))
+        {
+            pthread_mutex_unlock(&g_svcMtx);
+            return;  // fork后代不监控(见g_forked注释)
+        }
+        // 上一窗口仍在关闭中(闭窗聚合未完成): 等待STAGE_END发出,防END(N)晚于
+        // START(N+1)。上界60s(200μs×30万次):大块表闭窗聚合(遍历+符号化)可达
+        // 数十秒,1s级上界会在正常慢消化下静默跳过下一次开窗、丢一整窗数据;
+        // 每5s(2.5万次)打印等待进度,超时放弃开窗并明示
+        for (uint32_t i = 0; i < 300000u && g_closing.load(std::memory_order_acquire); ++i)
+        {
+            pthread_mutex_unlock(&g_svcMtx);
+            usleep(200);
+            pthread_mutex_lock(&g_svcMtx);
+            if (i % 25000u == 24999u)
+            {
+                fprintf(stderr,
+                        "[msmemscope] hostmem: [pid=%llu] previous window still closing (waiting close aggregate)\n",
+                        static_cast<unsigned long long>(getpid()));
+            }
+        }
+        if (g_closing.load(std::memory_order_relaxed))
+        {
+            fprintf(stderr, "[msmemscope] hostmem: [pid=%llu] previous window still closing after 60s, open skipped\n",
+                    static_cast<unsigned long long>(getpid()));
+            pthread_mutex_unlock(&g_svcMtx);
+            return;
+        }
+
+        // 1. 运行参数快照(栈深度/块阈值/采样率,钩子不解析配置文件)
+        if (g_api.get_params != nullptr)
+        {
+            MsmemscopeHostmemParams params{};
+            g_api.get_params(&params);
+            if (params.stackDepth > 0 && params.stackDepth <= MAX_STACK_DEPTH)
+            {
+                g_stackDepth.store(params.stackDepth, std::memory_order_relaxed);
+            }
+            g_blockThreshold.store(params.blockThreshold, std::memory_order_relaxed);
+            // 采样率倒数: 0→1归一化(1=不采样);非1值向上规范化到2的幂(门控为
+            // 掩码判定,热路径免取模),超过1<<30按1<<30截断
+            uint32_t rate = params.sampleRate;
+            if (rate == 0)
+            {
+                rate = 1;
+            }
+            else if (rate > 1)
+            {
+                uint32_t pow2 = 1;
+                while (pow2 < rate && pow2 < (1u << 30))
+                {
+                    pow2 <<= 1;
+                }
+                rate = pow2;
+            }
+            g_sampleRate.store(rate, std::memory_order_relaxed);
+        }
+
+        // 2. 清零块表/栈表/窗口计数器(上一窗口已闭+聚合完成,表冻结无争用)
+        ClearTables();
+
+        // 3. 预热线程就绪(首次创建;须先于门控开启,窗口期dladdr预热尽早覆盖)。
+        //    失败(线程资源耗尽)仅记日志——预热是符号质量的尽力而为,窗口照常开
+        if (!EnsureWarmupThread())
+        {
+            fprintf(stderr, "[msmemscope] hostmem: [pid=%llu] warmup thread create failed, symbol warmup degraded\n",
+                    static_cast<unsigned long long>(getpid()));
+        }
+
+        // 4. 模块可执行段快照刷新: FP走栈pc校验依据。窗口间宿主可能已
+        //    dlopen新模块(分析库/插件),开窗时刷新一次,此后预热线程1Hz跟进
+        RefreshExecRanges();
+
+        // 5. 发STAGE_START(调用线程同步直调,先于任何窗口记账)。护栏:派发内部分配
+        //    失败(采集库侧异常)不可穿出——本函数可能运行在宿主.init_array上下文,
+        //    未捕获异常即宿主终止;失败时窗口照常开(账本与事件流无关,数据不丢)
+        g_windowId.fetch_add(1, std::memory_order_relaxed);
+        const uint64_t startTs = NowNs();
+        // 完整宽度stageId(与闭窗同口径,uint64不截断)
+        const uint64_t stageId = g_windowId.load(std::memory_order_relaxed);
+        if (g_api.report_stage != nullptr)
+        {
+            try
+            {
+                g_api.report_stage(1, startTs, stageId);
+            }
+            catch (...)
+            {
+                fprintf(stderr,
+                        "[msmemscope] hostmem: [pid=%llu] stage start dispatch failed, window data may be empty\n",
+                        static_cast<unsigned long long>(getpid()));
+            }
+        }
+
+        // 6. 开闸(release: 与生产者acquire配对,上述初始化全部可见)
+        g_enabled.store(true, std::memory_order_release);
+        // 窗口时间线:每窗一行(可维护性日志)——ClearTables刚执行完(表应归零),
+        // 中途重开周期与进程归属在stderr直接可见,配合闭窗行还原完整窗口时间线
+        fprintf(stderr, "[msmemscope] hostmem: [pid=%llu] window open id=%llu (stacks=%llu blocks=%llu)\n",
+                static_cast<unsigned long long>(getpid()),
+                static_cast<unsigned long long>(g_windowId.load(std::memory_order_relaxed)),
+                static_cast<unsigned long long>(g_stackCount.load(std::memory_order_relaxed)),
+                static_cast<unsigned long long>(g_blockCount.load(std::memory_order_relaxed)));
+        pthread_mutex_unlock(&g_svcMtx);
+        return;
+    }
+
+    // 关窗(调用线程同步完成): 记账冻结→停预热线程(join,兼作沉降期)→闭窗聚合
+    // →发STAGE_END。闭窗是本线程的同步路径,STAGE_END即"聚合完成、快照可拉取"的信号
+    if (!g_ctorDone)
+    {
+        g_openPending = false;  // 构造前"开→关"齐发:撤销暂存(窗口从未真开,无聚合需求)
+    }
+    if (!g_enabled.load(std::memory_order_relaxed))
+    {
+        pthread_mutex_unlock(&g_svcMtx);
+        // 幂等: 窗口已关。g_windowId>0=本进程曾开过窗(退出期诊断打点):此行与
+        // 本函数的"window close id=X done"互证——done出现=闭窗聚合完成、STAGE_END
+        // 已发;本行出现而done缺失=闭窗从未真正启动(g_closing未置位)
+        if (g_windowId.load(std::memory_order_relaxed) != 0)
+        {
+            fprintf(stderr,
+                    "[msmemscope] hostmem: [pid=%llu] close requested but window already disabled "
+                    "(windowId=%llu closing=%d)\n",
+                    static_cast<unsigned long long>(getpid()),
+                    static_cast<unsigned long long>(g_windowId.load(std::memory_order_relaxed)),
+                    static_cast<int>(g_closing.load(std::memory_order_relaxed)));
+        }
+        return;
+    }
+    g_enabled.store(false, std::memory_order_release);  // 记账门控先关(生产者冻结)
+    g_closing.store(true, std::memory_order_release);
+    // 停预热线程: join兼作沉降期——关闸后in-flight free已drain(见StopWarmupThread)
+    StopWarmupThread();
+    // 闭窗聚合(遍历块表/栈表/符号化,同步完成;产物入g_closeStats/g_closeSizeDist/
+    // g_closeSnapshot,窗口关闭态可经dump_*/get_stats拉取)
+    CloseAggregate();
+    const uint64_t ts = NowNs();
+    // 完整宽度stageId(与开窗同口径,uint64不截断)
+    const uint64_t stageId = g_windowId.load(std::memory_order_relaxed);
+    if (g_api.report_stage != nullptr)
+    {
+        try
+        {
+            g_api.report_stage(0, ts, stageId);
+        }
+        catch (...)
+        {
+        }
+    }
+    // 窗口时间线:闭窗完成一行(可维护性日志)。此态条目留存表内,下次开窗才清空。
+    // unattr=窗口内栈层失败转未知桶的块数(账本完整度100%而unattr上探=栈表拥塞,
+    // 与分析器报告的未知栈桶行互证);truncated=截断标注(bit0块表满转溢出/bit1栈表满
+    // 转未知桶/bit2溢出账本满记账停止)
+    fprintf(stderr,
+            "[msmemscope] hostmem: [pid=%llu] window close id=%llu done (stacks=%llu blocks=%llu "
+            "unattr=%llu truncated=%u)\n",
+            static_cast<unsigned long long>(getpid()),
+            static_cast<unsigned long long>(g_windowId.load(std::memory_order_relaxed)),
+            static_cast<unsigned long long>(g_stackCount.load(std::memory_order_relaxed)),
+            static_cast<unsigned long long>(g_blockCount.load(std::memory_order_relaxed)),
+            static_cast<unsigned long long>(g_unattributedCount.load(std::memory_order_relaxed) -
+                                            g_unattrWindowBase.load(std::memory_order_relaxed)),
+            static_cast<unsigned int>(g_truncated.load(std::memory_order_relaxed)));
+    // 符号缓存覆盖(诊断):top-K采样产物的符号帧数。接近SYM_CACHE_MAX_ENTRIES=
+    // 缓存满提前停;明显小于=采样吞吐不足(调TOP_LEAK_SYMBOLIZE_K/INTERVAL)
+    fprintf(stderr, "[msmemscope] hostmem: [pid=%llu] symCache: %zu entries (warmup coverage, cap=%zu)\n",
+            static_cast<unsigned long long>(getpid()), g_symCache.size(), static_cast<size_t>(SYM_CACHE_MAX_ENTRIES));
+    g_closing.store(false, std::memory_order_release);
+    pthread_mutex_unlock(&g_svcMtx);
+}
+
+void SvcGetStats(MsmemscopeHostmemStats* stats)
+{
+    if (stats == nullptr)
+    {
+        return;
+    }
+    // 窗口关闭态: 返回闭窗冻结值(CloseAggregate产物,与dump_*同源一致);
+    // 开启态: 实时计数器尽力而为值(未释放=申请-释放派生,与快照口径一致)
+    if (g_closeSnapshot.valid)
+    {
+        stats->liveBlockCount = g_closeSnapshot.liveBlockCount;
+        stats->totalAllocCount = g_closeSnapshot.totalAllocCount;
+        stats->totalAllocBytes = g_closeSnapshot.totalAllocBytes;
+        stats->totalFreedCount = g_closeSnapshot.totalFreedCount;
+        stats->totalFreedBytes = g_closeSnapshot.totalFreedBytes;
+        stats->untrackedCount = g_closeSnapshot.untrackedCount;
+        stats->untrackedBytes = g_closeSnapshot.untrackedBytes;
+        stats->overflowAllocCount = g_closeSnapshot.overflowAllocCount;
+        stats->overflowAllocBytes = g_closeSnapshot.overflowAllocBytes;
+        stats->overflowFreedCount = g_closeSnapshot.overflowFreedCount;
+        stats->overflowFreedBytes = g_closeSnapshot.overflowFreedBytes;
+        stats->preWindowFreeCount = g_closeSnapshot.preWindowFreeCount;
+        stats->preWindowFreeBytes = g_closeSnapshot.preWindowFreeBytes;
+        stats->evictedStackCount = g_closeSnapshot.evictedStackCount;
+        stats->evictedAllocCount = g_closeSnapshot.evictedAllocCount;
+        stats->evictedAllocBytes = g_closeSnapshot.evictedAllocBytes;
+        stats->sampleRate = g_closeSnapshot.sampleRate;
+        stats->truncated = g_closeSnapshot.truncated;
+        return;
+    }
+    const uint64_t allocCount = g_totalAllocCount.load(std::memory_order_relaxed);
+    const uint64_t allocBytes = g_totalAllocBytes.load(std::memory_order_relaxed);
+    stats->liveBlockCount = g_blockCount.load(std::memory_order_relaxed);
+    stats->totalAllocCount = allocCount;
+    stats->totalAllocBytes = allocBytes;
+    stats->totalFreedCount = g_totalFreedCount.load(std::memory_order_relaxed);
+    stats->totalFreedBytes = g_totalFreedBytes.load(std::memory_order_relaxed);
+    stats->untrackedCount = g_untrackedCount.load(std::memory_order_relaxed);
+    stats->untrackedBytes = g_untrackedBytes.load(std::memory_order_relaxed);
+    stats->overflowAllocCount = g_overflowAllocCount.load(std::memory_order_relaxed);
+    stats->overflowAllocBytes = g_overflowAllocBytes.load(std::memory_order_relaxed);
+    stats->overflowFreedCount = g_overflowFreedCount.load(std::memory_order_relaxed);
+    stats->overflowFreedBytes = g_overflowFreedBytes.load(std::memory_order_relaxed);
+    stats->preWindowFreeCount = g_preWindowFreeCount.load(std::memory_order_relaxed);
+    stats->preWindowFreeBytes = g_preWindowFreeBytes.load(std::memory_order_relaxed);
+    stats->evictedStackCount = g_evictedStackCount.load(std::memory_order_relaxed);
+    stats->evictedAllocCount = g_evictedAllocCount.load(std::memory_order_relaxed);
+    stats->evictedAllocBytes = g_evictedAllocBytes.load(std::memory_order_relaxed);
+    stats->sampleRate = g_sampleRate.load(std::memory_order_relaxed);
+    stats->truncated = g_truncated.load(std::memory_order_relaxed);
+}
+
+void SvcDumpLiveBlocks(void (*emit)(void* ctx, uint64_t addr, uint64_t size, uint64_t allocTs, uint64_t stackId),
+                       void* ctx)
+{
+    if (emit == nullptr)
+    {
+        return;
+    }
+    // 窗口关闭态调用(热路径冻结);分片锁与潜在的开窗清表互斥串行化。
+    // owner指针安全性:块在表即持其ref(refs>=2,块引用+在途),归栈条目不可被
+    // 淘汰(淘汰判读refs==1;闭窗态无生产者,指针稳定)。空分片整体跳过内层桶数组扫描
+    for (auto& shard : g_blockShards)
+    {
+        pthread_mutex_lock(&shard.mtx);
+        // count>0隐含keys已分配(count仅在EnsureRoomLocked分配keys后递增);
+        // count在闭窗冻结态下稳定,分片锁内读取无争用
+        if (shard.keys != nullptr && shard.count > 0)
+        {
+            for (uint32_t i = 0; i <= shard.capMask; ++i)
+            {
+                if (shard.keys[i] == 0)
+                {
+                    continue;
+                }
+                const BlockEntry& v = shard.vals[i];
+                const uint64_t stackId = v.owner != nullptr ? v.owner->stackId : 0;
+                emit(ctx, shard.keys[i], v.size, v.allocTs, stackId);
+            }
+        }
+        pthread_mutex_unlock(&shard.mtx);
+    }
+}
+
+void SvcDumpStackStats(void (*emit)(void* ctx, uint64_t stackId, uint64_t allocCount, uint64_t allocBytes,
+                                    uint64_t freedCount, uint64_t freedBytes, uint64_t unfreedCount,
+                                    uint64_t unfreedBytes, uint64_t maxBlockSize, const char* frameDesc, size_t len),
+                       void* ctx)
+{
+    if (emit == nullptr)
+    {
+        return;
+    }
+    // 仅窗口关闭态调用(闭窗聚合产物;开启态为空——CloseAggregate填充,ClearTables
+    // 清空,跨窗口不残留)。重放g_closeStats(已按unfreedBytes降序排序)
+    for (const StackStatRow& r : g_closeStats)
+    {
+        emit(ctx, r.stackId, r.allocCount, r.allocBytes, r.freedCount, r.freedBytes, r.unfreedCount, r.unfreedBytes,
+             r.maxBlockSize, r.frameDesc.data(), r.frameDesc.size());
+    }
+}
+
+void SvcDumpSizeDist(void (*emit)(void* ctx, uint64_t rangeLow, uint64_t rangeHigh, uint64_t blockCount,
+                                  uint64_t blockBytes),
+                     void* ctx)
+{
+    if (emit == nullptr)
+    {
+        return;
+    }
+    // 仅窗口关闭态调用(闭窗聚合产物,同g_closeStats生命周期);重放g_closeSizeDist
+    for (const SizeBucket& b : g_closeSizeDist)
+    {
+        emit(ctx, b.rangeLow, b.rangeHigh, b.blockCount, b.blockBytes);
+    }
+}
+
+void SvcDumpPreWindowDist(void (*emit)(void* ctx, uint64_t rangeLow, uint64_t rangeHigh, uint64_t blockCount,
+                                       uint64_t blockBytes),
+                          void* ctx)
+{
+    if (emit == nullptr)
+    {
+        return;
+    }
+    // 仅窗口关闭态调用(闭窗聚合产物,同g_closeStats生命周期);重放g_closePreWindowDist
+    for (const SizeBucket& b : g_closePreWindowDist)
+    {
+        emit(ctx, b.rangeLow, b.rangeHigh, b.blockCount, b.blockBytes);
+    }
+}
+
+const MsmemscopeHostmemSvc g_svcTable = {SvcSetEnabled,     SvcGetStats,     SvcDumpLiveBlocks,
+                                         SvcDumpStackStats, SvcDumpSizeDist, SvcDumpPreWindowDist};
+
+// =============================================================================
+// fork安全: prepare冻结(锁全部分片)→parent释放→child退出监控(g_forked置位)
+// =============================================================================
+
+void ForkPrepare()
+{
+    // 依次获取全部128把分片锁: fork瞬间无他线程持锁写表;临界区纯内存操作,获取有界。
+    // 父进程不清空、不排空任何数据(零丢失)
+    for (auto& shard : g_blockShards)
+    {
+        pthread_mutex_lock(&shard.mtx);
+    }
+    for (auto& shard : g_stackShards)
+    {
+        pthread_mutex_lock(&shard.mtx);
+    }
+}
+
+void ForkParent()
+{
+    for (auto& shard : g_blockShards)
+    {
+        pthread_mutex_unlock(&shard.mtx);
+    }
+    for (auto& shard : g_stackShards)
+    {
+        pthread_mutex_unlock(&shard.mtx);
+    }
+}
+
+void ForkChild()
+{
+    // fork后代不监控(见g_forked注释):仅恢复子进程自身可运行性,不做任何表/计数
+    // 清理——①子进程永不再开窗,g_enabled即将关闸,表数据无人消费;②清表需
+    // 逐条目遍历,fork后首次写触发COW整页拷贝(块表可达百MB页),对fork密集
+    // 型宿主是纯代价;③COW快照在子进程内无人触碰即无人踩坏。父进程侧数据
+    // 零丢失(prepare只冻结不排空)。分片锁由fork调用线程自身在prepare中持有,
+    // 子进程仅本线程存活,直接释放即完成重建
+    for (auto& shard : g_blockShards)
+    {
+        pthread_mutex_unlock(&shard.mtx);
+    }
+    for (auto& shard : g_stackShards)
+    {
+        pthread_mutex_unlock(&shard.mtx);
+    }
+
+    // g_svcMtx可能被fork瞬间正在开窗/闭窗的其他线程持有(fork调用线程不可能同时
+    // 在SvcSetEnabled内):子进程内重新初始化——仅本线程存活,无人在等这把锁;
+    // COW下不影响父进程。子进程退出时atexit闭窗的set_enabled依赖此锁,不重建则
+    // 竞态下子进程退出挂死
+    pthread_mutex_init(&g_svcMtx, nullptr);
+
+    // 关闸(fork时窗口若开启,子进程生产者即刻静止)+置fork标记(release配对
+    // SvcSetEnabled的acquire)。g_closing必须复位:fork发生在父进程关窗聚合期间时
+    // 子进程继承closing=1,采集侧atexit闭窗等待将永不满足,子进程退出挂死。
+    // 预热线程未随fork存活,重建标志一并清零(子进程永不创建预热线程,清零仅防
+    // get_status误报线程在位;g_warmupStop同样复位,防子进程内残留置位
+    // 导致父进程已创建线程指针被复用前状态错乱)
+    g_enabled.store(false, std::memory_order_release);
+    g_closing.store(false, std::memory_order_release);
+    g_warmupThreadCreated.store(false, std::memory_order_release);
+    g_warmupStop.store(false, std::memory_order_release);
+    g_forked.store(true, std::memory_order_release);
+}
+
+// =============================================================================
+// 构造与配置覆盖
+// =============================================================================
+
+size_t ParseSizeEnv(const char* name, size_t defVal)
+{
+    const char* v = getenv(name);
+    if (v == nullptr || *v == '\0')
+    {
+        return defVal;
+    }
+    char* end = nullptr;
+    unsigned long long n = strtoull(v, &end, 10);
+    if (end == v)
+    {
+        return defVal;
+    }
+    return static_cast<size_t>(n);
+}
+
+// 大小排布桶边界解析(闭窗聚合步骤0用): MSMEMSCOPE_HOSTMEM_SIZE_BUCKETS为逗号分隔
+// 的下界序列(升序,如"256,1024,4096"),桶数=下界数+1;末桶上界UINT64_MAX。
+// 非法输入(空/非数字/非升序)按默认边界回退;首个下界必须>0(否则首桶为空,无意义)。
+// 默认7桶按数量级划分(0~256B/256B~1K/1K~4K/4K~32K/32K~256K/256K~1M/>1M):
+// 各桶覆盖一个数量级,报告可直接看出未释放块尺寸分布
+void ParseSizeBuckets()
+{
+    const char* v = getenv("MSMEMSCOPE_HOSTMEM_SIZE_BUCKETS");
+    std::vector<uint64_t, RealMallocAllocator<uint64_t>> bounds;
+    const uint64_t kDefaults[] = {256, 1024, 4096, 32768, 262144, 1048576};
+    bool ok = v != nullptr && *v != '\0';
+    if (ok)
+    {
+        char* p = const_cast<char*>(v);
+        uint64_t prev = 0;
+        while (*p != '\0')
+        {
+            char* end = nullptr;
+            unsigned long long n = strtoull(p, &end, 10);
+            if (end == p)
+            {
+                ok = false;
+                break;
+            }
+            if (n == 0 || n <= prev)
+            {
+                ok = false;  // 下界须>0且严格升序
+                break;
+            }
+            bounds.push_back(static_cast<uint64_t>(n));
+            prev = static_cast<uint64_t>(n);
+            p = end;
+            if (*p == ',')
+            {
+                ++p;
+            }
+            else if (*p != '\0')
+            {
+                ok = false;
+                break;
+            }
+        }
+    }
+    if (!ok)
+    {
+        bounds.clear();
+        for (uint64_t b : kDefaults)
+        {
+            bounds.push_back(b);
+        }
+    }
+    g_sizeBucketBounds = std::move(bounds);
+}
+
+// 注意(初始化顺序,见g_preWindowDistCount处init_priority注释):本函数先于本TU的
+// 动态静态初始化(_GLOBAL__sub_I)执行——本函数(含pendingOpen开窗路径)写入的动态
+// 初始化全局必须带init_priority前置构造,否则写入结果被重放的默认构造覆盖;
+// 常量初始化全局不受重放影响
+__attribute__((constructor)) void HostMemHookInit()
+{
+    // 本so地址区间解析(钩子自身帧过滤用,见CaptureFrames注释)
+    ResolveHookSoRange();
+
+    // 模块可执行段快照首拍(FP走栈pc校验依据;此后开窗+预热线程1Hz刷新)
+    RefreshExecRanges();
+
+    // 容量覆盖(诊断/压测用): 栈上限/块上限/大小排布桶边界
+    const size_t maxStacks = ParseSizeEnv("MSMEMSCOPE_HOSTMEM_MAX_STACKS", DEFAULT_MAX_STACKS);
+    const size_t maxBlocks = ParseSizeEnv("MSMEMSCOPE_HOSTMEM_MAX_BLOCKS", DEFAULT_MAX_BLOCKS);
+    g_maxStacksPerShard = maxStacks < STACK_SHARDS ? 1 : maxStacks / STACK_SHARDS;
+    g_maxBlocksPerShard = maxBlocks < BLOCK_SHARDS ? 1 : maxBlocks / BLOCK_SHARDS;
+    ParseSizeBuckets();
+
+    // 溢出通道容量(安全阀): 全表上限经MSMEMSCOPE_HOSTMEM_MAX_OVERFLOW覆盖,
+    // 按分片均分(每分片独立判满,bit2置位即记账停止)
+    const size_t maxOverflow = ParseSizeEnv("MSMEMSCOPE_HOSTMEM_MAX_OVERFLOW", DEFAULT_MAX_OVERFLOW);
+    g_maxOverflowPerShard = maxOverflow < BLOCK_SHARDS ? 1 : maxOverflow / BLOCK_SHARDS;
+
+    // 开窗前free大小分布原子槽(按桶数分配;RecordFree热路径写入,关闭态快照读出)。
+    // 注意:构造期即分配(g_mainStarted之前),与记账无关,零风险
+    const size_t bucketCount = g_sizeBucketBounds.size() + 1;
+    g_preWindowDistCount.resize(bucketCount);
+    g_preWindowDistBytes.resize(bucketCount);
+
+    // 真函数解析(构造期固化;入口惰性解析兜底)
+    ResolveAllRealFns();
+
+    // fork handler注册(fork早于本构造的极端场景handler未生效:已加载so的构造函数
+    // 不随fork在子进程重跑,子进程无钩子状态、无监控——与fork后代不监控语义一致)
+    pthread_atfork(ForkPrepare, ForkParent, ForkChild);
+
+    // 进程锚点行(可维护性日志):每个加载本so的进程在stderr打一行pid+生效容量。
+    // 多子进程场景下父/子进程共用同一stderr,各进程summary文件(首行带pid)靠此行
+    // 与各日志行内嵌的[pid]归属匹配;子进程是否加载了钩子、容量env覆盖是否生效
+    // 由此一行可见
+    fprintf(stderr, "[msmemscope] hostmem: [pid=%llu] hook loaded (maxStacks=%llu maxBlocks=%llu maxOverflow=%llu)\n",
+            static_cast<unsigned long long>(getpid()),
+            static_cast<unsigned long long>(g_maxStacksPerShard * STACK_SHARDS),
+            static_cast<unsigned long long>(g_maxBlocksPerShard * BLOCK_SHARDS),
+            static_cast<unsigned long long>(g_maxOverflowPerShard * BLOCK_SHARDS));
+
+    // 构造完成:此后set_enabled走正常路径;构造前暂存的开窗请求在此补开(配置
+    // 已解析,环容量覆盖生效,STAGE_START不再提前到采集库自身构造期)
+    pthread_mutex_lock(&g_svcMtx);
+    g_ctorDone = true;
+    const bool pendingOpen = g_openPending;
+    g_openPending = false;
+    pthread_mutex_unlock(&g_svcMtx);
+    if (pendingOpen)
+    {
+        SvcSetEnabled(1);
+    }
+}
+
+}  // namespace
+
+// =============================================================================
+// 退出闭窗触发(采集库侧msmemscope_hostmem_exit_close): 退出期必须在真exit()之前、
+// 全进程存活时完成窗口关闭(停预热线程+闭窗聚合+STAGE_END→完整报告)。teardown期
+// 任何atexit触发点都不可用(库级handler在钩子so被rtld_fini先于采集库拆卸后执行,
+// 聚合线程无法运行→退出挂死;全局handler在_dl_fini末尾晚于全部静态析构→闭窗被
+// destroyed_跳过),故由exit拦截器/main-return trampoline双路在真exit()之前触发
+// (与g_exiting双路置位同构,契约详见event_report.cpp文件头注释)。懒解析+缓存;
+// 采集库缺失(理论不可达,本so DT_NEEDED依赖)时安静跳过,由~HostLeakAnalyzer兜底。
+// 递归exit防护:首个调用者负责触发并等待聚合完成,重入(闭窗路径内再exit)直接跳过
+// =============================================================================
+void (*g_exitCloseFn)(void) = nullptr;
+std::atomic<bool> g_exitCloseTriggered{false};
+
+static void TriggerHostMemExitClose()
+{
+    if (g_exitCloseFn == nullptr)
+    {
+        HookSuppressGuard guard;  // dlsym内部分配经PLT回落本钩子→守卫拦截→竞技场
+        g_exitCloseFn = reinterpret_cast<void (*)(void)>(dlsym(RTLD_DEFAULT, "msmemscope_hostmem_exit_close"));
+        if (g_exitCloseFn == nullptr)
+        {
+            return;
+        }
+    }
+    // 触发行(可维护性日志):exit拦截器/main trampoline路径可见性;闭窗结果由
+    // 采集库侧"window close id=X done"/"closing bit already clear"等打点互证
+    fprintf(stderr, "[msmemscope] hostmem: [pid=%llu] exit path: triggering host mem window close\n",
+            static_cast<unsigned long long>(getpid()));
+    g_exitCloseFn();
+}
+
+// =============================================================================
+// 劫持入口(extern "C",必须外部链接): 快路径四查(抑制/窗口/宿主main/采集库)不过则直转真函数
+// 真函数调用+记账全程持抑制守卫(场景A);分配失败(NULL)不记账
+// =============================================================================
+
+// 宿主main边界trampoline(静态初始化防护,见g_mainStarted注释):
+// __libc_start_main由_start在ld.so完成全部so初始化后、可执行文件.init_array之前调用;
+// 把main替换为本trampoline,标志恰在"全部静态初始化完成后、真main首行"处置位。
+// glibc该7参ABI自1998年至今稳定(2.34起init/fini恒为NULL但参数位保留)
+using HostMemMainFn = int (*)(int, char**, char**);
+static HostMemMainFn g_realMain = nullptr;
+
+extern "C" __attribute__((visibility("hidden"))) int HostMemHookMainEntry(int argc, char** argv, char** envp)
+{
+    g_mainStarted.store(true, std::memory_order_release);
+    const int rc = g_realMain(argc, argv, envp);
+    // main返回即进入退出期:glibc随后经libc内部别名调exit(不经PLT,exit拦截器
+    // 拦不到),此处兜底置位,与exit拦截器双路覆盖两类退出路径;同款双路覆盖退出
+    // 闭窗触发——此路径真exit()在返回rc之后才发生,此刻触发与拦截器路径等价
+    // (全进程存活,闭窗与正常stop()同等可靠)
+    g_exiting.store(true, std::memory_order_release);
+    if (!g_exitCloseTriggered.exchange(true, std::memory_order_acq_rel))
+    {
+        HookSuppressGuard guard;
+        TriggerHostMemExitClose();
+    }
+    return rc;
+}
+
+// 宿主exit拦截(退出期防护,与__libc_start_main拦截同构):置位退出标志停记账后转真exit。
+// 覆盖显式exit()/Py_Exit类调用(经PLT解析到本so);拦截器自身零分配(dlsym构造期已固化,
+// 极端未解析时置守卫懒解析一次)。解析失败兜底syscall直退(跳过atexit语义降级退出),
+// 绝不return——exit为noreturn,返回即调用方栈损坏
+extern "C" void exit(int status)
+{
+    g_exiting.store(true, std::memory_order_release);
+    // 真exit之前触发采集库退出闭窗:此刻装载器/聚合线程/分析器全部存活,停预热
+    // 线程+聚合+STAGE_END与正常stop()同等可靠(teardown期触发会挂死,见
+    // TriggerHostMemExitClose注释)。递归exit防护:首个调用者触发并等待,重入跳过
+    if (!g_exitCloseTriggered.exchange(true, std::memory_order_acq_rel))
+    {
+        HookSuppressGuard guard;
+        TriggerHostMemExitClose();
+    }
+    if (real_exit_fn == nullptr)
+    {
+        HookSuppressGuard guard;
+        real_exit_fn = reinterpret_cast<void (*)(int)>(ResolveOne("exit"));
+    }
+    if (real_exit_fn != nullptr)
+    {
+        real_exit_fn(status);
+    }
+    syscall(SYS_exit_group, status);
+    for (;;)
+    {
+        pause();
+    }
+}
+
+extern "C" int __libc_start_main(HostMemMainFn main, int argc, char** argv, void (*init)(void), void (*fini)(void),
+                                 void (*rtldFini)(void), void* stackEnd)
+{
+    using LibcStartMainFn = int (*)(HostMemMainFn, int, char**, void (*)(void), void (*)(void), void (*)(void), void*);
+    g_realMain = main;
+    LibcStartMainFn realFn = nullptr;
+    {
+        // 守卫只护dlsym解析窗口:其内部首次分配经PLT回落本钩子→守卫拦截→竞技场。
+        // 严禁把守卫扩到realFn调用——真实__libc_start_main为noreturn(内部经exit退出,
+        // 本帧永不返回),函数级守卫的析构永不执行→主线程抑制深度永久滞留1,而宿主main
+        // 的整个生命周期都活在这帧之下→主线程所有分配/释放被静默跳过(块表与事件双
+        // 缺失);realFn内部.init_array阶段的分配已由g_mainStarted门控排除,无需守卫兜底
+        HookSuppressGuard guard;
+        realFn = reinterpret_cast<LibcStartMainFn>(dlsym(RTLD_NEXT, "__libc_start_main"));
+    }
+    if (realFn != nullptr)
+    {
+        return realFn(&HostMemHookMainEntry, argc, argv, init, fini, rtldFini, stackEnd);
+    }
+    // 解析失败(理论不可达,libc恒在RTLD_NEXT链上):退化为无门控放行,宁采旧险不静默全丢;
+    // 直接调main会丢失fini/rtld_fini注册,仅作最后兜底
+    fprintf(stderr, "[msmemscope] hostmem: [pid=%llu] __libc_start_main resolve failed, main gate disabled\n",
+            static_cast<unsigned long long>(getpid()));
+    g_mainStarted.store(true, std::memory_order_release);
+    return main(argc, argv, nullptr);
+}
+
+extern "C" void* malloc(size_t size)
+{
+    if (!ShouldTrace())
+    {
+        return RealMalloc(size);
+    }
+    HookSuppressGuard guard;
+    void* ptr = RealMalloc(size);
+    if (ptr == nullptr)
+    {
+        return nullptr;
+    }
+    RecordMalloc(reinterpret_cast<uint64_t>(ptr), size);
+    return ptr;
+}
+
+extern "C" void free(void* ptr)
+{
+    if (ptr == nullptr)
+    {
+        return;
+    }
+    if (IsArenaPtr(ptr))
+    {
+        return;  // 自举竞技场内存不归还
+    }
+    if (!ShouldTrace())
+    {
+        RealFree(ptr);
+        return;
+    }
+    HookSuppressGuard guard;
+    // 先记账后真释放(消除ABA: 释放后他线程立即复用同地址会误删新记录)
+    RecordFree(reinterpret_cast<uint64_t>(ptr));
+    RealFree(ptr);
+}
+
+extern "C" void* calloc(size_t n, size_t size)
+{
+    // 溢出时glibc返回NULL,先判后调保持语义一致
+    if (n != 0 && size > SIZE_MAX / n)
+    {
+        errno = ENOMEM;
+        return nullptr;
+    }
+    if (!ShouldTrace())
+    {
+        return RealCalloc(n, size);
+    }
+    HookSuppressGuard guard;
+    void* ptr = RealCalloc(n, size);
+    if (ptr == nullptr)
+    {
+        return nullptr;
+    }
+    RecordMalloc(reinterpret_cast<uint64_t>(ptr), n * size);
+    return ptr;
+}
+
+extern "C" void* realloc(void* ptr, size_t size)
+{
+    if (!ShouldTrace())
+    {
+        return RealRealloc(ptr, size);
+    }
+    HookSuppressGuard guard;
+
+    // ptr为空: 同malloc
+    if (ptr == nullptr)
+    {
+        void* np = RealRealloc(nullptr, size);
+        if (np == nullptr)
+        {
+            return nullptr;
+        }
+        RecordMalloc(reinterpret_cast<uint64_t>(np), size);
+        return np;
+    }
+
+    // 先捕获并删除旧块记录再调真函数(消除ABA: 真realloc返回后旧地址可能已被
+    // 他线程重新分配,届时查到的可能是他人的新记录)。释放记账(liveBytes减+
+    // totalFreed自增)已在CaptureAndRemoveBlock的块表锁临界区内完成;块引用
+    // 捕获即转移给oldRec(不在此处dispose)——在途窗口(refs>=2)钉住条目,防
+    // 淘汰;终态: size==0/成功=dispose,失败=ReinsertBlock接管(回插归块/转溢出
+    // dispose),每块恰被记账一次
+    BlockEntry oldRec{};
+    const BlockRemoveResult oldRes = CaptureAndRemoveBlock(reinterpret_cast<uint64_t>(ptr), oldRec);
+
+    if (size == 0)
+    {
+        // glibc语义: realloc(p,0)=释放旧块,不记MALLOC(释放记账已随捕获完成)
+        if (oldRec.owner != nullptr)
+        {
+            oldRec.owner->refs.fetch_sub(1, std::memory_order_relaxed);  // dispose转移引用(旧块已释放)
+        }
+        return RealRealloc(ptr, 0);
+    }
+
+    void* np = RealRealloc(ptr, size);
+    if (np == nullptr)
+    {
+        // 失败(size>0): 旧块仍存活,按捕获源回插并恢复对应记账。
+        // kBlock→ReinsertBlock内部接管转移引用(回插成功归块/转溢出或自旋耗尽
+        // dispose);kOverflow→ReinsertOverflowBlock(溢出块无owner,无dispose)
+        if (oldRes == BlockRemoveResult::kBlock)
+        {
+            ReinsertBlock(reinterpret_cast<uint64_t>(ptr), oldRec);
+        }
+        else if (oldRes == BlockRemoveResult::kOverflow)
+        {
+            ReinsertOverflowBlock(reinterpret_cast<uint64_t>(ptr), oldRec.size);
+        }
+        // kMiss/kLockFailed: 无回插对象(块不在表/溢出账本,或锁耗尽残留),无owner无dispose
+        return nullptr;
+    }
+
+    // 成功: 旧块已释放(记账已随捕获完成),新块记账走RecordMalloc
+    // (新size过阈值检查+新归栈=当前调用栈)
+    if (oldRec.owner != nullptr)
+    {
+        oldRec.owner->refs.fetch_sub(1, std::memory_order_relaxed);  // dispose转移引用(旧块已释放)
+    }
+    RecordMalloc(reinterpret_cast<uint64_t>(np), size);
+    return np;
+}
+
+extern "C" int posix_memalign(void** memptr, size_t align, size_t size)
+{
+    if (!ShouldTrace())
+    {
+        return RealPosixMemalign(memptr, align, size);
+    }
+    HookSuppressGuard guard;
+    int ret = RealPosixMemalign(memptr, align, size);
+    if (ret == 0 && memptr != nullptr && *memptr != nullptr)
+    {
+        RecordMalloc(reinterpret_cast<uint64_t>(*memptr), size);
+    }
+    return ret;
+}
+
+extern "C" void* aligned_alloc(size_t align, size_t size)
+{
+    if (!ShouldTrace())
+    {
+        return RealAlignedAlloc(align, size);
+    }
+    HookSuppressGuard guard;
+    void* ptr = RealAlignedAlloc(align, size);
+    if (ptr == nullptr)
+    {
+        return nullptr;
+    }
+    RecordMalloc(reinterpret_cast<uint64_t>(ptr), size);
+    return ptr;
+}
+
+extern "C" void* memalign(size_t align, size_t size)
+{
+    if (!ShouldTrace())
+    {
+        return RealMemalign(align, size);
+    }
+    HookSuppressGuard guard;
+    void* ptr = RealMemalign(align, size);
+    if (ptr == nullptr)
+    {
+        return nullptr;
+    }
+    RecordMalloc(reinterpret_cast<uint64_t>(ptr), size);
+    return ptr;
+}
+
+extern "C" void* valloc(size_t size)
+{
+    if (!ShouldTrace())
+    {
+        return RealValloc(size);
+    }
+    HookSuppressGuard guard;
+    void* ptr = RealValloc(size);
+    if (ptr == nullptr)
+    {
+        return nullptr;
+    }
+    RecordMalloc(reinterpret_cast<uint64_t>(ptr), size);
+    return ptr;
+}
+
+extern "C" void* pvalloc(size_t size)
+{
+    if (!ShouldTrace())
+    {
+        return RealPvalloc(size);
+    }
+    HookSuppressGuard guard;
+    void* ptr = RealPvalloc(size);
+    if (ptr == nullptr)
+    {
+        return nullptr;
+    }
+    RecordMalloc(reinterpret_cast<uint64_t>(ptr), size);
+    return ptr;
+}
+
+// =============================================================================
+// bind握手与诊断导出
+// =============================================================================
+
+extern "C" const MsmemscopeHostmemSvc* msmemscope_hostmem_bind(const MsmemscopeHostmemApi* api)
+{
+    if (api == nullptr)
+    {
+        return nullptr;
+    }
+    // 必备回调校验: 窗口边界系统事件(report_stage)是分析器唯一的窗口驱动,缺失则
+    // host功能不可用,调用方回退。分析器不消费事件流,闭窗快照经dump_*拉取
+    if (api->report_stage == nullptr)
+    {
+        return nullptr;
+    }
+    g_api = *api;  // 结构体拷贝(幂等:重复bind覆盖)
+    g_bound.store(true, std::memory_order_release);
+    return &g_svcTable;
+}
+
+// 未归因计数:栈层失败(trylock/表满/OOM)转未知桶的块数,累计跨窗口,调用方差分。
+// 走独立符号而非扩MsmemscopeHostmemStats(svc表C ABI不变,
+// 新旧so混部时头文件版本不齐也安全;旧版采集库不调用此符号,无副作用)
+extern "C" uint64_t msmemscope_hostmem_get_unattributed_count(void)
+{
+    return g_unattributedCount.load(std::memory_order_relaxed);
+}
+
+extern "C" int msmemscope_hostmem_get_status(void)
+{
+    uint32_t flags = 0;
+    if (g_bound.load(std::memory_order_relaxed))
+    {
+        flags |= 0x1;
+    }
+    if (g_enabled.load(std::memory_order_relaxed))
+    {
+        flags |= 0x2;
+    }
+    if (g_closing.load(std::memory_order_relaxed))
+    {
+        flags |= 0x4;
+    }
+    if (g_warmupThreadCreated.load(std::memory_order_relaxed))
+    {
+        flags |= 0x8;  // 符号化预热线程已创建
+    }
+    if (g_mainStarted.load(std::memory_order_relaxed))
+    {
+        flags |= 0x10;  // 宿主main边界已过(UT据此验证__libc_start_main拦截生效)
+    }
+    if (g_exiting.load(std::memory_order_relaxed))
+    {
+        flags |= 0x20;  // 退出期(exit已进/main已返,记账门控已关,UT据此验证exit拦截生效)
+    }
+    if (g_forked.load(std::memory_order_relaxed))
+    {
+        flags |= 0x40;  // fork后代(不再监控,开窗一律拒绝,UT据此验证fork语义)
+    }
+    return static_cast<int>(flags);
+}
+
+// 账本自检(UT诊断专用,独立符号不走svc表C ABI,
+// 旧版采集库不调用无副作用)。返回违例计数,0=一致。逐分片持锁校验:
+// ①栈表: g_stackCount与全部分片map大小之和一致
+// ②块表: g_blockCount与全部分片count之和一致
+// ③栈条目闭窗一致性绊线: refs==0→CORRUPTION(双重dispose的定向检测——唯一致命
+//   失效方向: 条目refs被多次递减提前归0,淘汰后指针悬垂);
+//   refs==1&&liveBytes!=0→CORRUPTION(引用/字节计数不一致: refs==1⟹零存活块
+//   ⟹liveBytes必为0);liveBytes<0→CORRUPTION(释放侧仅递减,窗口内不可为负;
+//   负数=覆盖/恢复记账不对称的bug信号)
+extern "C" uint64_t msmemscope_hostmem_selfcheck(void)
+{
+    uint64_t violations = 0;
+    size_t stackCount = 0;
+    for (auto& shard : g_stackShards)
+    {
+        pthread_mutex_lock(&shard.mtx);
+        stackCount += shard.map.size();
+        for (auto& kv : shard.map)
+        {
+            const StackEntry& e = kv.second;
+            if (e.refs.load(std::memory_order_relaxed) == 0)
+            {
+                violations += 1;  // ③ 双重dispose(淘汰前哨)
+            }
+            const int64_t lb = e.liveBytes.load(std::memory_order_relaxed);
+            if (e.refs.load(std::memory_order_relaxed) == 1 && lb != 0)
+            {
+                violations += 1;  // ③ refs/liveBytes计数不一致
+            }
+            if (lb < 0)
+            {
+                violations += 1;  // ③ liveBytes非负
+            }
+        }
+        pthread_mutex_unlock(&shard.mtx);
+    }
+    if (stackCount != g_stackCount.load(std::memory_order_relaxed))
+    {
+        violations += 1;  // ①
+    }
+    size_t blockCount = 0;
+    for (auto& shard : g_blockShards)
+    {
+        pthread_mutex_lock(&shard.mtx);
+        blockCount += shard.count;
+        pthread_mutex_unlock(&shard.mtx);
+    }
+    if (blockCount != g_blockCount.load(std::memory_order_relaxed))
+    {
+        violations += 1;  // ②
+    }
+    return violations;
+}
