@@ -31,6 +31,7 @@
 #include "ascend_hal.h"
 #include "config_info.h"
 #include "dump.h"
+#include "host_mem_hooks/host_mem_hooks.h"
 #include "kernel_hooks/acl_hooks.h"
 #include "kernel_hooks/kernel_event_trace.h"
 #include "kernel_hooks/runtime_hooks.h"
@@ -96,7 +97,47 @@ class EventReport
     bool ReportOOMTrigger(const OOMTriggerInfo& info);
     bool ReportOOMMemRecord(const OOMMemRecord& record, EventSubType subType);
     bool ReportCpuTensor(uint64_t addr, uint64_t size, bool isAlloc, std::string&& pyStack);
+    // 窗口边界系统事件(HOST_LEAK_STAGE_START/END,挂SYSTEM基础类型):钩子经bind回调report_stage上报,
+    // isStart区分开/闭窗,stageId即windowId。窗口生命周期事件是分析器唯一的窗口驱动
+    // (无逐分配事件流,分析器在闭窗时经dump_*拉取冻结快照)
+    bool ReportHostStage(bool isStart, uint64_t timestamp, uint64_t stageId);
+    // host-leak快照统计查询:闭窗聚合完成后经svc表拉取冻结统计(get_stats,有效=窗口
+    // 关闭态;开启态为尽力而为值),含全局申请/释放累计、溢出通道/开窗前free统计、
+    // 采样率与截断标注(bit0块表满转溢出/bit1栈表满/bit2溢出账本满记账停止);
+    // 钩子未装配/bind未就绪返回false
+    bool GetHostMemStats(MsmemscopeHostmemStats& stats);
+    // 钩子块表存活块全量投影(block_detail数据源):仅窗口关闭态有效(热路径冻结);
+    // emit回调由分析器提供(纯C签名,经bind svc表直传),钩子未装配返回false
+    bool DumpHostMemLiveBlocks(void (*emit)(void* ctx, uint64_t addr, uint64_t size, uint64_t allocTs,
+                                            uint64_t stackId),
+                               void* ctx);
+    // 闭窗栈统计快照(leak_overview数据源):对每个栈emit一行(per-stack申请/释放/未释放
+    // +闭窗符号化文本,stackId=0为未知桶行);仅窗口关闭态有效;钩子未装配返回false
+    bool DumpHostMemStackStats(void (*emit)(void* ctx, uint64_t stackId, uint64_t allocCount, uint64_t allocBytes,
+                                            uint64_t freedCount, uint64_t freedBytes, uint64_t unfreedCount,
+                                            uint64_t unfreedBytes, uint64_t maxBlockSize, const char* frameDesc,
+                                            size_t len),
+                               void* ctx);
+    // 闭窗大小排布(leak_overview数据源):存活块按大小范围分桶;仅窗口关闭态有效
+    bool DumpHostMemSizeDist(void (*emit)(void* ctx, uint64_t rangeLow, uint64_t rangeHigh, uint64_t blockCount,
+                                          uint64_t blockBytes),
+                             void* ctx);
+    // 开窗前free大小排布快照(leak_overview数据源):本窗口free未命中块表与溢出账本
+    // (开窗前分配/记账被跳过)的事件按大小归桶;仅窗口关闭态有效;钩子未装配返回false
+    bool DumpHostMemPreWindowDist(void (*emit)(void* ctx, uint64_t rangeLow, uint64_t rangeHigh, uint64_t blockCount,
+                                               uint64_t blockBytes),
+                                  void* ctx);
+    // 测试缝:UT环境无钩子so(bind不执行,svcHostMem_==nullptr),测试注入假svc表驱动分析器;
+    // 仅测试用,注入后窗口开关/快照拉取全走注入表
+    void SetHostMemSvcForTest(const MsmemscopeHostmemSvc* svc);
     void UpdateAnalysisType();
+
+    // 进程退出闭窗入口(钩子so经msmemscope_hostmem_exit_close dlsym调用,契约见
+    // event_report.cpp文件头注释):必须由钩子exit拦截器/main-return trampoline在
+    // 真exit()之前调用——本so内任何atexit注册都在teardown期执行,均晚于可用时点。
+    // 经g_hostMemReportInstance直达指针调用实例,不经Instance()的magic-static guard
+    // (退出期其他线程可能仍在guard上等待,重入guard即死锁)
+    static void HostMemExitHandler();
 
    private:
     void Init();
@@ -105,6 +146,21 @@ class EventReport
 
     bool IsNeedSkip(int32_t devid);
     void SetStepInfo(MarkType type, std::string msg, uint64_t rangeId);
+
+    // 退出闭窗(msmemscope_hostmem_exit_close调用):窗口仍开时置stop闩锁并关窗,
+    // 让STAGE_END走完整路径(丢包差分+O4校准+报告落盘,区别于~HostLeakAnalyzer
+    // 析构兜底的退化报告);有界等待钩子排空完成,超时/符号不可得留给析构兜底(降级链)
+    void CloseHostMemWindowAtExit();
+
+    // host堆钩子bind注册:dlsym解析钩子so的msmemscope_hostmem_bind,
+    // 注册api回调表并保存返回的svc表;钩子so未装配时svcHostMem_为null,host功能整体不激活
+    void BindHostMemHook();
+    // host-leak窗口重算(交集语义):(analysis含host-leaks) && !(stop闩锁) → svc set_enabled
+    void UpdateHostMemWindow();
+    // host-leak独占通道短路判定:analysis含host-leaks且collectCpu关闭。成立时host堆钩子
+    // 是host地址空间唯一记录者,HOST_*事件直连EventDispatcher派发,跳过hostPtrs_地址簿
+    // 与EventRouter阶段一/三(MSM账本对该类事件无消费者,见实现处注释)
+    bool HostEventBypassEnabled() const;
 
     // 查询整卡显存用量（dcmi_get_device_hbm_info，与 npu-smi 同源；内部已有
     // EventReportSuppressor 防递归上报）；查询失败返回 -1（不更新缓存，限频告警一次）。查询结果缓存到
@@ -131,6 +187,11 @@ class EventReport
     std::unordered_map<uint64_t, int32_t> halPtrs_;
     std::unordered_set<uint64_t> hostPtrs_;  // Cross-channel active HOST address book (first-come-first-served)
     std::atomic<bool> destroyed_{false};
+
+    // host堆钩子svc表(bind返回,进程生命周期内不变;null=钩子未装配)与窗口stop闩锁
+    // (stop()置位关窗,start()复位可重开,config变更经UpdateHostMemWindow重算)
+    const MsmemscopeHostmemSvc* svcHostMem_ = nullptr;
+    std::atomic<bool> hostMemStopLatch_{false};
 
     // 查询失败限频告警标记（首个失败日志后静默）
     std::atomic<bool> deviceUsedQueryWarned_{false};
