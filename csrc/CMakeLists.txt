@@ -45,6 +45,6 @@ set_target_properties(msmemscope PROPERTIES
     OUTPUT_NAME "msmemscope.bin"
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_INSTALL_PREFIX}/bin"
 )
-set_target_properties(leaks_ascend_hal_hook ascend_mstx_hook ascend_kernel_hook atb_abi_0_hook atb_abi_1_hook ascend_leaks _msmemscope PROPERTIES 
+set_target_properties(leaks_ascend_hal_hook ascend_mstx_hook ascend_kernel_hook atb_abi_0_hook atb_abi_1_hook ascend_leaks msmemscope_host_mem_hook _msmemscope PROPERTIES
     LIBRARY_OUTPUT_DIRECTORY "${CMAKE_INSTALL_PREFIX}/lib64"
 )
