@@ -1939,3 +1939,905 @@ void ReinsertOverflowBlock(uint64_t addr, uint64_t size)
 // 块大小→排布桶下标: g_sizeBucketBounds为各桶下界(升序),桶数=bounds+1;
 // 末桶[最后下界, UINT64_MAX)。线性扫描(bounds数≤16,块遍历的常数开销)。
 // 记账主流程与闭窗聚合共用(RecordFree开窗前free归桶/CloseAggregate未释放归桶)
+inline size_t SizeBucketIndex(uint64_t size)
+{
+    size_t i = 0;
+    while (i < g_sizeBucketBounds.size() && g_sizeBucketBounds[i] <= size)
+    {
+        ++i;
+    }
+    return i;
+}
+
+// =============================================================================
+// 记账主流程(各劫持入口共用)
+// =============================================================================
+
+// malloc族通用记账: 截断门→阈值过滤(计数)→采样门→采栈登记→块表插入
+// 返回true=已记账(块表有条目或已转溢出账本);false=未记账(块对钩子不可见,
+// 后续free静默或落入开窗前通道)——仅截断/阈值过滤/采样跳过/两账本均满四条路径;
+// 栈层失败不丢块(转未知桶stackId=0照常记账)
+bool RecordMalloc(uint64_t addr, size_t size)
+{
+    if (g_truncated.load(std::memory_order_relaxed) & 4u)
+    {
+        return false;  // 记账停止(块表与溢出账本均满,bit2)
+    }
+    const uint64_t threshold = g_blockThreshold.load(std::memory_order_relaxed);
+    if (size < threshold)
+    {
+        // 小于阈值不采集(热路径开销优化,窗口与阈值由get_params快照)
+        g_untrackedCount.fetch_add(1, std::memory_order_relaxed);
+        g_untrackedBytes.fetch_add(static_cast<uint64_t>(size), std::memory_order_relaxed);
+        return false;
+    }
+    if (g_sampleRate.load(std::memory_order_relaxed) > 1 && !SampleGateHit())
+    {
+        return false;  // 显式采样: 被跳过块对钩子完全不可见
+    }
+    const uint64_t ts = NowNs();
+
+    // 栈阶段: 去重键一次展开到位(浅层哈希无法查找深层PC数组键的map,不做分层)
+    uintptr_t keyPc[STACK_KEY_FRAMES];
+    int n = CaptureFrames(keyPc, STACK_KEY_FRAMES);
+    StackEntry* owner = nullptr;
+    if (n > 0)
+    {
+        // 键=捕获帧的前K帧(CaptureFrames内部截断到maxOut=STACK_KEY_FRAMES)。
+        // K=20账本键的职责与键深取舍见常量注释
+        StackKey key{};
+        key.count = static_cast<uint32_t>(n);
+        memcpy(key.pc, keyPc, static_cast<size_t>(n) * sizeof(uintptr_t));
+        key.hash = XxHash64Words(key.pc, static_cast<size_t>(n));  // 全生命周期仅此一次
+        owner = LookupOrRegisterStack(key);
+        // owner==nullptr(栈表trylock失败/表满/OOM): 块转
+        // 未知桶(stackId=0)照常进块表,只损失归因粒度
+    }
+
+    // 块阶段(全部记账在InsertBlock的块表锁临界区内完成,见InsertBlock契约)
+    const BlockInsertResult r = InsertBlock(addr, static_cast<uint64_t>(size), ts, owner);
+    if (owner != nullptr)
+    {
+        // dispose在途lookup引用(恰一次,覆盖kTable/kOverflow/kFailed):
+        // kTable时InsertBlock已+1块引用,dispose后净+1归块;其余路径无块引用,
+        // dispose归零在途——条目不被无块路径污染(引用契约)
+        owner->refs.fetch_sub(1, std::memory_order_relaxed);
+    }
+    if (r == BlockInsertResult::kFailed)
+    {
+        // 瞬时竞争(静默跳过)/溢出账本亦满(bit2已在InsertBlock内置位): 不在此处
+        // 再置bit0——bit0现为块表触顶的信息标注,记录不停止
+        return false;
+    }
+    if (owner == nullptr && r == BlockInsertResult::kTable)
+    {
+        // 未归因累计(跨窗口,诊断导出;闭窗打印取窗口内增量)——块落入未知桶
+        // (stackId=0)照常记账,unknownAlloc计数已在InsertBlock临界区内累加;
+        // 溢出通道块(kOverflow)无栈归因但不属未知桶,不计入未归因
+        g_unattributedCount.fetch_add(1, std::memory_order_relaxed);
+    }
+    return true;
+}
+
+// free族通用记账: 块表命中→删除+释放记账(liveBytes减+totalFreed自增,均在
+// CaptureAndRemoveBlock的块表锁临界区内完成)+dispose块引用(捕获已转移给rec,
+// 块已释放,终态恰一次);溢出账本命中→逆向修正
+// (overflowFreed+totalFreed自增,同一锁内,无owner无dispose);两账本均未命中→
+// 开窗前free独立通道
+// (次数/总量/单块大小分布,malloc_usable_size近似,不并入totalFreed);
+// 自旋耗尽(kLockFailed)→静默跳过(块可能在表但未取到锁,不作开窗前统计)
+void RecordFree(uint64_t addr)
+{
+    BlockEntry rec{};
+    const BlockRemoveResult r = CaptureAndRemoveBlock(addr, rec);
+    if (r == BlockRemoveResult::kBlock)
+    {
+        if (rec.owner != nullptr)
+        {
+            rec.owner->refs.fetch_sub(1, std::memory_order_relaxed);  // dispose块引用(块已释放)
+        }
+        return;  // 释放记账已在锁内完成
+    }
+    if (r == BlockRemoveResult::kOverflow)
+    {
+        return;  // 逆向修正已在锁内完成(无owner,无dispose)
+    }
+    if (r == BlockRemoveResult::kLockFailed)
+    {
+        return;  // 有界自旋耗尽: 静默跳过(条目残留,假泄漏风险有界且极罕见)
+    }
+    // kMiss: 开窗前分配/记账被跳过→独立通道。大小经malloc_usable_size
+    // 近似(RealUsableSize,解析失败为0入0桶),不并入totalFreed(窗口外分配不入账本,
+    // 并入会破坏"申请=释放+未释放"不变量)
+    const uint64_t size = RealUsableSize(reinterpret_cast<void*>(addr));
+    const size_t bi = SizeBucketIndex(size);
+    g_preWindowFreeCount.fetch_add(1, std::memory_order_relaxed);
+    g_preWindowFreeBytes.fetch_add(size, std::memory_order_relaxed);
+    g_preWindowDistCount[bi].fetch_add(1, std::memory_order_relaxed);
+    g_preWindowDistBytes[bi].fetch_add(size, std::memory_order_relaxed);
+}
+
+// =============================================================================
+// 符号化(冷路径:每栈一次,闭窗聚合/预热线程分时执行)
+// =============================================================================
+
+char* g_symBuf = nullptr;  // 符号化缓冲(冷路径独占,懒分配,进程内复用)
+size_t g_symBufCap = 0;
+
+bool EnsureSymBuf(size_t need)
+{
+    if (g_symBuf != nullptr && g_symBufCap >= need)
+    {
+        return true;
+    }
+    size_t cap = g_symBufCap == 0 ? 64 * 1024 : g_symBufCap;
+    while (cap < need)
+    {
+        cap *= 2;
+    }
+    char* np = static_cast<char*>(RealMalloc(cap));
+    if (np == nullptr)
+    {
+        return false;
+    }
+    RealFree(g_symBuf);
+    g_symBuf = np;
+    g_symBufCap = cap;
+    return true;
+}
+
+// 帧文本缓存(冷路径独占,与g_symBuf同协议无锁):不同栈的公共链帧高度重叠
+// (AI场景底软公共链可达20~30帧),洪峰符号化命中率极高。仅缓存完整未截断帧文本,
+// 满容量后停止插入(首批公共链帧已热,后续新帧回落直查)。节点分配走
+// RealMallocAllocator,串体内部堆分配经冷路径抑制守卫转真函数
+using SymCacheMap = std::unordered_map<uintptr_t, std::string, std::hash<uintptr_t>, std::equal_to<uintptr_t>,
+                                       RealMallocAllocator<std::pair<const uintptr_t, std::string>>>;
+SymCacheMap g_symCache;
+
+// 单帧符号化(backtrace_symbols风格),返回写入长度(与snprintf同语义:返回期望
+// 长度,实际写入受cap截断)
+int FormatFrame(char* dst, size_t cap, uintptr_t pc)
+{
+    auto hit = g_symCache.find(pc);
+    if (hit != g_symCache.end())
+    {
+        const size_t n = hit->second.size();
+        if (cap > 0 && dst != nullptr)
+        {
+            const size_t cpy = n < cap - 1 ? n : cap - 1;
+            memcpy(dst, hit->second.data(), cpy);
+            dst[cpy] = '\0';
+        }
+        return static_cast<int>(n);
+    }
+    // 退出期符号化禁用dladdr:dladdr内部持glibc全局dl_load_write_lock,退出期可
+    // 被应用线程dlopen/dlclose永久持有(曾致预热线程卡死、进程退出挂起),且dladdr
+    // 为阻塞调用无法超时。一律改走无锁模块快照(RefreshExecRanges维护:模块名+
+    // 加载基址),快照外pc输出纯地址。代价:符号名缺失(仅模块名+模块内偏移),
+    // 报告保留pc可离线addr2line补全
+    const ExecRangeSnapshot& snap = g_execSnaps[g_execSnapPub.load(std::memory_order_acquire)];
+    int w = 0;
+    if (snap.count != 0)
+    {
+        const ExecSpan* span = FindExecSpan(pc, snap);
+        if (span != nullptr)
+        {
+            const unsigned long modOff = static_cast<unsigned long>(pc - span->base);
+            w = snprintf(dst, cap, "%s(+0x%lx) [0x%lx]\n", span->name, modOff, static_cast<unsigned long>(pc));
+        }
+    }
+    if (w <= 0)
+    {
+        w = snprintf(dst, cap, "?? [0x%lx]\n", static_cast<unsigned long>(pc));
+    }
+    // 快照帧不写缓存:缓存只存预热产物的符号帧(mod(func+0xoff))。若快照帧
+    // (mod(+0xoff))入缓存,预热以find miss判定"未处理"会被污染——该帧永久停留
+    // 偏移格式,且跨窗口污染下个窗口的预热。不写则未预热帧每轮可重试,预热覆盖到
+    // 后升级为符号;closing期共享帧的重复快照查询成本~几十ns,远低于dladdr
+    return w;
+}
+
+// PC数组→引号包裹'\n'分隔帧串,写入g_symBuf并返回长度(不含NUL)。调用方须先
+// EnsureSymBuf(pcCount×kFrameReserve+16)。仅CloseAggregate闭窗符号化使用。
+// 不变式:帧文本永不侵占缓冲末尾2字节——
+// 每帧可用空间为cap-off-2(snprintf的cap参数传room+1,其NUL落在预留区外),截断
+// 时off按实际写入量min(w,room)收敛,循环出口off≤cap-2,闭引号与NUL必然写入界内。
+// 勿按snprintf期望长度累加off:超长模块/符号名截断时off越过cap,串无NUL终止且
+// len虚大,下游读越界
+constexpr size_t kFrameReserve = 128;  // 每帧预留缓冲(模块名+符号+地址)
+
+size_t BuildFrameDesc(const uintptr_t* pcs, uint32_t pcCount)
+{
+    size_t off = 0;
+    g_symBuf[off++] = '"';
+    for (uint32_t i = 0; i < pcCount; ++i)
+    {
+        if (off + kFrameReserve + 2 >= g_symBufCap)
+        {
+            break;  // 剩余不足一帧预算:提前停(宁可少帧,不逐字节逼近尾部)
+        }
+        const size_t room = g_symBufCap - off - 2;  // 帧文本可用字节(给'"'+NUL留位)
+        int w = FormatFrame(g_symBuf + off, room + 1, pcs[i]);
+        if (w <= 0)
+        {
+            break;
+        }
+        const size_t written = static_cast<size_t>(w) < room ? static_cast<size_t>(w) : room;
+        off += written;
+        if (static_cast<size_t>(w) > room)
+        {
+            break;  // 帧被截断:后续帧不再写
+        }
+    }
+    g_symBuf[off++] = '"';
+    g_symBuf[off] = '\0';
+    return off;
+}
+
+// =============================================================================
+// 符号化预热线程: 1s节拍top-K dladdr采样入共享帧缓存(无环无
+// 事件,本线程唯一职责是稳态dladdr预热;闭窗时先置g_warmupStop再join)
+// =============================================================================
+
+// 单帧dladdr符号预热:命中缓存跳过;未命中解析入g_symCache(格式与closing期快照
+// 输出同构"mod(func+0xoff) [0xpc]",报告/离线addr2line口径一致)。dladdr仅此函数
+// 调用——稳态执行,closing期FormatFrame纯缓存命中,dl_load_write_lock绝不进入
+// closing路径(退出期卡死根因防护)。解析失败(罕见)静默跳过,留给closing期快照
+void WarmUpFrame(uintptr_t pc)
+{
+    // 退出/闭窗检查: 闭窗先置g_warmupStop再join,此检查兜底覆盖join等待
+    // 窗口——置位后不再进入dladdr(退出期dl_load_write_lock卡死根因防护)
+    if (g_closing.load(std::memory_order_acquire) || g_exiting.load(std::memory_order_relaxed))
+    {
+        return;
+    }
+    if (g_symCache.find(pc) != g_symCache.end())
+    {
+        return;
+    }
+    Dl_info info;
+    if (dladdr(reinterpret_cast<void*>(pc), &info) == 0 || info.dli_sname == nullptr)
+    {
+        return;  // 无符号信息:由closing期快照补模块名
+    }
+    char buf[256];
+    int w = 0;
+    const char* mod = nullptr;
+    if (info.dli_fname != nullptr)
+    {
+        const char* slash = strrchr(info.dli_fname, '/');
+        mod = slash != nullptr ? slash + 1 : info.dli_fname;
+    }
+    const unsigned long symOff = static_cast<unsigned long>(pc - reinterpret_cast<uintptr_t>(info.dli_saddr));
+    if (mod != nullptr)
+    {
+        w = snprintf(buf, sizeof(buf), "%s(%s+0x%lx) [0x%lx]\n", mod, info.dli_sname, symOff,
+                     static_cast<unsigned long>(pc));
+    }
+    else
+    {
+        w = snprintf(buf, sizeof(buf), "%s(+0x%lx) [0x%lx]\n", info.dli_sname, symOff, static_cast<unsigned long>(pc));
+    }
+    if (w > 0 && static_cast<size_t>(w) < sizeof(buf) && g_symCache.size() < SYM_CACHE_MAX_ENTRIES)
+    {
+        try
+        {
+            g_symCache.emplace(pc, std::string(buf, static_cast<size_t>(w)));
+        }
+        catch (...)
+        {
+            // 缓存分配失败(bad_alloc):本次不入缓存,下轮自动重试
+        }
+    }
+}
+
+// 稳态top泄漏点符号采样(仅预热线程调用;closing/exiting/缓存满即停):
+// 每节拍(TOP_LEAK_SAMPLE_INTERVAL_NS=1s)扫描全部分片(trylock,失败分片让位下轮),
+// 锁内按liveBytes(存活字节=泄漏量真相源,与闭窗报告unfreedBytes同构)取每分片
+// top-TOP_LEAK_CANDS_PER_SHARD候选,全局合并取top-TOP_LEAK_SYMBOLIZE_K,锁外逐个
+// dladdr解析全深度帧PC入g_symCache(共享帧缓存去重:公共链帧只解析一次,每栈独立
+// 帧≈2.5个实测),解析完成后按分片回锁置位入选者warmedUp。
+// 优先级语义:liveBytes与闭窗报告排序键(unfreedBytes)同构——泄漏量大的栈稳态
+// 即可知,无需等闭窗。字节口径修正旧"块数代理"排序错位(见常量注释):大块单发
+// 泄漏不再被冷落。候选限定liveBytes>0(天然只在活跃栈中选)+未预热(warmedUp跳过,
+// 其帧已入缓存,闭窗FormatFrame直接命中);缓存满/全部预热后自停,排序只影响
+// 先后不影响最终覆盖(缓存上限见SYM_CACHE_MAX_ENTRIES)。
+// 与闭窗关系:闭窗FormatFrame纯缓存命中(退出期卡死根因防护不变)——本采样器是
+// 函数名唯一来源;采样已覆盖的栈闭窗直出符号,未覆盖栈走模块快照兜底+离线
+// addr2line。
+// 安全性:
+// ①与1Hz RefreshExecRanges同dl锁暴露类——稳态期dl_load_write_lock仅瞬时持有,
+//   且本路径与closing补扫时间上不重叠(closing置位立即停止),closing期FormatFrame
+//   纯缓存命中,dladdr永不进入closing路径(退出期卡死根因防护);
+// ②候选为liveBytes>0的存活栈条目:map遍历持分片trylock,失败即让位;liveBytes锁内
+//   读(锁内变更,锁内读一致)。入选者(每分片top-32)锁内各取预热引用(refs+1,与
+//   淘汰判读refs==1同锁互斥):跨锁符号化期间refs>=2条目不可被表满淘汰、fullPcs
+//   不可被释放——消除"收集后块全释放→refs回落1→EvictDeadStackLocked释放fullPcs
+//   →解析UAF"的TOCTOU窗口(死栈回收引入后该窗口不再是微秒级偶然,而是表满洪峰
+//   下可复现的悬垂);解析+回锁置位完成后统一dispose(恰一次),条目恢复可淘汰。
+// ③g_symCache仍为冷路径独占(预热线程稳态写入与closing聚合分时运行,无锁)。
+// 采样是尽力而为:末次采样后新登记栈/极深栈深帧显示偏移,报告pc可离线addr2line
+// 补全
+void SampleTopLeaks()
+{
+    if (g_symCache.size() >= SYM_CACHE_MAX_ENTRIES || g_closing.load(std::memory_order_acquire) ||
+        g_exiting.load(std::memory_order_relaxed))
+    {
+        return;
+    }
+    // 首次调用预留全部桶(1M条≈8MB桶数组):高频插入下免反复rehash。
+    // 预留失败(bad_alloc: 桶数请求被破坏如曾现负桶数,或宿主真OOM)绝不穿出
+    // 预热线程杀宿主——吞掉降级:不预留,后续emplace按需rehash(其自带try/catch)
+    static bool sCacheReserved = false;
+    if (!sCacheReserved)
+    {
+        try
+        {
+            g_symCache.reserve(SYM_CACHE_MAX_ENTRIES);
+        }
+        catch (...)
+        {
+        }
+        sCacheReserved = true;  // 成败均只试一次: 失败后由emplace按需rehash兜底
+    }
+    // 收集: 每分片top-TOP_LEAK_CANDS_PER_SHARD(liveBytes降序,插入排序维护,锁内
+    // 无分配);trylock失败分片让位下轮(生产者在锁内,零等待)。候选并入全局数组
+    // (64×32=2048,预热线程栈上~32KB,默认线程栈内可承受)。map遍历=全条目扫描,
+    // 覆盖所有liveBytes>0条目(含未挂链的登记态),不依赖pending链形态
+    constexpr size_t kMaxCands = STACK_SHARDS * TOP_LEAK_CANDS_PER_SHARD;
+    StackEntry* cands[kMaxCands];
+    uint64_t candBytes[kMaxCands];
+    size_t nCand = 0;
+    for (size_t s = 0; s < STACK_SHARDS; ++s)
+    {
+        StackShard& shard = g_stackShards[s];
+        if (pthread_mutex_trylock(&shard.mtx) != 0)
+        {
+            continue;  // 生产者在锁内:让位,下轮再试
+        }
+        StackEntry* local[TOP_LEAK_CANDS_PER_SHARD];
+        uint64_t localBytes[TOP_LEAK_CANDS_PER_SHARD];
+        size_t ln = 0;
+        for (auto& kv : shard.map)
+        {
+            StackEntry& e = kv.second;
+            if (e.liveBytes.load(std::memory_order_relaxed) == 0 || e.warmedUp || e.fullPcs == nullptr ||
+                e.fullCount == 0)
+            {
+                continue;
+            }
+            const uint64_t b = e.liveBytes.load(std::memory_order_relaxed);
+            size_t pos = ln < TOP_LEAK_CANDS_PER_SHARD ? ln : TOP_LEAK_CANDS_PER_SHARD;
+            while (pos > 0 && localBytes[pos - 1] < b)
+            {
+                if (pos < TOP_LEAK_CANDS_PER_SHARD)
+                {
+                    local[pos] = local[pos - 1];
+                    localBytes[pos] = localBytes[pos - 1];
+                }
+                --pos;
+            }
+            if (pos < TOP_LEAK_CANDS_PER_SHARD)
+            {
+                local[pos] = &e;
+                localBytes[pos] = b;
+                if (ln < TOP_LEAK_CANDS_PER_SHARD)
+                {
+                    ++ln;
+                }
+            }
+        }
+        // 入选者(本分片top-32)锁内各取一预热引用:候选收集时liveBytes>0仅保证此刻
+        // refs>=2,跨锁符号化期间其块可能全部释放(refs回落1)被表满淘汰(EvictDead
+        // StackLocked判读refs==1)释放fullPcs——锁内取ref钉住条目(淘汰与取ref同锁
+        // 互斥),解析+置位完成后统一dispose,消除悬垂窗口
+        for (size_t i = 0; i < ln; ++i)
+        {
+            local[i]->refs.fetch_add(1, std::memory_order_relaxed);
+        }
+        pthread_mutex_unlock(&shard.mtx);
+        for (size_t i = 0; i < ln && nCand < kMaxCands; ++i)
+        {
+            cands[nCand] = local[i];
+            candBytes[nCand] = localBytes[i];
+            ++nCand;
+        }
+    }
+    // 全局top-TOP_LEAK_SYMBOLIZE_K(简单选择排序,K×N≈50万次比较,微秒级)
+    const size_t k = nCand < TOP_LEAK_SYMBOLIZE_K ? nCand : TOP_LEAK_SYMBOLIZE_K;
+    for (size_t i = 0; i < k; ++i)
+    {
+        size_t best = i;
+        for (size_t j = i + 1; j < nCand; ++j)
+        {
+            if (candBytes[j] > candBytes[best])
+            {
+                best = j;
+            }
+        }
+        StackEntry* te = cands[i];
+        cands[i] = cands[best];
+        cands[best] = te;
+        const uint64_t tb = candBytes[i];
+        candBytes[i] = candBytes[best];
+        candBytes[best] = tb;
+    }
+    // 锁外符号化top-K(指针有效性见函数头②):每栈全深度帧,帧级缓存去重
+    for (size_t i = 0; i < k; ++i)
+    {
+        StackEntry* entry = cands[i];
+        const uintptr_t* pcs = entry->fullPcs;
+        if (pcs == nullptr)
+        {
+            continue;
+        }
+        const uint32_t cnt = entry->fullCount;
+        for (uint32_t f = 0; f < cnt; ++f)
+        {
+            WarmUpFrame(pcs[f]);
+        }
+    }
+    // 解析完成后回锁置位入选者——切勿把置位提前到收集时:本轮每分片top-32候选
+    // 中只有全局top-256真正被解析,若收集时即置位,未入选全局top-K者被误标记
+    // "已预热"而永久失去解析机会。解析后置位:未入选者不置位,下轮可重新竞选;
+    // 解析失败仍置位——尽力而为,失败帧pc保留,报告可离线addr2line补全。按分片
+    // 分组回锁(每分片至多一把锁内批量置位);trylock失败=生产者在锁内,放弃置位:
+    // 下轮该栈重新入选,WarmUpFrame缓存命中即跳过,仅多占一次候选名额,无害
+    for (size_t s = 0; s < STACK_SHARDS; ++s)
+    {
+        if (pthread_mutex_trylock(&g_stackShards[s].mtx) != 0)
+        {
+            continue;
+        }
+        for (size_t i = 0; i < k; ++i)
+        {
+            StackEntry* entry = cands[i];
+            if (entry != nullptr && ShardOfStackId(entry->stackId) == s)
+            {
+                entry->warmedUp = true;
+            }
+        }
+        pthread_mutex_unlock(&g_stackShards[s].mtx);
+    }
+    // 释放全部预热引用(恰一次dispose): 解析与置位均已结束,条目恢复可淘汰状态;
+    // 此后不再触碰其内存——表满淘汰可正常回收该栈
+    for (size_t i = 0; i < nCand; ++i)
+    {
+        cands[i]->refs.fetch_sub(1, std::memory_order_relaxed);
+    }
+}
+
+// 采样节拍门(仅预热线程调用):距上次采样≥TOP_LEAK_SAMPLE_INTERVAL_NS才执行一次
+// 全量top-K采样,间隔内单次比较即返。预热线程主循环每1s调用一次(见
+// WarmupThreadMain),closing/exiting/缓存满由SampleTopLeaks内部立即返回兜底
+void MaybeSampleTopLeaks()
+{
+    static uint64_t sLastSampleNs = 0;
+    const uint64_t now = MonotonicNs();
+    if (now - sLastSampleNs < TOP_LEAK_SAMPLE_INTERVAL_NS)
+    {
+        return;
+    }
+    sLastSampleNs = now;
+    SampleTopLeaks();
+}
+
+// 符号化预热线程主体: 1s节拍——①1Hz刷新模块可执行段快照(dl锁暴露类
+// 稳态瞬时,closing后join不再执行);②MaybeSampleTopLeaks采样节拍(top-K dladdr
+// 预热入g_symCache)。无环无事件,不存在排空;闭窗由SvcSetEnabled调用线程同步
+// 完成(停本线程→CloseAggregate→STAGE_END),本线程不参与闭窗。
+void* WarmupThreadMain(void*)
+{
+    // 线程生命周期全程抑制(场景C): 预热线程内部分配(g_symCache容器增长/dladdr
+    // 内部)经PLT回落本钩子→守卫拦截,不落记账
+    HookSuppressGuard guard;
+    pthread_setname_np(pthread_self(), "msmemscope-warm");
+    uint64_t lastSnapNs = 0;  // 模块区间快照1Hz刷新节拍(仅本线程读写,无共享)
+    while (!g_warmupStop.load(std::memory_order_acquire))
+    {
+        try
+        {
+            const uint64_t nowNs = MonotonicNs();
+            // 1Hz模块快照刷新: 新dlopen模块的代码帧进入快照后其调用点才可走
+            // FP快路(快照外帧pc校验不通过,自动回退backtrace)
+            if (g_enabled.load(std::memory_order_relaxed) && nowNs - lastSnapNs >= 1000000000ull)
+            {
+                RefreshExecRanges();
+                lastSnapNs = nowNs;
+            }
+            MaybeSampleTopLeaks();
+        }
+        catch (...)
+        {
+            // 兜底(绝不trap杀宿主): 预热线程内任何异常(dladdr内部/容器分配等)
+            // 一律吞掉降级,下轮节拍继续——线程函数逃逸异常即std::terminate杀宿主
+        }
+        usleep(TOP_LEAK_SAMPLE_INTERVAL_NS / 1000);  // 1s节拍(函数内节流门兜底)
+    }
+    return nullptr;
+}
+
+// 预热线程创建(开窗时调用): 首次创建后常驻到StopWarmupThread;幂等(已创建直接
+// 返回)。失败(线程资源耗尽)仅记日志——预热是符号质量的尽力而为,缺线程时闭窗
+// 格式化作模块快照兜底,功能不受损
+bool EnsureWarmupThread()
+{
+    if (g_warmupThreadCreated.load(std::memory_order_relaxed))
+    {
+        return true;
+    }
+    pthread_t tid;
+    if (pthread_create(&tid, nullptr, WarmupThreadMain, nullptr) != 0)
+    {
+        return false;
+    }
+    g_warmupThread = tid;
+    g_warmupThreadCreated.store(true, std::memory_order_release);
+    return true;
+}
+
+// 预热线程停止(闭窗第一步,CloseAggregate之前): 置g_warmupStop→join。join双重
+// 作用: ①g_symCache/g_symBuf由预热线程独占写入,join后闭窗聚合(同一调用线程)
+// 读取无并发,无锁共享安全;②join兼作沉降期——g_enabled已在先置false,in-flight
+// free在关闸后自然drain,闭窗聚合不撕裂计数
+void StopWarmupThread()
+{
+    if (!g_warmupThreadCreated.load(std::memory_order_relaxed))
+    {
+        return;
+    }
+    g_warmupStop.store(true, std::memory_order_release);
+    pthread_join(g_warmupThread, nullptr);
+}
+
+// 清表(开窗时调用,窗口关闭态无生产者): 栈表连待符号化缓冲一并释放,块表双数组
+// 整体释放,全部窗口计数器归零,闭窗快照产物清理(跨窗口不保留,防陈旧数据被新
+// 窗口的dump_*误读)。g_unattributedCount累计不清零(跨窗口差分),仅快照基线
+void ClearTables()
+{
+    for (auto& shard : g_stackShards)
+    {
+        pthread_mutex_lock(&shard.mtx);
+        for (auto& kv : shard.map)
+        {
+            RealFree(kv.second.fullPcs);
+            kv.second.fullPcs = nullptr;
+        }
+        shard.map.clear();
+        pthread_mutex_unlock(&shard.mtx);
+    }
+    for (auto& shard : g_blockShards)
+    {
+        pthread_mutex_lock(&shard.mtx);
+        // 开放寻址双数组整体释放归零(窗口关闭态无生产者):跨窗口不保留高水位容量,
+        // 空闲期零驻留;下窗口按需懒分配再增长
+        RealFree(shard.keys);
+        RealFree(shard.vals);
+        shard.keys = nullptr;
+        shard.vals = nullptr;
+        shard.capMask = 0;
+        shard.count = 0;
+        shard.overflow.clear();  // 溢出账本随块表清空(窗口生命周期=块表,节点经RealMallocAllocator)
+        pthread_mutex_unlock(&shard.mtx);
+    }
+    g_stackCount.store(0, std::memory_order_relaxed);
+    g_blockCount.store(0, std::memory_order_relaxed);
+    // 窗口计数器归零(本窗口统计量,闭窗后由CloseAggregate冻结进g_closeSnapshot)
+    g_truncated.store(0, std::memory_order_relaxed);
+    g_untrackedCount.store(0, std::memory_order_relaxed);
+    g_untrackedBytes.store(0, std::memory_order_relaxed);
+    g_unknownAllocCount.store(0, std::memory_order_relaxed);
+    g_unknownAllocBytes.store(0, std::memory_order_relaxed);
+    g_evictedStackCount.store(0, std::memory_order_relaxed);
+    g_evictedAllocCount.store(0, std::memory_order_relaxed);
+    g_evictedAllocBytes.store(0, std::memory_order_relaxed);
+    g_totalAllocCount.store(0, std::memory_order_relaxed);
+    g_totalAllocBytes.store(0, std::memory_order_relaxed);
+    g_totalFreedCount.store(0, std::memory_order_relaxed);
+    g_totalFreedBytes.store(0, std::memory_order_relaxed);
+    // 溢出通道计数器归零(窗口统计量,已并入total*口径,见g_overflow*注释)
+    g_overflowAllocCount.store(0, std::memory_order_relaxed);
+    g_overflowAllocBytes.store(0, std::memory_order_relaxed);
+    g_overflowFreedCount.store(0, std::memory_order_relaxed);
+    g_overflowFreedBytes.store(0, std::memory_order_relaxed);
+    // 开窗前free通道归零(次数/总量/分布桶原子向量逐桶清零;向量定容见HostMemHookInit)
+    g_preWindowFreeCount.store(0, std::memory_order_relaxed);
+    g_preWindowFreeBytes.store(0, std::memory_order_relaxed);
+    for (auto& c : g_preWindowDistCount)
+    {
+        c.store(0, std::memory_order_relaxed);
+    }
+    for (auto& b : g_preWindowDistBytes)
+    {
+        b.store(0, std::memory_order_relaxed);
+    }
+    // 未归因窗口基线快照(计数本身累计不清零,分析器差分用;闭窗打印取窗口内增量)
+    g_unattrWindowBase.store(g_unattributedCount.load(std::memory_order_relaxed), std::memory_order_relaxed);
+    // 闭窗快照产物清理(跨窗口不保留):g_closeSnapshot.valid=false使get_stats回落
+    // 实时计数器,防新窗口未闭窗时误读旧窗口冻结值
+    g_closeStats.clear();
+    g_closeSizeDist.clear();
+    g_closePreWindowDist.clear();
+    g_closeSnapshot = CloseSnapshot{};
+}
+
+// =============================================================================
+// 闭窗聚合(set_enabled(false)调用线程同步执行;生产者已冻结):
+// 步骤0 大小排布桶预置(g_sizeBucketBounds→g_closeSizeDist,末桶rangeHigh=UINT64_MAX);
+// 步骤1 单次块表遍历: 聚合per-stack未释放(块表是未释放的唯一真源)+大小排布桶
+//       +存活块/字节合计;owner==nullptr→未知桶(栈层失败块,与g_unknownAllocCount互证);
+// 步骤2 栈表遍历: 读取原子申请计数(allocCount/allocBytes),未释放取步骤1聚合值,
+//       释放=申请-未释放派生(不变量"申请=释放+未释放"精确成立,无独立释放计数);
+//       捕获entry指针与行位置(不线性扫描map再查)——闭窗符号化仅对unfreed>0执行;
+// 步骤3 未知桶行(stackId=0): 申请计数=unknown桶计数,未释放=步骤1未知桶聚合;
+// 步骤4 仅对unfreed>0的栈符号化frameDesc(EnsureSymBuf失败→文本缺失,统计值优先);
+//       排序: unfreedBytes降序, stackId升序(报告可读性与确定性);
+// 步骤5 冻结合计进g_closeSnapshot(valid=true),get_stats此后返回冻结值。
+// 截断标注: 块表触顶(bit0)时遍历数据=截断点前完整前缀,快照如实反映;
+// 分片锁获取失败(skip)同样置bit0/bit1(数据降级,诚实标注)
+// =============================================================================
+
+// 闭窗分片锁获取: 生产者已冻结(g_enabled=false),锁应即时空闲;trylock+有界重试
+// (纯CAS,与时钟无关——不用timedlock,防时钟回拨把截止推远),耗尽仍失败则调用方
+// 跳过该分片并置截断标注(诚实降级)。重试间隔短退避(usleep基于CLOCK_MONOTONIC,
+// 与时钟回拨无关)
+constexpr int CLOSE_LOCK_RETRIES = 256;
+bool CloseTryLockShard(pthread_mutex_t& mtx)
+{
+    for (int i = 0; i < CLOSE_LOCK_RETRIES; ++i)
+    {
+        if (pthread_mutex_trylock(&mtx) == 0)
+        {
+            return true;
+        }
+        CpuRelax();
+        usleep(200);  // 200μs×256≈50ms封顶
+    }
+    return false;
+}
+
+// 步骤1的per-stack未释放聚合(块表遍历真源;栈表遍历消费)
+struct UnfreedAgg
+{
+    uint64_t count = 0;
+    uint64_t bytes = 0;
+    uint64_t maxBlockSize = 0;
+};
+
+void CloseAggregate()
+{
+    // 步骤0: 大小排布桶预置(bounds为各桶下界,末桶上界UINT64_MAX)
+    g_closeSizeDist.clear();
+    const size_t bucketCount = g_sizeBucketBounds.size() + 1;
+    g_closeSizeDist.reserve(bucketCount);
+    for (size_t i = 0; i < bucketCount; ++i)
+    {
+        SizeBucket b{};
+        b.rangeLow = i == 0 ? 0 : g_sizeBucketBounds[i - 1];
+        b.rangeHigh = i + 1 < bucketCount ? g_sizeBucketBounds[i] : UINT64_MAX;
+        g_closeSizeDist.push_back(b);
+    }
+
+    // 步骤1: 单次块表遍历(per-stack未释放聚合+大小桶+存活块/字节合计)+同锁遍历
+    // 溢出账本(块表满降级转出): 溢出块计入大小排布桶(未释放内存的
+    // 真实排布,含被转出的泄漏块)但不入per-stack聚合(无栈归因)不入liveBlocks
+    // (liveBlocks为块表口径,totalFreed派生另减overflowLive,见步骤5)。
+    // 分片trylock失败→跳过并置truncated bit2(数据为降级前缀,诚实标注;bit0已转
+    // 信息标注不表达数据降级,故改置bit2);
+    // 闭窗态无生产者,锁内unordered_map插入/增长经真函数分配(不落记账),无风险
+    std::unordered_map<uint64_t, UnfreedAgg, std::hash<uint64_t>, std::equal_to<uint64_t>,
+                       RealMallocAllocator<std::pair<const uint64_t, UnfreedAgg>>>
+        unfreed;
+    unfreed.reserve(g_stackCount.load(std::memory_order_relaxed) + 1);  // 免遍历中rehash
+    uint64_t liveBlocks = 0;
+    uint64_t liveBytesTotal = 0;
+    uint64_t overflowLiveBlocks = 0;  // 溢出账本存活块(大小排布已含,派生用)
+    uint64_t overflowLiveBytes = 0;
+    for (auto& shard : g_blockShards)
+    {
+        if (!CloseTryLockShard(shard.mtx))
+        {
+            g_truncated.fetch_or(4u, std::memory_order_relaxed);  // 块表读取降级:数据为前缀
+            continue;
+        }
+        if (shard.keys != nullptr)
+        {
+            for (uint32_t i = 0; i <= shard.capMask; ++i)
+            {
+                if (shard.keys[i] == 0)
+                {
+                    continue;
+                }
+                const BlockEntry& v = shard.vals[i];
+                const uint64_t stackId = v.owner != nullptr ? v.owner->stackId : 0;
+                UnfreedAgg& a = unfreed[stackId];
+                a.count += 1;
+                a.bytes += v.size;
+                if (v.size > a.maxBlockSize)
+                {
+                    a.maxBlockSize = v.size;
+                }
+                const size_t bi = SizeBucketIndex(v.size);
+                g_closeSizeDist[bi].blockCount += 1;
+                g_closeSizeDist[bi].blockBytes += v.size;
+                liveBlocks += 1;
+                liveBytesTotal += v.size;
+            }
+        }
+        // 溢出账本同锁遍历: 计入大小排布桶(未释放真实排布)+溢出存活合计
+        for (const auto& kv : shard.overflow)
+        {
+            const uint64_t sz = kv.second;
+            const size_t bi = SizeBucketIndex(sz);
+            g_closeSizeDist[bi].blockCount += 1;
+            g_closeSizeDist[bi].blockBytes += sz;
+            overflowLiveBlocks += 1;
+            overflowLiveBytes += sz;
+        }
+        pthread_mutex_unlock(&shard.mtx);
+    }
+
+    // 步骤2: 栈表遍历。释放=申请-未释放派生;unfreed>0的栈记入liveEntries供符号化
+    g_closeStats.clear();
+    g_closeStats.reserve(g_stackCount.load(std::memory_order_relaxed) + 1);
+    std::vector<std::pair<StackEntry*, size_t>, RealMallocAllocator<std::pair<StackEntry*, size_t>>> liveEntries;
+    for (auto& shard : g_stackShards)
+    {
+        if (!CloseTryLockShard(shard.mtx))
+        {
+            g_truncated.fetch_or(2u, std::memory_order_relaxed);  // 栈表读取降级:归因不完整
+            continue;
+        }
+        for (auto& kv : shard.map)
+        {
+            StackEntry& e = kv.second;
+            StackStatRow row{};
+            row.stackId = e.stackId;
+            row.allocCount = e.allocCount.load(std::memory_order_relaxed);
+            row.allocBytes = e.allocBytes.load(std::memory_order_relaxed);
+            const auto it = unfreed.find(e.stackId);
+            if (it != unfreed.end())
+            {
+                row.unfreedCount = it->second.count;
+                row.unfreedBytes = it->second.bytes;
+                row.maxBlockSize = it->second.maxBlockSize;
+            }
+            // 释放=申请-未释放派生(不变量恒等;未释放为0则freed=alloc)
+            row.freedCount = row.allocCount - row.unfreedCount;
+            row.freedBytes = row.allocBytes - row.unfreedBytes;
+            const size_t idx = g_closeStats.size();
+            g_closeStats.push_back(std::move(row));
+            if (it != unfreed.end())
+            {
+                liveEntries.emplace_back(&e, idx);
+            }
+        }
+        pthread_mutex_unlock(&shard.mtx);
+    }
+
+    // 步骤3: 未知桶行(stackId=0,frameDesc为空): 申请=unknown桶计数,未释放=聚合
+    {
+        StackStatRow row{};
+        row.stackId = 0;
+        row.allocCount = g_unknownAllocCount.load(std::memory_order_relaxed);
+        row.allocBytes = g_unknownAllocBytes.load(std::memory_order_relaxed);
+        const auto it = unfreed.find(0);
+        if (it != unfreed.end())
+        {
+            row.unfreedCount = it->second.count;
+            row.unfreedBytes = it->second.bytes;
+            row.maxBlockSize = it->second.maxBlockSize;
+        }
+        row.freedCount = row.allocCount - row.unfreedCount;
+        row.freedBytes = row.allocBytes - row.unfreedBytes;
+        g_closeStats.push_back(std::move(row));
+    }
+
+    // 步骤4: 符号化仅对unfreed>0的栈执行(无未释放块的栈无文本需求,省dladdr)。
+    // 帧缓存由预热线程写入且已join(StopWarmupThread),此处读取无并发;未预热帧
+    // 走模块快照兜底+离线addr2line。文本缺失(无PC/缓冲不可得/分配失败)不阻断
+    // 统计行——统计值优先,报告标注文本缺省
+    for (const auto& le : liveEntries)
+    {
+        StackEntry* e = le.first;
+        StackStatRow& row = g_closeStats[le.second];
+        if (e->fullPcs == nullptr || e->fullCount == 0)
+        {
+            continue;
+        }
+        uint32_t depth = g_stackDepth.load(std::memory_order_relaxed);
+        if (depth == 0 || depth > MAX_STACK_DEPTH)
+        {
+            depth = DEFAULT_STACK_DEPTH;
+        }
+        if (!EnsureSymBuf(static_cast<size_t>(depth) * kFrameReserve + 16))
+        {
+            continue;
+        }
+        const size_t off = BuildFrameDesc(e->fullPcs, e->fullCount);
+        try
+        {
+            row.frameDesc.assign(g_symBuf, off);
+        }
+        catch (...)
+        {
+            // std::string分配失败(bad_alloc):文本缺失,统计值优先
+        }
+    }
+    // 排序: unfreedBytes降序, stackId升序(报告可读性与确定性)
+    std::sort(g_closeStats.begin(), g_closeStats.end(),
+              [](const StackStatRow& a, const StackStatRow& b)
+              {
+                  if (a.unfreedBytes != b.unfreedBytes)
+                  {
+                      return a.unfreedBytes > b.unfreedBytes;
+                  }
+                  return a.stackId < b.stackId;
+              });
+
+    // 步骤5: 冻结合计进g_closeSnapshot(valid=true;get_stats此后返回冻结值)。
+    // 释放=申请-未释放派生(全局合计同款),与per-stack行口径一致。派生口径:
+    // 溢出申请已并入totalAlloc、溢出释放已并入totalFreed,未释放
+    // = totalAlloc − 块表存活 − 溢出存活(overflowLive=overflowAlloc−overflowFreed,
+    // 即步骤1遍历的溢出账本真值overflowLiveBlocks)——global不变量"申请=释放+未释放"
+    // 在含溢出通道的完整账本下精确成立
+    g_closeSnapshot.valid = true;
+    g_closeSnapshot.liveBlockCount = liveBlocks;
+    g_closeSnapshot.totalAllocCount = g_totalAllocCount.load(std::memory_order_relaxed);
+    g_closeSnapshot.totalAllocBytes = g_totalAllocBytes.load(std::memory_order_relaxed);
+    g_closeSnapshot.totalFreedCount =
+        g_totalAllocCount.load(std::memory_order_relaxed) - liveBlocks - overflowLiveBlocks;
+    g_closeSnapshot.totalFreedBytes =
+        g_totalAllocBytes.load(std::memory_order_relaxed) - liveBytesTotal - overflowLiveBytes;
+    g_closeSnapshot.untrackedCount = g_untrackedCount.load(std::memory_order_relaxed);
+    g_closeSnapshot.untrackedBytes = g_untrackedBytes.load(std::memory_order_relaxed);
+    // 溢出通道快照: alloc/freed为窗口累计转出/逆向修正,存活=alloc-freed
+    g_closeSnapshot.overflowAllocCount = g_overflowAllocCount.load(std::memory_order_relaxed);
+    g_closeSnapshot.overflowAllocBytes = g_overflowAllocBytes.load(std::memory_order_relaxed);
+    g_closeSnapshot.overflowFreedCount = g_overflowFreedCount.load(std::memory_order_relaxed);
+    g_closeSnapshot.overflowFreedBytes = g_overflowFreedBytes.load(std::memory_order_relaxed);
+    // 开窗前free独立通道快照(窗口外分配)
+    g_closeSnapshot.preWindowFreeCount = g_preWindowFreeCount.load(std::memory_order_relaxed);
+    g_closeSnapshot.preWindowFreeBytes = g_preWindowFreeBytes.load(std::memory_order_relaxed);
+    // 死栈淘汰快照(本窗口被淘汰条目/折叠申请,折叠已并入unknown桶行——未知桶行
+    // 的alloc=从未入表+死栈折叠,与g_evicted*互证)
+    g_closeSnapshot.evictedStackCount = g_evictedStackCount.load(std::memory_order_relaxed);
+    g_closeSnapshot.evictedAllocCount = g_evictedAllocCount.load(std::memory_order_relaxed);
+    g_closeSnapshot.evictedAllocBytes = g_evictedAllocBytes.load(std::memory_order_relaxed);
+    // 开窗前free大小排布冻结(原子桶向量→桶,与g_closeSizeDist同界;仅窗口关闭态读,
+    // 快照隔离新窗口ClearTables逐桶清零)
+    g_closePreWindowDist.clear();
+    g_closePreWindowDist.reserve(bucketCount);
+    // 防御: pre-window原子桶向量仅在HostMemHookInit(构造期)定容,此后无任何运行期
+    // 缩容/清空路径(ClearTables只清元素)。此处向量未定容=元数据在运行期被越界写
+    // 破坏(BSS损坏,实测:闭窗段错误AtomicU64::load this=0x0)——数据已不可信,跳过
+    // 开窗前free分布并告警取证,不阻断闭窗主流程(统计行/大小排布/合计已就绪)。
+    // 不在此处resize补齐: 补齐产出假数据(被破坏的全局范围不可知),且掩盖损坏症状
+    if (g_preWindowDistCount.size() < bucketCount || g_preWindowDistBytes.size() < bucketCount)
+    {
+        fprintf(stderr,
+                "[msmemscope] hostmem: [pid=%llu] CORRUPTION: pre-window dist vector undersized at "
+                "close (count=%zu bytes=%zu expect=%zu) - BSS overwrite suspected, pre-window "
+                "distribution dropped\n",
+                static_cast<unsigned long long>(getpid()), g_preWindowDistCount.size(), g_preWindowDistBytes.size(),
+                bucketCount);
+    }
+    else
+    {
+        for (size_t i = 0; i < bucketCount; ++i)
+        {
+            SizeBucket b{};
+            b.rangeLow = i == 0 ? 0 : g_sizeBucketBounds[i - 1];
+            b.rangeHigh = i + 1 < bucketCount ? g_sizeBucketBounds[i] : UINT64_MAX;
+            b.blockCount = g_preWindowDistCount[i].load(std::memory_order_relaxed);
+            b.blockBytes = g_preWindowDistBytes[i].load(std::memory_order_relaxed);
+            g_closePreWindowDist.push_back(b);
+        }
+    }
+    g_closeSnapshot.sampleRate = g_sampleRate.load(std::memory_order_relaxed);
+    g_closeSnapshot.truncated = g_truncated.load(std::memory_order_relaxed);
+}
+
+// =============================================================================
+// SVC实现(bind返回的服务表)
+// =============================================================================
