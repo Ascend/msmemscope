@@ -18,14 +18,14 @@ At its core, a memory usage problem comes down to answering four questions: who 
 | ------------------------------------------ | ------------------------------------------------------------ | ------------------------------------------------------------ |
 | Symptom                                  | Symptom                                                    | Memory usage increased, OOM, and memory exception                                      |
 | Environment                                  | Scenario                                                        | Training or inference scenario                                          |
-| Framework                                      | PyTorch, ATB, MindSpore, GE, etc.|Some memory pools support multiple methods to monitor memory.|                                                              |
-| Single-operator or graph mode                            |-| The information collected in graph mode is limited, making analysis relatively difficult.                  |                                                              |
-| Model                                      |-| If a self-developed model is involved, you are advised to understand its structure (such as LLaMA-like or GPT-like architectures).        |                                                              |
-| Specifications                                  | Number of devices and servers                                                |-|                                                              |
-| Parallelism strategy                                  |-| Specific parallel parameter configurations                                        |                                                              |
+| Framework                                      | PyTorch, ATB, MindSpore, GE, etc.|Some memory pools support multiple methods to monitor memory.|
+| Single-operator or graph mode                            |-| The information collected in graph mode is limited, making analysis relatively difficult.                  |
+| Model                                      |-| If a self-developed model is involved, you are advised to understand its structure (such as LLaMA-like or GPT-like architectures).        |
+| Specifications                                  | Number of devices and servers                                                |-|
+| Parallelism strategy                                  |-| Specific parallel parameter configurations                                        |
 | Version                                      | Framework and version                                                  | Clarify the CANN and MindSpore/PyTorch versions. Check for recent version changes, that is, confirm whether the problem is caused by version changes.|
 | Memory optimization objective                              | Time required for reproducing a problem                                                | If reproducing a problem takes more than one hour, exercise caution when configuring the collection tool's parameters. The goal is to avoid collecting invalid data while still fully supporting problem analysis.|
-| Problem location scope and expectations|-| It is recommended that you understand the customer's optimization objectives. This helps reduce redundant work and facilitates problem localization with clear goals.|                                                              |
+| Problem location scope and expectations|-| It is recommended that you understand the customer's optimization objectives. This helps reduce redundant work and facilitates problem localization with clear goals.|
 
 Some memory management configurations are set through environment variables. The following table lists the known configurations for related scenarios. **You can first check the status of these environment variables.**
 
