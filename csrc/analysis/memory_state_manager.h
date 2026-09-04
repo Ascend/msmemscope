@@ -107,13 +107,14 @@ class MemoryState : public StateBase
         events.push_back(event);
         size = static_cast<uint64_t>(event->size);
         inefficientType = "";
-        std::lock_guard<std::mutex> lock(mtx);
+        // 原子自增分配唯一id:静态全局mutex保护的++count是该构造函数在事件洪峰下的
+        // 唯一锁争用点(与MemoryStateManager::mtx_同尺度),而唯一性只需原子性不需互斥
+        // ——relaxed全序原子足够(UT重置计数直接operator=)
         allocationId = ++count;
     }
 
    private:
-    static std::mutex mtx;  // 修改count需要加锁
-    static uint64_t count;  // static变量，用于分配唯一id
+    static std::atomic<uint64_t> count;  // static变量，用于分配唯一id（全局单调，原子自增）
 };
 
 class Pool

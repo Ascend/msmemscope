@@ -599,3 +599,75 @@ TEST_F(EventReportTest, GetMemOpSpaceExpectSuccess)
     flag = 0b11110000000000;
     ASSERT_EQ(GetMemOpSpace(flag), MemOpSpace::INVALID);
 }
+// ============================================================================
+// 退出闭窗(进程退出时host泄漏窗口自动闭窗触发完整分析):
+// 主测试进程无钩子装配(BindHostMemHook经桩dlsym解析必失败),svcHostMem_注入
+// mock svc表驱动CloseHostMemWindowAtExit的行为契约;等待循环的排空信号分支
+// (get_status符号不可得→立即返回)在无钩子环境天然覆盖。钩子侧闭窗→排空→
+// STAGE_END链路由子进程套件UT-H2覆盖
+// ============================================================================
+namespace {
+// mock svc表:记录set_enabled调用序列(get_stats/dump_live_blocks桩实现)
+std::vector<int> g_exitCloseSetEnabledArgs;
+void MockExitCloseSetEnabled(int enabled) { g_exitCloseSetEnabledArgs.push_back(enabled); }
+void MockExitCloseGetStats(MsmemscopeHostmemStats* stats)
+{
+    stats->liveBlockCount = 0;
+}
+void MockExitCloseDumpLiveBlocks(void (*emit)(void*, uint64_t, uint64_t, uint64_t, uint64_t), void* ctx)
+{
+    (void)emit;
+    (void)ctx;
+}
+const MsmemscopeHostmemSvc g_exitCloseMockSvc = {MockExitCloseSetEnabled, MockExitCloseGetStats,
+                                                 MockExitCloseDumpLiveBlocks};
+}  // namespace
+
+// 窗口开着(mock svc在位+闩锁未置)→置stop闩锁+set_enabled(0);重复调用幂等
+TEST_F(EventReportTest, ExitCloseHostMemWindow)
+{
+    EventReport& instance = EventReport::Instance(MemScopeCommType::MEMORY_DEBUG);
+    const MsmemscopeHostmemSvc* savedSvc = instance.svcHostMem_;
+    const bool savedLatch = instance.hostMemStopLatch_.load();
+    g_exitCloseSetEnabledArgs.clear();
+    instance.svcHostMem_ = &g_exitCloseMockSvc;
+    instance.hostMemStopLatch_.store(false);
+
+    instance.CloseHostMemWindowAtExit();
+    EXPECT_TRUE(instance.hostMemStopLatch_.load()) << "stop latch must be set (window closed, no reopen)";
+    ASSERT_FALSE(g_exitCloseSetEnabledArgs.empty());
+    EXPECT_EQ(g_exitCloseSetEnabledArgs.back(), 0) << "intersection semantics must close the window";
+
+    // 幂等:重复调用行为一致不崩溃
+    instance.CloseHostMemWindowAtExit();
+    EXPECT_EQ(g_exitCloseSetEnabledArgs.back(), 0);
+
+    instance.svcHostMem_ = savedSvc;
+    instance.hostMemStopLatch_.store(savedLatch);
+}
+
+// 未bind/已析构早退:无窗口可言,不得触达svc表,闩锁不动
+TEST_F(EventReportTest, ExitCloseHostMemWindowSkips)
+{
+    EventReport& instance = EventReport::Instance(MemScopeCommType::MEMORY_DEBUG);
+    const MsmemscopeHostmemSvc* savedSvc = instance.svcHostMem_;
+    const bool savedLatch = instance.hostMemStopLatch_.load();
+    g_exitCloseSetEnabledArgs.clear();
+
+    // 未bind
+    instance.svcHostMem_ = nullptr;
+    instance.hostMemStopLatch_.store(false);
+    instance.CloseHostMemWindowAtExit();
+    EXPECT_TRUE(g_exitCloseSetEnabledArgs.empty()) << "unbound must not touch svc";
+    EXPECT_FALSE(instance.hostMemStopLatch_.load()) << "unbound must leave latch untouched";
+
+    // 已析构(svcHostMem_有效也不得触达)
+    instance.svcHostMem_ = &g_exitCloseMockSvc;
+    instance.destroyed_.store(true);
+    instance.CloseHostMemWindowAtExit();
+    EXPECT_TRUE(g_exitCloseSetEnabledArgs.empty()) << "destroyed must not touch svc";
+    instance.destroyed_.store(false);  // 恢复单例状态
+
+    instance.svcHostMem_ = savedSvc;
+    instance.hostMemStopLatch_.store(savedLatch);
+}

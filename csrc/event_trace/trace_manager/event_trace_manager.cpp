@@ -55,6 +55,11 @@ const std::unordered_map<std::string, std::function<void(const std::string &, Co
     {"output", ParseOutputPath},
     {"analysis", ParseAnalysis},
     {"watch", ParseWatchConfig},
+    // host内存泄漏检测:config新增键,与CLI同名参数共用解析
+    {"host_leak_mode", ParseHostLeakMode},
+    {"block_size_threshold", ParseBlockSizeThreshold},
+    // 显式采样率倒数(默认1=不采样),与CLI --sample-rate共用解析
+    {"sample_rate", ParseSampleRate},
 };
 
 // 只允许设置一次的config参数；旧参数名与标准名归入同一组，视为同一个参数，不可重复设置
