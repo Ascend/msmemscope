@@ -1704,6 +1704,15 @@ BlockInsertResult InsertBlock(uint64_t addr, uint64_t size, uint64_t ts, StackEn
     {
         return BlockInsertResult::kFailed;  // 瞬时竞争: 静默跳过(不置截断)
     }
+    // 记账门控锁内复核: 关窗序列先置g_enabled=false再遍历块表闭窗聚合。本锁内
+    // 检查+插入与遍历互斥(锁序即序): 插入先于遍历→记录对快照可见;关闸后到达→
+    // 复核命中直接跳过——块不可能落表于快照之后(旧行为: 快照后落表的块静默消失
+    // 于报告且被派生为已释放)。跳过与kFailed同语义: 静默,不置截断标注
+    if (!g_enabled.load(std::memory_order_relaxed))
+    {
+        pthread_mutex_unlock(&shard.mtx);
+        return BlockInsertResult::kFailed;
+    }
     if (shard.count >= g_maxBlocksPerShard || !BlockShardEnsureRoomLocked(shard))
     {
         // 表满(条数上限)/容量不可得(OOM): 转溢出账本降级记账。
@@ -2019,6 +2028,19 @@ bool RecordMalloc(uint64_t addr, size_t size)
     return true;
 }
 
+// 开窗前free独立通道记账(free/realloc的kMiss共用): 窗口外分配或记账被跳过的
+// 块被释放时,大小经malloc_usable_size近似(RealUsableSize,解析失败为0入0桶),
+// 不并入totalFreed(窗口外分配不入账本,并入会破坏"申请=释放+未释放"不变量)
+void RecordPreWindowFree(uint64_t addr)
+{
+    const uint64_t size = RealUsableSize(reinterpret_cast<void*>(addr));
+    const size_t bi = SizeBucketIndex(size);
+    g_preWindowFreeCount.fetch_add(1, std::memory_order_relaxed);
+    g_preWindowFreeBytes.fetch_add(size, std::memory_order_relaxed);
+    g_preWindowDistCount[bi].fetch_add(1, std::memory_order_relaxed);
+    g_preWindowDistBytes[bi].fetch_add(size, std::memory_order_relaxed);
+}
+
 // free族通用记账: 块表命中→删除+释放记账(liveBytes减+totalFreed自增,均在
 // CaptureAndRemoveBlock的块表锁临界区内完成)+dispose块引用(捕获已转移给rec,
 // 块已释放,终态恰一次);溢出账本命中→逆向修正
@@ -2046,15 +2068,8 @@ void RecordFree(uint64_t addr)
     {
         return;  // 有界自旋耗尽: 静默跳过(条目残留,假泄漏风险有界且极罕见)
     }
-    // kMiss: 开窗前分配/记账被跳过→独立通道。大小经malloc_usable_size
-    // 近似(RealUsableSize,解析失败为0入0桶),不并入totalFreed(窗口外分配不入账本,
-    // 并入会破坏"申请=释放+未释放"不变量)
-    const uint64_t size = RealUsableSize(reinterpret_cast<void*>(addr));
-    const size_t bi = SizeBucketIndex(size);
-    g_preWindowFreeCount.fetch_add(1, std::memory_order_relaxed);
-    g_preWindowFreeBytes.fetch_add(size, std::memory_order_relaxed);
-    g_preWindowDistCount[bi].fetch_add(1, std::memory_order_relaxed);
-    g_preWindowDistBytes[bi].fetch_add(size, std::memory_order_relaxed);
+    // kMiss: 开窗前分配/记账被跳过→独立通道(见RecordPreWindowFree)
+    RecordPreWindowFree(addr);
 }
 
 // =============================================================================
@@ -3587,6 +3602,11 @@ extern "C" void* realloc(void* ptr, size_t size)
         {
             oldRec.owner->refs.fetch_sub(1, std::memory_order_relaxed);  // dispose转移引用(旧块已释放)
         }
+        else if (oldRes == BlockRemoveResult::kMiss)
+        {
+            // 开窗前/未记账块: 与free()的kMiss同语义,其释放落入开窗前free独立通道
+            RecordPreWindowFree(reinterpret_cast<uint64_t>(ptr));
+        }
         return RealRealloc(ptr, 0);
     }
 
@@ -3613,6 +3633,13 @@ extern "C" void* realloc(void* ptr, size_t size)
     if (oldRec.owner != nullptr)
     {
         oldRec.owner->refs.fetch_sub(1, std::memory_order_relaxed);  // dispose转移引用(旧块已释放)
+    }
+    else if (oldRes == BlockRemoveResult::kMiss)
+    {
+        // 开窗前/未记账块随realloc成功而释放(与free()的kMiss同语义):
+        // 落入开窗前free独立通道;np==ptr原地扩容不改变此语义(与kBlock同款
+        // "释放+新申请"记账口径)
+        RecordPreWindowFree(reinterpret_cast<uint64_t>(ptr));
     }
     RecordMalloc(reinterpret_cast<uint64_t>(np), size);
     return np;

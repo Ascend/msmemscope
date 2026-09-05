@@ -98,6 +98,43 @@ void Process::SetPreloadEnv()
         hookLibDir = preloadPath;
     }
 
+    // host堆泄漏检测装配:wrapper经--load-api-env=host(或按analysis推断)
+    // 设置MSMEMSCOPE_API_ENV标记;host标记时LD_PRELOAD仅装配host钩子so,不混入hal/mstx/kernel
+    // 钩子链(host钩子so的DT_NEEDED会带入libascend_leaks);npu标记或未设置时保持既有行为
+    const char *apiEnv = getenv("MSMEMSCOPE_API_ENV");
+    if (apiEnv != nullptr && string(apiEnv) == "host")
+    {
+        std::vector<string> hostHookNames{"libmsmemscope_host_mem_hook.so"};
+        for (string &hookLib : hostHookNames)
+        {
+            Path hookLibPath = (Path(hookLibDir) / Path(hookLib)).Resolved();
+            if (hookLibPath.ErrorOccured())
+            {
+                return;
+            }
+            if (hookLibPath.Exists())
+            {
+                hookLibPath.DeclarePermissionRisk();
+                hookLib = hookLibPath.ToString();
+                LOG_INFO("Use preload lib [%s]", hookLib.c_str());
+            }
+            else
+            {
+                LOG_ERROR("No such preload lib [%s]", hookLibPath.ToString().c_str());
+            }
+        }
+        // 保留用户既有LD_PRELOAD条目(与npu分支同语义)
+        string preloadEnv = Utility::Join(hostHookNames.cbegin(), hostHookNames.cend(), ":");
+        const string envName = "LD_PRELOAD";
+        auto prevLdPreEnv = getenv(envName.c_str());
+        if (prevLdPreEnv && !string(prevLdPreEnv).empty())
+        {
+            preloadEnv += ":" + string(prevLdPreEnv);
+        }
+        setenv(envName.c_str(), preloadEnv.c_str(), 1);
+        return;
+    }
+
     std::vector<string> hookLibNames{"libleaks_ascend_hal_hook.so", "libascend_mstx_hook.so",
                                      "libascend_kernel_hook.so"};
 
