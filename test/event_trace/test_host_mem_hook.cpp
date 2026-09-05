@@ -952,3 +952,951 @@ void FloodDistinctSites(int count, std::vector<void*>& keep)
     FloodDistinctSites<Depth + 1>(count, keep);
 }
 
+template <>
+void FloodDistinctSites<600>(int, std::vector<void*>&)
+{
+}
+
+// 闭窗聚合用例的调用点生成器:四相各300个独立调用点(相内每个模板实例化含独立
+// malloc调用点;实例化按语法展开,同样须以显式特化阻断递归链条)
+template <int Depth, int Gen>
+void FloodGen(int count, std::vector<void*>& keep)
+{
+    if (Depth >= count)
+    {
+        return;
+    }
+    keep.push_back(malloc(64));
+    FloodGen<Depth + 1, Gen>(count, keep);
+}
+
+// 函数模板只能全特化(偏特化不合法),四相各需一条阻断特化
+template <>
+void FloodGen<300, 0>(int, std::vector<void*>&)
+{
+}
+
+template <>
+void FloodGen<300, 1>(int, std::vector<void*>&)
+{
+}
+
+template <>
+void FloodGen<300, 2>(int, std::vector<void*>&)
+{
+}
+
+template <>
+void FloodGen<300, 3>(int, std::vector<void*>&)
+{
+}
+
+// 锤击用例的调用点生成器:每实例化独立malloc/realloc调用点,按Depth混合三种路径
+// (纯释放/重分配成功/重分配失败回插);递归深度上限300,须以显式特化阻断链条。
+// 轮末由调用方释放keep中保留块——存活站点随轮次更替,死栈供给持续再生
+template <int Depth, int Gen>
+void HammerGen(int count, std::vector<void*>& keep)
+{
+    if (Depth >= count)
+    {
+        return;
+    }
+    void* p = malloc(64);
+    const int mode = Depth % 3;
+    if (mode == 0)
+    {
+        free(p);  // 纯释放:块引用dispose,站点变死栈(淘汰供给)
+    }
+    else if (mode == 1)
+    {
+        void* q = realloc(p, 128);  // 成功路径:旧块引用dispose+新块记账
+        keep.push_back(q != nullptr ? q : p);  // 防御OOM:失败则原块保持有效
+    }
+    else
+    {
+        void* q = realloc(p, static_cast<size_t>(-1));  // 必失败:ReinsertBlock回插引用归块
+        if (q != nullptr)
+        {
+            keep.push_back(q);
+        }
+        else
+        {
+            free(p);
+        }
+    }
+    HammerGen<Depth + 1, Gen>(count, keep);
+}
+
+// 函数模板只能全特化(偏特化不合法),四线程各需一条阻断特化
+template <>
+void HammerGen<300, 0>(int, std::vector<void*>&)
+{
+}
+
+template <>
+void HammerGen<300, 1>(int, std::vector<void*>&)
+{
+}
+
+template <>
+void HammerGen<300, 2>(int, std::vector<void*>&)
+{
+}
+
+template <>
+void HammerGen<300, 3>(int, std::vector<void*>&)
+{
+}
+
+// UT-H10: 洪流闭窗符号化——600个独立调用点灌入并全部保留存活,闭窗统一符号化:
+// 每个存活栈(dump_live_blocks投影的stackId)在dump_stack_stats中必有非空文本,
+// 逐块归栈(600块=600个不同栈),块表投影完整(记账为同步路径,无需等事件)。
+// 默认栈表容量(40万)下无截断:全归栈、无未知桶
+TEST_F(HostMemHookChild, stack_text_delivered_at_close)
+{
+    const MsmemscopeHostmemSvc* svc = BindHookApi();
+    ASSERT_NE(svc, nullptr);
+    ResetWindowState(svc);
+    ClearRecords();
+    ThresholdGuard thresholdGuard(64);  // 过滤框架噪声,放行全部64B洪峰块
+
+    std::vector<void*> keep;
+    keep.reserve(600);  // 开窗前预留:窗口内vector扩容分配不得混入记账
+    svc->set_enabled(1);
+    FloodDistinctSites<0>(600, keep);
+
+    // 记账同步完成,直接读统计
+    MsmemscopeHostmemStats stats{};
+    svc->get_stats(&stats);
+    EXPECT_EQ(stats.totalAllocCount, 600u);
+    EXPECT_EQ(stats.liveBlockCount, 600u);
+    EXPECT_EQ(stats.sampleRate, 1u);
+    EXPECT_EQ(stats.truncated, 0u) << "default stack capacity must not truncate 600 sites";
+
+    // 闭窗:全部存活栈统一符号化(默认容量600站<40万上限,全归栈)
+    svc->set_enabled(0);
+    ASSERT_TRUE(WaitForStageEnd()) << "STAGE_END not reported after close sweep";
+
+    DumpCollector collector;
+    svc->dump_live_blocks(CollectDumpItem, &collector);
+    ASSERT_EQ(collector.items.size(), 600u);
+    std::set<uint64_t> liveIds;
+    for (const auto& item : collector.items)
+    {
+        EXPECT_EQ(item.size, 64u);
+        EXPECT_GT(item.allocTs, 0u);
+        EXPECT_NE(item.stackId, 0u) << "no truncation at default capacity";
+        liveIds.insert(item.stackId);
+    }
+    ASSERT_EQ(liveIds.size(), 600u) << "each distinct call site must register its own stack";
+
+    StackStatCollector sc;
+    svc->dump_stack_stats(CollectStackStat, &sc);
+    uint64_t realRows = 0;
+    for (const auto& row : sc.rows)
+    {
+        if (row.stackId == 0)
+        {
+            continue;  // 未知桶行(计数0)
+        }
+        realRows += 1;
+        EXPECT_EQ(row.unfreedCount, 1u);
+        EXPECT_EQ(row.unfreedBytes, 64u);
+        EXPECT_FALSE(row.frameDesc.empty()) << "live stack text lost at close, stackId=" << row.stackId;
+    }
+    ASSERT_EQ(realRows, 600u) << "all flood stacks must be symbolized at close";
+
+    for (void* p : keep)
+    {
+        free(p);
+    }
+}
+
+// UT-H11: 账本自检——完整生命周期(开窗→分配/释放→闭窗)后,自检符号遍历全部分片
+// 校验:栈表/块表全局计数与分片之和一致、栈条目活跃计数非负。记账路径各态转换
+// 有缺陷(漏删块/计数不对称)时返回非零
+TEST_F(HostMemHookChild, link_invariants_selfcheck)
+{
+    const MsmemscopeHostmemSvc* svc = BindHookApi();
+    ASSERT_NE(svc, nullptr);
+    ResetWindowState(svc);
+    ClearRecords();
+    auto selfcheck = reinterpret_cast<uint64_t (*)(void)>(
+        dlsym(RTLD_DEFAULT, "msmemscope_hostmem_selfcheck"));
+    ASSERT_NE(selfcheck, nullptr);
+
+    svc->set_enabled(1);
+    void* keep1 = malloc(4096);
+    void* keep2 = malloc(8192);
+    void* tmp = malloc(4096);
+    ASSERT_NE(keep1, nullptr);
+    ASSERT_NE(keep2, nullptr);
+    ASSERT_NE(tmp, nullptr);
+    // 三态并存(活栈keep1/keep2+已释放栈tmp)下自检须通过
+    free(tmp);  // 块表删除+栈计数回扣为同步路径
+    EXPECT_EQ(selfcheck(), 0u) << "ledger invariants broken while window open";
+
+    // 闭窗:块表/栈表冻结,自检仍须通过
+    svc->set_enabled(0);
+    ASSERT_TRUE(WaitForStageEnd());
+    EXPECT_EQ(selfcheck(), 0u) << "ledger invariants broken after window closed";
+    free(keep1);
+    free(keep2);
+}
+
+// UT-H12: 闭窗聚合不变量——四相各300个独立调用点"分配后全部释放"后,闭窗聚合
+// 每栈满足 freed=alloc−unfreed 派生不变量(释放栈freed==alloc/unfreed==0),
+// 存活keeper栈unfreed精确=1;大小排布桶合计=块表投影合计=总未释放量;
+// 默认容量下无截断
+TEST_F(HostMemHookChild, close_aggregation_invariant_under_flood)
+{
+    const MsmemscopeHostmemSvc* svc = BindHookApi();
+    ASSERT_NE(svc, nullptr);
+    ResetWindowState(svc);
+    ClearRecords();
+    ThresholdGuard thresholdGuard(64);  // 过滤框架噪声(洪峰块恰64B,全部放行)
+
+    std::vector<void*> keep;
+    keep.reserve(300);  // 开窗前预留:窗口内vector扩容分配不得混入记账
+    svc->set_enabled(1);
+
+    // 四相:每相300个独立调用点各分配1块(64B)后全部释放(记账同步,无需等待)
+    for (int gen = 0; gen < 4; ++gen)
+    {
+        switch (gen)
+        {
+            case 0:
+                FloodGen<0, 0>(300, keep);
+                break;
+            case 1:
+                FloodGen<0, 1>(300, keep);
+                break;
+            case 2:
+                FloodGen<0, 2>(300, keep);
+                break;
+            default:
+                FloodGen<0, 3>(300, keep);
+                break;
+        }
+        for (void* p : keep)
+        {
+            free(p);
+        }
+        keep.clear();
+    }
+
+    // 常驻keeper:保留到闭窗——验证未释放聚合与符号化
+    void* keeper1 = malloc(2048);
+    void* keeper2 = malloc(4096);
+    ASSERT_NE(keeper1, nullptr);
+    ASSERT_NE(keeper2, nullptr);
+
+    MsmemscopeHostmemStats stats{};
+    svc->get_stats(&stats);
+    EXPECT_EQ(stats.totalAllocCount, 1202u);  // 4×300+2
+    EXPECT_EQ(stats.totalFreedCount, 1200u);
+    EXPECT_EQ(stats.liveBlockCount, 2u);
+    EXPECT_EQ(stats.truncated, 0u);
+
+    svc->set_enabled(0);
+    ASSERT_TRUE(WaitForStageEnd());
+
+    // per-stack聚合:全量满足 freed=alloc−unfreed;释放栈freed==alloc;keeper栈unfreed==1
+    StackStatCollector sc;
+    svc->dump_stack_stats(CollectStackStat, &sc);
+    uint64_t sumAlloc = 0;
+    uint64_t sumFreed = 0;
+    uint64_t sumUnfreed = 0;
+    uint64_t keeperRows = 0;
+    for (const auto& row : sc.rows)
+    {
+        if (row.stackId == 0)
+        {
+            continue;  // 未知桶行(计数0)
+        }
+        EXPECT_EQ(row.freedCount, row.allocCount - row.unfreedCount)
+            << "freed = alloc - unfreed must hold per stack";
+        EXPECT_EQ(row.freedBytes, row.allocBytes - row.unfreedBytes);
+        sumAlloc += row.allocCount;
+        sumFreed += row.freedCount;
+        sumUnfreed += row.unfreedCount;
+        if (row.unfreedCount > 0)
+        {
+            keeperRows += 1;
+            EXPECT_EQ(row.unfreedCount, 1u);
+            EXPECT_FALSE(row.frameDesc.empty()) << "keeper stack must be symbolized at close";
+        }
+        else
+        {
+            EXPECT_EQ(row.freedCount, row.allocCount) << "freed-phase stacks must be fully released";
+        }
+    }
+    EXPECT_EQ(sumAlloc, 1202u);
+    EXPECT_EQ(sumFreed, 1200u);
+    EXPECT_EQ(sumUnfreed, 2u);
+    EXPECT_EQ(keeperRows, 2u);
+
+    // 大小排布:桶合计==块表投影合计==总未释放量(2048+4096)
+    BucketCollector bc;
+    svc->dump_size_distribution(CollectBucket, &bc);
+    uint64_t bucketCount = 0;
+    uint64_t bucketBytes = 0;
+    for (const auto& b : bc.buckets)
+    {
+        bucketCount += b.blockCount;
+        bucketBytes += b.blockBytes;
+    }
+    EXPECT_EQ(bucketCount, 2u);
+    EXPECT_EQ(bucketBytes, 2048u + 4096u);
+    EXPECT_EQ(bucketCount, stats.liveBlockCount) << "bucket total must equal block total";
+
+    DumpCollector collector;
+    svc->dump_live_blocks(CollectDumpItem, &collector);
+    EXPECT_EQ(collector.items.size(), 2u);
+
+    free(keeper1);
+    free(keeper2);
+}
+
+// UT-H14: 显式采样——采样率倒数2(采样门控在记账之前,被跳过块对钩子完全不可见):
+// ①生效采样率如实呈现在get_stats;②记账量<分配量(采样必跳过至少一块)且>0;
+// ③块表投影==记账量(采样不引入块表/计数不一致);④闭窗聚合的alloc==记账量
+TEST_F(HostMemHookChild, explicit_sampling_gate)
+{
+    const MsmemscopeHostmemSvc* svc = BindHookApi();
+    ASSERT_NE(svc, nullptr);
+    ResetWindowState(svc);
+    ClearRecords();
+    SampleRateGuard rateGuard(2);          // 采样率倒数2
+    ThresholdGuard thresholdGuard(64);     // 过滤框架噪声
+
+    // 开窗前预留块表投影收集器容量:窗口内dump期间vector扩容的malloc
+    // 也会被采样记账(与malloc(8192)调用点不同),污染"被跳过块不可见"判定
+    DumpCollector collector;
+    collector.items.reserve(16);
+    svc->set_enabled(1);
+    void* blocks[16] = {nullptr};
+    for (int i = 0; i < 16; ++i)
+    {
+        blocks[i] = malloc(8192);
+        ASSERT_NE(blocks[i], nullptr);
+    }
+
+    MsmemscopeHostmemStats stats{};
+    svc->get_stats(&stats);
+    EXPECT_EQ(stats.sampleRate, 2u) << "effective sample rate must be reported";
+    EXPECT_GE(stats.totalAllocCount, 1u);
+    EXPECT_LT(stats.totalAllocCount, 16u) << "rate=2 must skip at least one block (P(skip)=2^-16)";
+    EXPECT_EQ(stats.liveBlockCount, stats.totalAllocCount) << "sampled blocks all kept live";
+    EXPECT_EQ(stats.truncated, 0u);
+
+    // 被跳过块对钩子完全不可见:块表投影==记账量
+    svc->dump_live_blocks(CollectDumpItem, &collector);
+    EXPECT_EQ(collector.items.size(), stats.totalAllocCount);
+
+    // 闭窗聚合:同一调用点仅一个栈,alloc==记账量
+    svc->set_enabled(0);
+    ASSERT_TRUE(WaitForStageEnd());
+    StackStatCollector sc;
+    svc->dump_stack_stats(CollectStackStat, &sc);
+    uint64_t realRows = 0;
+    for (const auto& row : sc.rows)
+    {
+        if (row.stackId == 0)
+        {
+            continue;
+        }
+        realRows += 1;
+        EXPECT_EQ(row.allocCount, stats.totalAllocCount) << "sampled allocs share one stack";
+    }
+    EXPECT_EQ(realRows, 1u);
+
+    for (void* p : blocks)
+    {
+        free(p);
+    }
+}
+
+// UT-H15: 栈表满转未知桶继续记账(孙进程运行,见LaunchGrandchildUnattrCycle;
+// MAX_STACKS=128→分片容量2,默认容量下洪峰打不满表)。600独立调用点全部保留
+// 存活灌入(全为活栈,refs>=2无淘汰供给——存活栈永不可淘汰),表满后新站点登记
+// 必失败→转未知桶(stackId=0)。
+// 判据:①get_stats truncated bit1置位(栈表触顶且死栈回收无法腾位:全活表无
+// 供给,淘汰采样无可淘汰者)且bit0清零(块表未截断),evicted*全零(无死栈被淘汰);
+// ②未归因计数>0(每次登记失败=1块转未知桶);③块表投影600块完整,未知桶块
+// (stackId=0)与正常归栈块并存;④闭窗聚合:未知桶行unfreed==未知桶块数,
+// 全部行unfreed合计=600(账本未失真,仅归因粒度退化)
+TEST_F(HostMemHookChild, stack_table_full_unattributed)
+{
+    // 仅孙进程运行(LaunchGrandchildUnattrCycle压低MAX_STACKS=128,分片容量2);
+    // 全量套件下默认容量40万,600站点洪峰打不满栈表,此用例失去意义(bit1必为0)
+    const char* maxStacksEnv = std::getenv("MSMEMSCOPE_HOSTMEM_MAX_STACKS");
+    if (maxStacksEnv == nullptr || atoi(maxStacksEnv) != 128)
+    {
+        GTEST_SKIP() << "run via HostMemHookTest.LaunchGrandchildUnattrCycle (MAX_STACKS=128)";
+    }
+    const MsmemscopeHostmemSvc* svc = BindHookApi();
+    ASSERT_NE(svc, nullptr);
+    ResetWindowState(svc);
+    ClearRecords();
+    ThresholdGuard thresholdGuard(64);  // 放行全部64B洪峰块,过滤框架噪声
+
+    std::vector<void*> keep;
+    keep.reserve(600);  // 开窗前预留:窗口内vector扩容分配不得混入记账
+    const uint64_t unattrBase = GetUnattributedCount();
+
+    svc->set_enabled(1);
+    FloodDistinctSites<0>(600, keep);
+
+    // 记账同步完成,直接读统计(600块全部在表;栈表128容量触顶)
+    MsmemscopeHostmemStats stats{};
+    svc->get_stats(&stats);
+    EXPECT_EQ(stats.totalAllocCount, 600u) << "all flood allocations must be accounted";
+    EXPECT_EQ(stats.liveBlockCount, 600u);
+    EXPECT_EQ(stats.truncated & 0x1u, 0u) << "block table must not be truncated";
+    EXPECT_NE(stats.truncated & 0x2u, 0u) << "stack table must be truncated (capacity 128)";
+    EXPECT_EQ(stats.evictedStackCount, 0u) << "all-alive table: no dead-stack supply, eviction must not fire";
+    EXPECT_EQ(stats.evictedAllocCount, 0u) << "all-alive table: no folded allocs";
+    EXPECT_EQ(stats.evictedAllocBytes, 0u) << "all-alive table: no folded bytes";
+    const uint64_t unattr = GetUnattributedCount() - unattrBase;
+    EXPECT_GT(unattr, 0u) << "table full with no evictable supply must count unattributed";
+
+    // 闭窗拉快照:未知桶行+正常栈行并存,块表投影600块完整
+    svc->set_enabled(0);
+    ASSERT_TRUE(WaitForStageEnd());
+
+    DumpCollector collector;
+    svc->dump_live_blocks(CollectDumpItem, &collector);
+    ASSERT_EQ(collector.items.size(), 600u);
+    uint64_t dumpUnknown = 0;
+    uint64_t dumpNormal = 0;
+    for (const auto& item : collector.items)
+    {
+        EXPECT_EQ(item.size, 64u);
+        EXPECT_GT(item.allocTs, 0u);
+        if (item.stackId == 0)
+        {
+            dumpUnknown += 1;
+        }
+        else
+        {
+            dumpNormal += 1;
+        }
+    }
+    EXPECT_GT(dumpUnknown, 0u) << "table full must route excess sites to unknown bucket";
+    EXPECT_GT(dumpNormal, 0u) << "early sites must have registered (capacity 128)";
+
+    StackStatCollector sc;
+    svc->dump_stack_stats(CollectStackStat, &sc);
+    uint64_t sumUnfreed = 0;
+    uint64_t unknownUnfreed = 0;
+    uint64_t realRows = 0;
+    for (const auto& row : sc.rows)
+    {
+        sumUnfreed += row.unfreedCount;
+        if (row.stackId == 0)
+        {
+            unknownUnfreed = row.unfreedCount;
+            EXPECT_TRUE(row.frameDesc.empty()) << "unknown bucket row carries no stack text";
+        }
+        else
+        {
+            realRows += 1;
+        }
+    }
+    EXPECT_EQ(realRows, dumpNormal) << "registered stacks == normal-bucket blocks";
+    EXPECT_EQ(unknownUnfreed, dumpUnknown) << "unknown bucket row must match unknown-bucket blocks";
+    EXPECT_EQ(sumUnfreed, 600u) << "ledger must stay complete (only attribution granularity degrades)";
+
+    for (void* p : keep)
+    {
+        free(p);
+    }
+}
+
+// UT-H16: 栈表满死栈淘汰回收(孙进程运行,见LaunchGrandchildEvictCycle;
+// MAX_STACKS=128→分片容量2)。第一相600独立调用点全部保留存活灌入→栈表128
+// 条目触顶(余472站点转未知桶);全部释放→在表128条目全成死栈(refs回落1)。
+// 第二相600新调用点(Gen0/1,与第一相站点不重叠)登记→表满触发死栈淘汰腾位。
+// 判据:①evictedStackCount>0(死栈供给充足,淘汰必然发生)且≤128(每死栈至多
+// 淘汰一次,第二相站点全存活不可淘汰);②evictedAllocCount==evictedStackCount
+// (每站点仅1次申请)且evictedAllocBytes==64*evictedStackCount(全64B);
+// ③闭窗聚合行求和(含未知桶行)==全局合计1200(折叠算术闭合,诚实性零损失);
+// ④存活600块全部保留且块表投影完整,未知桶行与未知桶块精确一致;
+// ⑤selfcheck==0(淘汰+dispose路径refs一致,红线)
+TEST_F(HostMemHookChild, stack_eviction_recycles_dead_stacks)
+{
+    const char* maxStacksEnv = std::getenv("MSMEMSCOPE_HOSTMEM_MAX_STACKS");
+    if (maxStacksEnv == nullptr || atoi(maxStacksEnv) != 128)
+    {
+        GTEST_SKIP() << "run via HostMemHookTest.LaunchGrandchildEvictCycle (MAX_STACKS=128)";
+    }
+    const MsmemscopeHostmemSvc* svc = BindHookApi();
+    ASSERT_NE(svc, nullptr);
+    ResetWindowState(svc);
+    ClearRecords();
+    ThresholdGuard thresholdGuard(64);  // 放行全部64B洪峰块,过滤框架噪声
+    auto selfcheck = reinterpret_cast<uint64_t (*)(void)>(
+        dlsym(RTLD_DEFAULT, "msmemscope_hostmem_selfcheck"));
+    ASSERT_NE(selfcheck, nullptr);
+
+    std::vector<void*> keep1;
+    keep1.reserve(600);
+    std::vector<void*> keep2;
+    keep2.reserve(600);
+
+    svc->set_enabled(1);
+    // 第一相:600独立站点全存活灌入→栈表128条目触顶,余472转未知桶
+    FloodDistinctSites<0>(600, keep1);
+    // 全部释放:在表128条目全成死栈(refs回落1),未知桶块照常出表
+    for (void* p : keep1)
+    {
+        free(p);
+    }
+    keep1.clear();
+    // 第二相:600新站点(Gen0/1)登记→表满死栈淘汰腾位
+    FloodGen<0, 0>(300, keep2);
+    FloodGen<0, 1>(300, keep2);
+
+    MsmemscopeHostmemStats stats{};
+    svc->get_stats(&stats);
+    EXPECT_EQ(stats.totalAllocCount, 1200u);
+    EXPECT_EQ(stats.liveBlockCount, 600u) << "phase-2 blocks all kept live";
+    EXPECT_GT(stats.evictedStackCount, 0u) << "dead stacks must be recycled under capacity pressure";
+    EXPECT_LE(stats.evictedStackCount, 128u) << "each dead stack evicted at most once";
+    EXPECT_EQ(stats.evictedAllocCount, stats.evictedStackCount) << "one alloc per evicted site";
+    EXPECT_EQ(stats.evictedAllocBytes, stats.evictedStackCount * 64u) << "all blocks are 64B";
+    EXPECT_EQ(selfcheck(), 0u) << "refs invariant broken after eviction while open";
+
+    // 闭窗拉快照:折叠算术闭合 + 块表投影完整
+    svc->set_enabled(0);
+    ASSERT_TRUE(WaitForStageEnd());
+
+    StackStatCollector sc;
+    svc->dump_stack_stats(CollectStackStat, &sc);
+    uint64_t sumAlloc = 0;
+    uint64_t sumUnfreed = 0;
+    uint64_t unknownUnfreed = 0;
+    for (const auto& row : sc.rows)
+    {
+        sumAlloc += row.allocCount;
+        sumUnfreed += row.unfreedCount;
+        if (row.stackId == 0)
+        {
+            unknownUnfreed = row.unfreedCount;
+        }
+    }
+    EXPECT_EQ(sumAlloc, 1200u) << "row-sum (incl. unknown bucket) must equal global total after folding";
+    EXPECT_EQ(sumUnfreed, 600u) << "live blocks must all be accounted after eviction";
+
+    DumpCollector collector;
+    svc->dump_live_blocks(CollectDumpItem, &collector);
+    ASSERT_EQ(collector.items.size(), 600u);
+    uint64_t dumpUnknown = 0;
+    for (const auto& item : collector.items)
+    {
+        EXPECT_EQ(item.size, 64u);
+        EXPECT_GT(item.allocTs, 0u);
+        if (item.stackId == 0)
+        {
+            dumpUnknown += 1;
+        }
+    }
+    EXPECT_EQ(unknownUnfreed, dumpUnknown) << "unknown bucket row must match unknown-bucket blocks after eviction";
+    EXPECT_EQ(selfcheck(), 0u) << "refs invariant broken after close sweep with eviction";
+
+    for (void* p : keep2)
+    {
+        free(p);
+    }
+}
+
+// UT-H17: 引用计数refs各路径不变量(默认容量运行,无淘汰干扰)——脚本化逐路径
+// 验证refs增减与selfcheck红线:①新站点登记+②快路径命中(同调用点二次malloc,
+// 在途lookup+1后dispose);③块释放(块引用dispose);④realloc成功(旧块引用
+// dispose+新块记账);⑤realloc失败(ReinsertBlock回插,引用归块不增不减);
+// ⑥realloc(p,0)释放路径(引用dispose)。每步后selfcheck==0(refs==0双重dispose
+// 绊线/refs==1且liveBytes!=0计数不一致绊线),闭窗后账本精确:5申请/3释放/2存活
+TEST_F(HostMemHookChild, refs_path_invariants)
+{
+    const MsmemscopeHostmemSvc* svc = BindHookApi();
+    ASSERT_NE(svc, nullptr);
+    ResetWindowState(svc);
+    ClearRecords();
+    ThresholdGuard thresholdGuard(64);
+    auto selfcheck = reinterpret_cast<uint64_t (*)(void)>(
+        dlsym(RTLD_DEFAULT, "msmemscope_hostmem_selfcheck"));
+    ASSERT_NE(selfcheck, nullptr);
+
+    svc->set_enabled(1);
+    // ① 新站点登记 + ② 同调用点快路径命中
+    void* a = malloc(64);
+    ASSERT_NE(a, nullptr);
+    void* b = malloc(64);  // 同调用点:快路径命中,同一StackEntry
+    ASSERT_NE(b, nullptr);
+    EXPECT_EQ(selfcheck(), 0u);
+    // ③ 块释放:块引用dispose
+    free(a);
+    EXPECT_EQ(selfcheck(), 0u);
+    // ④ realloc成功:旧块引用dispose+新块记账(新调用点)
+    void* c = realloc(b, 128);
+    ASSERT_NE(c, nullptr);
+    EXPECT_EQ(selfcheck(), 0u);
+    // ⑤ realloc失败:ReinsertBlock回插,引用归块(p保持有效)
+    void* d = malloc(64);
+    ASSERT_NE(d, nullptr);
+    void* f = realloc(d, static_cast<size_t>(-1));  // 必然失败(glibc ENOMEM)
+    EXPECT_EQ(f, nullptr);
+    EXPECT_EQ(selfcheck(), 0u);
+    // ⑥ realloc(p,0):释放路径,引用dispose(glibc返回NULL并释放p)
+    void* e = malloc(64);
+    ASSERT_NE(e, nullptr);
+    void* z = realloc(e, 0);
+    EXPECT_EQ(z, nullptr) << "glibc realloc(p,0) frees p and returns NULL";
+    EXPECT_EQ(selfcheck(), 0u);
+
+    // 账本精确:5申请(a/b/新c/d/e) 3释放(a/旧b/e) 2存活(c/d)
+    MsmemscopeHostmemStats stats{};
+    svc->get_stats(&stats);
+    EXPECT_EQ(stats.totalAllocCount, 5u);
+    EXPECT_EQ(stats.totalFreedCount, 3u);
+    EXPECT_EQ(stats.liveBlockCount, 2u);
+    EXPECT_EQ(selfcheck(), 0u);
+
+    svc->set_enabled(0);
+    ASSERT_TRUE(WaitForStageEnd());
+    EXPECT_EQ(selfcheck(), 0u) << "refs invariant broken after close";
+    free(c);
+    free(d);
+}
+
+// UT-H18: 并发锤击下refs红线(孙进程运行,见LaunchGrandchildEvictCycle;
+// MAX_STACKS=128)。4线程各持独立调用点集(Gen0-3),每线程20轮,每轮300站点
+// 执行malloc/纯free/realloc成功/realloc失败回插混合路径,轮末释放制造死栈
+// 供给——并发淘汰(判读refs==1)与在途lookup/块引用增减竞争,是"双重dispose→
+// refs提前归1→淘汰后UAF"的真悬垂检测器。判据:并发结束后selfcheck==0(红线),
+// 闭窗后selfcheck==0,账本一致(未释放=申请-释放)
+TEST_F(HostMemHookChild, hammer_refs_integrity)
+{
+    const char* maxStacksEnv = std::getenv("MSMEMSCOPE_HOSTMEM_MAX_STACKS");
+    if (maxStacksEnv == nullptr || atoi(maxStacksEnv) != 128)
+    {
+        GTEST_SKIP() << "run via HostMemHookTest.LaunchGrandchildEvictCycle (MAX_STACKS=128)";
+    }
+    const MsmemscopeHostmemSvc* svc = BindHookApi();
+    ASSERT_NE(svc, nullptr);
+    ResetWindowState(svc);
+    ClearRecords();
+    ThresholdGuard thresholdGuard(64);
+    auto selfcheck = reinterpret_cast<uint64_t (*)(void)>(
+        dlsym(RTLD_DEFAULT, "msmemscope_hostmem_selfcheck"));
+    ASSERT_NE(selfcheck, nullptr);
+
+    constexpr int kThreads = 4;
+    constexpr int kRounds = 20;
+    std::vector<std::vector<void*>> keeps(kThreads);  // 每线程独立keep(线程内独占)
+    for (auto& k : keeps)
+    {
+        k.reserve(300);
+    }
+    svc->set_enabled(1);
+
+    std::vector<std::thread> threads;
+    for (int g = 0; g < kThreads; ++g)
+    {
+        threads.emplace_back([g, &keeps]() {
+            for (int r = 0; r < kRounds; ++r)
+            {
+                std::vector<void*>& keep = keeps[g];
+                switch (g)
+                {
+                    case 0:
+                        HammerGen<0, 0>(300, keep);
+                        break;
+                    case 1:
+                        HammerGen<0, 1>(300, keep);
+                        break;
+                    case 2:
+                        HammerGen<0, 2>(300, keep);
+                        break;
+                    default:
+                        HammerGen<0, 3>(300, keep);
+                        break;
+                }
+                for (void* p : keep)
+                {
+                    free(p);  // 轮末释放:死栈供给再生
+                }
+                keep.clear();
+            }
+        });
+    }
+    for (auto& t : threads)
+    {
+        t.join();
+    }
+    EXPECT_EQ(selfcheck(), 0u) << "refs invariant broken under concurrent hammer + eviction";
+
+    svc->set_enabled(0);
+    ASSERT_TRUE(WaitForStageEnd());
+    EXPECT_EQ(selfcheck(), 0u) << "refs invariant broken after close under concurrent hammer";
+
+    for (auto& k : keeps)
+    {
+        for (void* p : k)
+        {
+            free(p);
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 父进程用例:定位钩子so并fork+exec子进程套件
+// ---------------------------------------------------------------------------
+
+namespace
+{
+std::string DirNameOf(const std::string& path)
+{
+    const size_t pos = path.find_last_of('/');
+    return pos == std::string::npos ? std::string(".") : path.substr(0, pos);
+}
+
+std::string LocateHookSo()
+{
+    // ① 环境变量显式指定
+    const char* envPath = std::getenv(HOOK_SO_ENV);
+    if (envPath != nullptr && access(envPath, F_OK) == 0)
+    {
+        return envPath;
+    }
+    // ② 测试二进制位于<repo>/build/test/ → <repo>/output/lib64/
+    char exePath[4096] = {0};
+    const ssize_t len = readlink("/proc/self/exe", exePath, sizeof(exePath) - 1);
+    if (len > 0)
+    {
+        exePath[len] = '\0';
+        const std::string repoRoot = DirNameOf(DirNameOf(DirNameOf(exePath)));
+        const std::string candidate = repoRoot + "/output/lib64/" + HOOK_SO_NAME;
+        if (access(candidate.c_str(), F_OK) == 0)
+        {
+            return candidate;
+        }
+    }
+    // ③ 相对cwd兜底(repo根/build目录下直接执行)
+    const char* candidates[] = {"./output/lib64", "../output/lib64", "../../output/lib64"};
+    for (const char* dir : candidates)
+    {
+        const std::string candidate = std::string(dir) + "/" + HOOK_SO_NAME;
+        if (access(candidate.c_str(), F_OK) == 0)
+        {
+            return candidate;
+        }
+    }
+    return "";
+}
+
+// 定位子套件专用二进制:与主测试二进制同目录(同一test构建目录产出,见test/CMakeLists.txt);
+// 相对cwd兜底(repo根/build目录下直接执行)
+std::string LocateChildExe()
+{
+    char exePath[4096] = {0};
+    const ssize_t len = readlink("/proc/self/exe", exePath, sizeof(exePath) - 1);
+    if (len > 0)
+    {
+        exePath[len] = '\0';
+        const std::string candidate = DirNameOf(exePath) + "/" + CHILD_EXE_NAME;
+        if (access(candidate.c_str(), X_OK) == 0)
+        {
+            return candidate;
+        }
+    }
+    const char* candidates[] = {"./test", ".", ".."};
+    for (const char* dir : candidates)
+    {
+        const std::string candidate = std::string(dir) + "/" + CHILD_EXE_NAME;
+        if (access(candidate.c_str(), X_OK) == 0)
+        {
+            return candidate;
+        }
+    }
+    return "";
+}
+
+// fork+exec子进程并装配钩子preload环境(子进程侧执行,父进程直接返回pid)。
+// 返回-1=fork失败。装配内容:LD_PRELOAD钩子so;LD_LIBRARY_PATH指向钩子目录
+// (DT_NEEDED=libascend_leaks.so经此解析——与生产wrapper契约一致,source模式
+// export LD_LIBRARY_PATH=<lib64>[:既有];钩子so另带$ORIGIN RPATH兜底。注意空条目
+// 会向搜索路径引入".",须跳过);子套件标记。maxStacksEnv非空时压低栈表上限
+// (孙进程用例用,构造期解析)
+pid_t SpawnHookedChild(const std::string& hookSo, const std::string& childExe,
+                       const std::string& gtestFilter, const char* maxStacksEnv)
+{
+    const pid_t pid = fork();
+    if (pid != 0)
+    {
+        return pid;
+    }
+    setenv("LD_PRELOAD", hookSo.c_str(), 1);
+    const std::string hookDir = DirNameOf(hookSo);
+    const char* prevLdLibPath = std::getenv("LD_LIBRARY_PATH");
+    const std::string ldLibPath = (prevLdLibPath == nullptr || prevLdLibPath[0] == '\0')
+                                      ? hookDir
+                                      : hookDir + ":" + prevLdLibPath;
+    setenv("LD_LIBRARY_PATH", ldLibPath.c_str(), 1);
+    setenv(CHILD_ENV_MARKER, "1", 1);
+    if (maxStacksEnv != nullptr)
+    {
+        setenv("MSMEMSCOPE_HOSTMEM_MAX_STACKS", maxStacksEnv, 1);
+    }
+    const std::string filterArg = "--gtest_filter=" + gtestFilter;
+    execl(childExe.c_str(), CHILD_EXE_NAME, filterArg.c_str(), nullptr);
+    _exit(127);  // exec失败
+}
+
+// 限时等待子进程退出;超时杀进程并回收,返回false(statusOut仍被填充)
+bool WaitChildExit(pid_t pid, int timeoutMs, int* statusOut)
+{
+    int status = 0;
+    for (int i = 0; i < timeoutMs / 50; ++i)
+    {
+        const pid_t ret = waitpid(pid, &status, WNOHANG);
+        if (ret == pid)
+        {
+            *statusOut = status;
+            return true;
+        }
+        usleep(50000);
+    }
+    kill(pid, SIGKILL);
+    waitpid(pid, &status, 0);
+    *statusOut = status;
+    return false;
+}
+}  // namespace
+
+// 驱动子进程套件:fork+exec专用二进制memscope_hostmem_child_test(避开主测试二进制
+// 内嵌的dlopen/dlsym桩等符号污染),子进程LD_PRELOAD钩子so并以指定filter运行;
+// 退出码0=子用例全绿。子进程stdout/stderr继承,失败细节直接可见。
+// env装配契约见SpawnHookedChild注释
+TEST(HostMemHookTest, LaunchChildSuite)
+{
+    if (std::getenv(CHILD_ENV_MARKER) != nullptr)
+    {
+        GTEST_SKIP() << "child process: skip launcher";
+    }
+    const std::string hookSo = LocateHookSo();
+    if (hookSo.empty())
+    {
+        GTEST_SKIP() << "hook so not found (build csrc targets first); expected output/lib64/"
+                     << HOOK_SO_NAME;
+    }
+    // 前置校验:钩子so的DT_NEEDED=libascend_leaks.so若不可解析,子进程将以127退出且加载
+    // 错误混在子gtest输出里难以定位。钩子so与libascend_leaks.so由同一批csrc目标产出
+    // (LIBRARY_OUTPUT_DIRECTORY同为output/lib64),同目录缺失=部署不完整,提前以明确信息失败
+    const std::string leaksSo = DirNameOf(hookSo) + "/" + LEAKS_SO_NAME;
+    ASSERT_EQ(access(leaksSo.c_str(), F_OK), 0)
+        << "libascend_leaks.so not found at " << leaksSo << "; rebuild csrc targets";
+
+    const std::string childExe = LocateChildExe();
+    if (childExe.empty())
+    {
+        GTEST_SKIP() << "child test binary not found; expected " << CHILD_EXE_NAME
+                     << " next to this binary (build target memscope_hostmem_child_test)";
+    }
+
+    const pid_t child = SpawnHookedChild(hookSo, childExe, "HostMemHookChild.*", nullptr);
+    ASSERT_GE(child, 0) << "fork failed";
+
+    // 父进程:限时等待(子用例含多窗口轮询,整体留足余量),超时杀进程判失败
+    int status = 0;
+    if (!WaitChildExit(child, CHILD_TIMEOUT_MS, &status))
+    {
+        FAIL() << "child suite timed out after " << CHILD_TIMEOUT_MS << "ms";
+    }
+    ASSERT_TRUE(WIFEXITED(status)) << "child terminated abnormally (signal " << WTERMSIG(status) << ")";
+    ASSERT_EQ(WEXITSTATUS(status), 0) << "child suite has failures (see child gtest output above)";
+}
+
+// 孙进程驱动:栈表满转未知桶用例(stack_table_full_unattributed)以压低的栈表上限
+// (128,分片容量2)运行——默认容量下600活站点的洪峰打不满表,无法构造"表满且无
+// 可淘汰供给"的路径;收紧后第129个起新站点必然登记失败,验证其转未知桶后
+// 账本继续(块表完整,仅归因粒度退化为未知桶)。fork+exec自未挂钩的父进程,
+// preload环境整体继承自SpawnHookedChild的装配
+TEST(HostMemHookTest, LaunchGrandchildUnattrCycle)
+{
+    if (std::getenv(CHILD_ENV_MARKER) != nullptr)
+    {
+        GTEST_SKIP() << "child process: skip launcher";
+    }
+    const std::string hookSo = LocateHookSo();
+    if (hookSo.empty())
+    {
+        GTEST_SKIP() << "hook so not found (build csrc targets first); expected output/lib64/"
+                     << HOOK_SO_NAME;
+    }
+    const std::string leaksSo = DirNameOf(hookSo) + "/" + LEAKS_SO_NAME;
+    ASSERT_EQ(access(leaksSo.c_str(), F_OK), 0)
+        << "libascend_leaks.so not found at " << leaksSo << "; rebuild csrc targets";
+
+    const std::string childExe = LocateChildExe();
+    if (childExe.empty())
+    {
+        GTEST_SKIP() << "child test binary not found; expected " << CHILD_EXE_NAME
+                     << " next to this binary (build target memscope_hostmem_child_test)";
+    }
+
+    const pid_t grandchild = SpawnHookedChild(hookSo, childExe, "HostMemHookChild.stack_table_full_unattributed",
+                                              "128");
+    ASSERT_GE(grandchild, 0) << "fork failed";
+
+    int status = 0;
+    if (!WaitChildExit(grandchild, GRANDCHILD_TIMEOUT_MS, &status))
+    {
+        FAIL() << "grandchild unattr-cycle run timed out after " << GRANDCHILD_TIMEOUT_MS << "ms";
+    }
+    ASSERT_TRUE(WIFEXITED(status)) << "grandchild terminated abnormally (signal " << WTERMSIG(status) << ")";
+    ASSERT_EQ(WEXITSTATUS(status), 0) << "unattributed cycle has failures (see grandchild gtest output above)";
+}
+
+// 孙进程驱动:死栈淘汰回收(stack_eviction_recycles_dead_stacks)与并发锤击
+// (hammer_refs_integrity)以压低的栈表上限(128,分片容量2)运行——淘汰路径需
+// 表满构造(600站点灌入打满128容量后释放制造死栈供给);锤击则需小容量放大
+// 淘汰与refs增减的并发竞争(真悬垂检测)。fork+exec自未挂钩的父进程,
+// preload环境整体继承自SpawnHookedChild的装配
+TEST(HostMemHookTest, LaunchGrandchildEvictCycle)
+{
+    if (std::getenv(CHILD_ENV_MARKER) != nullptr)
+    {
+        GTEST_SKIP() << "child process: skip launcher";
+    }
+    const std::string hookSo = LocateHookSo();
+    if (hookSo.empty())
+    {
+        GTEST_SKIP() << "hook so not found (build csrc targets first); expected output/lib64/"
+                     << HOOK_SO_NAME;
+    }
+    const std::string leaksSo = DirNameOf(hookSo) + "/" + LEAKS_SO_NAME;
+    ASSERT_EQ(access(leaksSo.c_str(), F_OK), 0)
+        << "libascend_leaks.so not found at " << leaksSo << "; rebuild csrc targets";
+
+    const std::string childExe = LocateChildExe();
+    if (childExe.empty())
+    {
+        GTEST_SKIP() << "child test binary not found; expected " << CHILD_EXE_NAME
+                     << " next to this binary (build target memscope_hostmem_child_test)";
+    }
+
+    const pid_t grandchild = SpawnHookedChild(
+        hookSo, childExe,
+        "HostMemHookChild.stack_eviction_recycles_dead_stacks:HostMemHookChild.hammer_refs_integrity", "128");
+    ASSERT_GE(grandchild, 0) << "fork failed";
+
+    int status = 0;
+    if (!WaitChildExit(grandchild, GRANDCHILD_TIMEOUT_MS, &status))
+    {
+        FAIL() << "grandchild evict-cycle run timed out after " << GRANDCHILD_TIMEOUT_MS << "ms";
+    }
+    ASSERT_TRUE(WIFEXITED(status)) << "grandchild terminated abnormally (signal " << WTERMSIG(status) << ")";
+    ASSERT_EQ(WEXITSTATUS(status), 0) << "evict cycle has failures (see grandchild gtest output above)";
+}
