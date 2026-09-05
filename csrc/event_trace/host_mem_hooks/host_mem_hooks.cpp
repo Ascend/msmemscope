@@ -1704,6 +1704,15 @@ BlockInsertResult InsertBlock(uint64_t addr, uint64_t size, uint64_t ts, StackEn
     {
         return BlockInsertResult::kFailed;  // 瞬时竞争: 静默跳过(不置截断)
     }
+    // 记账门控锁内复核: 关窗序列先置g_enabled=false再遍历块表闭窗聚合。本锁内
+    // 检查+插入与遍历互斥(锁序即序): 插入先于遍历→记录对快照可见;关闸后到达→
+    // 复核命中直接跳过——块不可能落表于快照之后(旧行为: 快照后落表的块静默消失
+    // 于报告且被派生为已释放)。跳过与kFailed同语义: 静默,不置截断标注
+    if (!g_enabled.load(std::memory_order_relaxed))
+    {
+        pthread_mutex_unlock(&shard.mtx);
+        return BlockInsertResult::kFailed;
+    }
     if (shard.count >= g_maxBlocksPerShard || !BlockShardEnsureRoomLocked(shard))
     {
         // 表满(条数上限)/容量不可得(OOM): 转溢出账本降级记账。
