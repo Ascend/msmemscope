@@ -24,6 +24,7 @@ from src.test_suit.llama2_7b_test import Llama2_7bTestSuite
 from src.test_suit.decompose_test import DecomposeTestSuite
 from src.test_suit.inefficient_test import InefficientTestSuite
 from src.test_suit.cli_base_test import CliBaseTestSuite
+from src.test_suit.control_channel_test import ControlChannelTestSuite
 from src.test_suit.oom_test import OOMTestSuite
 from src.test_suit.cpu_tensor_test import CpuTensorTestSuite
 from src.utils.env_checker import EnvChecker
@@ -115,6 +116,12 @@ def run_tests(working_dir: str, params) -> bool:
         "--device=npu,cpu", "--log-level=info", "--level=0,1"]
     oom_cmd = ["../../msmemscope/output/bin/msmemscope", "python", "../../testfile/scripts/test_oom_smoke.py",
         "--analysis=oom:5", "--log-level=info"]
+    # 控制通道attach目标(后台常驻,见test_control_channel_target.sh)
+    # collect-mode=deferred: CLI默认immediate启动即开trace,控制字start将回
+    # "tracing already in progress";deferred下attach后可经start/stop真正启停
+    control_channel_cmd = ["../../msmemscope/output/bin/msmemscope", "bash",
+        "../../testfile/scripts/test_control_channel_target.sh", "--analysis=none",
+        "--collect-mode=deferred", "--log-level=info"]
 
     test_suites = [
         MultirankCsvTestSuite("multirank_cmd_test", params, "check_multirank_cmd", multirank_cmd_command, 100),
@@ -133,6 +140,7 @@ def run_tests(working_dir: str, params) -> bool:
         InefficientTestSuite("msmemscope_inefficient_cmd_test", params, "check_inefficient_cmd", inefficient_cmd_command, 100),
         InefficientTestSuite("msmemscope_inefficient_api_test", params, "check_inefficient_api", inefficient_api_command, 100),
         CliBaseTestSuite("cli_base_test", params, "cli_base", [], 100),
+        ControlChannelTestSuite("control_channel_test", params, "check_control_channel", control_channel_cmd, 30),
         OOMTestSuite("oom_cmd_test", params, "check_oom_cmd", oom_cmd, 60),
         CpuTensorTestSuite("cpu_tensor_cmd_test", params, "check_cpu_tensor_cmd", cpu_tensor_cmd, 100),
     ]
