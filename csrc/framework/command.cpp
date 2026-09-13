@@ -23,6 +23,7 @@
 #include "analysis/dump.h"
 #include "analysis/inefficient_analyzer.h"
 #include "analysis/memory_compare.h"
+#include "attach_controller.h"
 #include "bit_field.h"
 #include "process.h"
 #include "utils.h"
@@ -37,6 +38,13 @@ void Command::Exec() const
     if (userCommand_.config.enableCompare)
     {
         MemoryCompare::GetInstance().RunComparison(userCommand_.inputPaths);
+        return;
+    }
+
+    // --pid attach(交互或-c单发);与采集/对比模式互斥(precheck已校验)
+    if (userCommand_.config.attachPid != 0)
+    {
+        AttachController::Run(userCommand_.config.attachPid, userCommand_.attachCommand);
         return;
     }
 
