@@ -1199,6 +1199,10 @@ TEST_F(HostMemHookChild, stack_text_delivered_at_close)
         {
             continue;  // 未知桶行(计数0)
         }
+        if (row.unfreedCount == 0u)
+        {
+            continue;  // 历史死栈行(跨窗口累计,无符号化文本)
+        }
         realRows += 1;
         EXPECT_EQ(row.unfreedCount, 1u);
         EXPECT_EQ(row.unfreedBytes, 64u);
@@ -1405,6 +1409,10 @@ TEST_F(HostMemHookChild, explicit_sampling_gate)
         if (row.stackId == 0)
         {
             continue;
+        }
+        if (row.allocCount == 0u)
+        {
+            continue;  // 历史栈条目(跨窗口留存,本窗无申请,计数已随清表复位)
         }
         realRows += 1;
         EXPECT_EQ(row.allocCount, stats.totalAllocCount) << "sampled allocs share one stack";
@@ -2307,6 +2315,337 @@ TEST_F(HostMemHookChild, close_live_age_cross_check)
         }
     }
     EXPECT_TRUE(found) << "allocation stack row missing from close stats";
+}
+
+// ---------------------------------------------------------------------------
+// 中间快照(dump_interim_snapshot): 窗口开启态冻结聚合,不闭窗/不清零/不发事件
+// ---------------------------------------------------------------------------
+
+// dump_interim_snapshot收集(interim:per-stack行/大小桶/开窗前桶/序列行+stats)。
+// 注意: 冻结分支(RecordMalloc)先于块阈值检查——冻结期应用侧分配计入frozenSkip与
+// totalAlloc(快照自身开销经HookSuppressGuard全程抑制,不进任何统计),故用例只对
+// 表级条目与派生恒等式做精确断言(块表条目/栈计数/桶/派生"申请=释放+未释放"均不受
+// 冻结期事件影响)
+struct InterimCollector
+{
+    struct StackRow
+    {
+        uint64_t stackId;
+        uint64_t allocCount;
+        uint64_t allocBytes;
+        uint64_t freedCount;
+        uint64_t freedBytes;
+        uint64_t unfreedCount;
+        uint64_t unfreedBytes;
+        uint64_t maxBlockSize;
+        uint64_t maxAllocTsNs;
+        uint64_t freedLifetimeSumNs;
+        uint64_t liveAgeSumNs;
+        std::string frameDesc;
+    };
+    struct Bucket
+    {
+        uint64_t rangeLow;
+        uint64_t rangeHigh;
+        uint64_t blockCount;
+        uint64_t blockBytes;
+    };
+    struct SeriesRow
+    {
+        uint64_t stackId;
+        uint32_t beat;
+        uint64_t liveBytes;
+        uint32_t liveCount;
+        uint32_t flags;
+    };
+    std::vector<StackRow> stacks;
+    std::vector<Bucket> buckets;
+    std::vector<Bucket> preWindowBuckets;
+    std::vector<SeriesRow> series;
+    MsmemscopeInterimStats stats{};
+};
+
+void CollectInterimStack(void* ctx, uint64_t stackId, uint64_t allocCount, uint64_t allocBytes, uint64_t freedCount,
+                         uint64_t freedBytes, uint64_t unfreedCount, uint64_t unfreedBytes, uint64_t maxBlockSize,
+                         uint64_t maxAllocTsNs, uint64_t freedLifetimeSumNs, uint64_t liveAgeSumNs,
+                         const char* frameDesc, size_t len)
+{
+    InterimCollector* c = static_cast<InterimCollector*>(ctx);
+    InterimCollector::StackRow r{stackId, allocCount, allocBytes, freedCount, freedBytes, unfreedCount, unfreedBytes,
+                                 maxBlockSize, maxAllocTsNs, freedLifetimeSumNs, liveAgeSumNs, ""};
+    if (frameDesc != nullptr && len > 0)
+    {
+        r.frameDesc.assign(frameDesc, len);
+    }
+    c->stacks.push_back(std::move(r));
+}
+
+void CollectInterimSize(void* ctx, uint64_t rangeLow, uint64_t rangeHigh, uint64_t blockCount, uint64_t blockBytes)
+{
+    InterimCollector* c = static_cast<InterimCollector*>(ctx);
+    c->buckets.push_back(InterimCollector::Bucket{rangeLow, rangeHigh, blockCount, blockBytes});
+}
+
+void CollectInterimPreWindow(void* ctx, uint64_t rangeLow, uint64_t rangeHigh, uint64_t blockCount, uint64_t blockBytes)
+{
+    InterimCollector* c = static_cast<InterimCollector*>(ctx);
+    c->preWindowBuckets.push_back(InterimCollector::Bucket{rangeLow, rangeHigh, blockCount, blockBytes});
+}
+
+void CollectInterimSeries(void* ctx, uint64_t stackId, uint32_t beat, uint64_t liveBytes, uint32_t liveCount,
+                          uint32_t flags)
+{
+    InterimCollector* c = static_cast<InterimCollector*>(ctx);
+    c->series.push_back(InterimCollector::SeriesRow{stackId, beat, liveBytes, liveCount, flags});
+}
+
+void DumpInterim(const MsmemscopeHostmemSvc* svc, InterimCollector& c)
+{
+    svc->dump_interim_snapshot(CollectInterimStack, CollectInterimSize, CollectInterimPreWindow, CollectInterimSeries,
+                               &c.stats, &c);
+}
+
+// UT-H16: 中间快照生命周期——开窗malloc→快照聚合/派生统计正确且不闭窗(无STAGE_END、
+// 状态位bit1保持);free→再次快照反映删除后状态(派生freed自增、栈申请计数不回扣);
+// 恢复后记账继续: 闭窗快照与快照2一致,窗口数据零丢失
+TEST_F(HostMemHookChild, interim_snapshot_lifecycle_and_delete_state)
+{
+    const MsmemscopeHostmemSvc* svc = BindHookApi();
+    ASSERT_NE(svc, nullptr);
+    ASSERT_NE(svc->dump_interim_snapshot, nullptr);
+    ResetWindowState(svc);
+    ClearRecords();
+    ThresholdGuard thresholdGuard(4096);
+    auto getStatus = reinterpret_cast<int (*)(void)>(dlsym(RTLD_DEFAULT, "msmemscope_hostmem_get_status"));
+    ASSERT_NE(getStatus, nullptr);
+
+    svc->set_enabled(1);
+    void* blocks[2] = {nullptr, nullptr};
+    for (int i = 0; i < 2; ++i)
+    {
+        blocks[i] = malloc(12345);
+        ASSERT_NE(blocks[i], nullptr);
+    }
+    {
+        std::lock_guard<std::mutex> lock(g_recMtx);
+        ASSERT_EQ(g_recStages.size(), 1u);  // 仅STAGE_START:快照不得派发窗口事件
+    }
+
+    // 快照1: 两块全存活。表级条目精确(无并发线程→冻结期零应用分配,快照自身开销抑制)
+    InterimCollector c1;
+    DumpInterim(svc, c1);
+    EXPECT_EQ(c1.stats.liveBlockCount, 2u);
+    EXPECT_GE(c1.stats.totalAllocCount, 2u);
+    EXPECT_GT(c1.stats.snapTsNs, 0u);
+    EXPECT_EQ(c1.stats.frozenSkipAllocCount, 0u)
+        << "snapshot self-overhead (row containers/frameDesc strings) must not enter freeze stats";
+    EXPECT_EQ(c1.stats.totalFreedCount + c1.stats.liveBlockCount, c1.stats.totalAllocCount)
+        << "derived closure: alloc = freed + live (+overflow, none here)";
+    uint64_t bucketCount = 0;
+    uint64_t bucketBytes = 0;
+    for (const auto& b : c1.buckets)
+    {
+        bucketCount += b.blockCount;
+        bucketBytes += b.blockBytes;
+    }
+    EXPECT_EQ(bucketCount, 2u) << "buckets aggregate table entries only (frozen allocs not in table)";
+    EXPECT_EQ(bucketBytes, 24690u);
+    bool found2 = false;
+    for (const auto& r : c1.stacks)
+    {
+        if (r.unfreedCount == 2u && r.unfreedBytes == 24690u)
+        {
+            found2 = true;
+            EXPECT_EQ(r.allocCount, 2u);
+            EXPECT_EQ(r.allocBytes, 24690u);
+            EXPECT_EQ(r.maxBlockSize, 12345u);
+            EXPECT_FALSE(r.frameDesc.empty()) << "symbolized via module-snapshot path (no sym cache read)";
+        }
+    }
+    EXPECT_TRUE(found2) << "test allocation stack row missing from interim snapshot";
+
+    // 窗口仍开: 状态位bit1=开,无STAGE_END
+    EXPECT_NE(getStatus() & 0x2, 0) << "interim snapshot must not close the window";
+    {
+        std::lock_guard<std::mutex> lock(g_recMtx);
+        EXPECT_EQ(g_recStages.size(), 1u);
+    }
+
+    // 释放一块→快照2: 表反映删除后状态;申请累计与栈计数不回扣
+    free(blocks[0]);
+    InterimCollector c2;
+    DumpInterim(svc, c2);
+    EXPECT_EQ(c2.stats.liveBlockCount, 1u);
+    EXPECT_EQ(c2.stats.totalFreedCount + c2.stats.liveBlockCount, c2.stats.totalAllocCount);
+    bool found1 = false;
+    for (const auto& r : c2.stacks)
+    {
+        if (r.unfreedCount == 1u && r.unfreedBytes == 12345u)
+        {
+            found1 = true;
+            EXPECT_EQ(r.allocCount, 2u) << "stack alloc counters not rolled back by free";
+            EXPECT_EQ(r.freedCount, 1u) << "derived freed = alloc - unfreed";
+        }
+    }
+    EXPECT_TRUE(found1) << "post-free stack row missing";
+
+    // 恢复后记账继续(零丢失): 闭窗快照与快照2一致
+    svc->set_enabled(0);
+    ASSERT_TRUE(WaitForStageEnd()) << "STAGE_END not reported";
+    StackStatCollector sc;
+    svc->dump_stack_stats(CollectStackStat, &sc);
+    bool closedOk = false;
+    for (const auto& r : sc.rows)
+    {
+        if (r.unfreedCount == 1u && r.unfreedBytes == 12345u && r.allocCount == 2u)
+        {
+            closedOk = true;
+        }
+    }
+    EXPECT_TRUE(closedOk) << "close snapshot must match post-free interim state (no data loss)";
+    free(blocks[1]);  // 闭窗后free→开窗前通道(表已冻结),无害
+}
+
+// UT-H17: 并发冻结——worker线程malloc/free循环与主线程快照并发;join后快照确定性断言:
+//   live=仅测试块(worker全释放;冻结分支alloc不插表) 栈行alloc==128精确;
+//   totalFreed+live==totalAlloc派生闭合恒等(冻结期alloc含入口跨越者计入totalAlloc,经派生计入freed);
+//   frozenSkip>0=worker落入冻结窗; preWindowFree≈frozenSkip(冻结分支alloc的free未命中表
+//   →开窗前通道,除块表分片锁自旋耗尽的个位数丢失); 快照不闭窗;闭窗后数据与快照一致
+TEST_F(HostMemHookChild, interim_snapshot_closure_under_concurrent_freeze)
+{
+    const MsmemscopeHostmemSvc* svc = BindHookApi();
+    ASSERT_NE(svc, nullptr);
+    ResetWindowState(svc);
+    ClearRecords();
+    constexpr size_t TEST_BLOCKS = 128;    // 开窗先占表:聚合遍历拉宽冻结窗
+    constexpr size_t TEST_SIZE = 12345;
+    constexpr size_t WORKER_OPS = 100000;  // worker malloc/free 对
+    constexpr size_t WORKER_SIZE = 4096;   // 阈值4096:4096<4096假→采集
+    ThresholdGuard thresholdGuard(4096);
+
+    svc->set_enabled(1);
+    std::vector<void*> testBlocks;
+    testBlocks.reserve(TEST_BLOCKS);
+    for (size_t i = 0; i < TEST_BLOCKS; ++i)
+    {
+        void* p = malloc(TEST_SIZE);
+        ASSERT_NE(p, nullptr);
+        testBlocks.push_back(p);
+    }
+    // worker: 持续malloc/free(冻结期命中冻结分支计入frozenSkip;恢复后正常记账)
+    std::thread worker([]()
+                       {
+                           for (size_t i = 0; i < WORKER_OPS; ++i)
+                           {
+                               void* p = malloc(WORKER_SIZE);
+                               if (p != nullptr)
+                               {
+                                   free(p);
+                               }
+                           }
+                       });
+    usleep(20000);  // 确保worker已入循环,快照冻结窗与之重叠
+    InterimCollector cMid;
+    DumpInterim(svc, cMid);
+    EXPECT_GT(cMid.stats.snapTsNs, 0u);
+    EXPECT_LE(cMid.stats.liveBlockCount, TEST_BLOCKS + 1u) << "worker transient blocks bounded";
+    worker.join();
+
+    // join后快照(全部确定性闭合)
+    InterimCollector c;
+    DumpInterim(svc, c);
+    EXPECT_EQ(c.stats.liveBlockCount, TEST_BLOCKS) << "worker frees everything; frozen allocs never in table";
+    EXPECT_GE(c.stats.totalAllocCount, WORKER_OPS + TEST_BLOCKS)
+        << "every malloc counts (frozen branch and freeze-entry straddlers included)";
+    EXPECT_EQ(c.stats.totalFreedCount + c.stats.liveBlockCount, c.stats.totalAllocCount)
+        << "derived closure holds across the freeze window";
+    EXPECT_EQ(c.stats.totalFreedBytes + TEST_BLOCKS * TEST_SIZE, c.stats.totalAllocBytes)
+        << "live bytes are exactly the test blocks (overflow channel idle)";
+    EXPECT_GT(c.stats.frozenSkipAllocCount, 0u) << "worker must land allocations in the freeze window";
+    // 容差: 冻结分支alloc的free必未命中块表→落开窗前通道;但块表分片锁有界自旋
+    // 耗尽(kLockFailed,快照拷贝期与该free瞬时互斥)按设计不并入该通道,单次快照
+    // 丢失有界(worker地址复用→集中于单分片,远小于分片数),故取小容差
+    EXPECT_GE(c.stats.preWindowFreeCount + 16u, c.stats.frozenSkipAllocCount)
+        << "frozen-branch alloc frees land in the pre-window channel (minus bounded lock-spin loss)";
+    // 栈行精确: 仅测试块调用点(worker调用点表内零存活;冻结分支不采栈)
+    bool found = false;
+    for (const auto& r : c.stacks)
+    {
+        if (r.unfreedCount == TEST_BLOCKS && r.unfreedBytes == TEST_BLOCKS * TEST_SIZE)
+        {
+            found = true;
+            EXPECT_EQ(r.allocCount, TEST_BLOCKS);
+        }
+    }
+    EXPECT_TRUE(found) << "test block stack row must show exactly the kept blocks";
+
+    // 快照非闭窗;闭窗后数据完整(仅测试块存活)
+    {
+        std::lock_guard<std::mutex> lock(g_recMtx);
+        EXPECT_EQ(g_recStages.size(), 1u);
+    }
+    svc->set_enabled(0);
+    ASSERT_TRUE(WaitForStageEnd()) << "STAGE_END not reported";
+    StackStatCollector sc;
+    svc->dump_stack_stats(CollectStackStat, &sc);
+    uint64_t closedLive = 0;
+    for (const auto& r : sc.rows)
+    {
+        closedLive += r.unfreedCount;
+    }
+    EXPECT_EQ(closedLive, TEST_BLOCKS) << "recording continues normally after snapshot (no data loss)";
+    for (void* p : testBlocks)
+    {
+        free(p);  // 闭窗后free→开窗前通道(表已冻结),下窗清表
+    }
+}
+
+// UT-H18: 关闭态调用→空快照(防御路径): 窗口关闭后dump_interim_snapshot返回零值空投影,
+// 不扰动闭窗快照数据;窗口状态/事件序列不变
+TEST_F(HostMemHookChild, interim_snapshot_closed_window_empty)
+{
+    const MsmemscopeHostmemSvc* svc = BindHookApi();
+    ASSERT_NE(svc, nullptr);
+    ResetWindowState(svc);
+    ClearRecords();
+    ThresholdGuard thresholdGuard(4096);
+
+    svc->set_enabled(1);
+    void* p = malloc(12345);
+    ASSERT_NE(p, nullptr);
+    svc->set_enabled(0);
+    ASSERT_TRUE(WaitForStageEnd()) << "STAGE_END not reported";
+    {
+        std::lock_guard<std::mutex> lock(g_recMtx);
+        ASSERT_EQ(g_recStages.size(), 2u);
+    }
+
+    // 关闭态: 空快照(全零统计+零投影)
+    InterimCollector c;
+    DumpInterim(svc, c);
+    EXPECT_EQ(c.stats.liveBlockCount, 0u);
+    EXPECT_EQ(c.stats.totalAllocCount, 0u);
+    EXPECT_EQ(c.stats.totalFreedCount, 0u);
+    EXPECT_EQ(c.stats.frozenSkipAllocCount, 0u);
+    EXPECT_EQ(c.stats.snapTsNs, 0u);
+    EXPECT_TRUE(c.stacks.empty());
+    EXPECT_TRUE(c.buckets.empty());
+    EXPECT_TRUE(c.preWindowBuckets.empty());
+    EXPECT_TRUE(c.series.empty());
+
+    // 未扰动闭窗快照: 闭窗数据仍完整
+    StackStatCollector sc;
+    svc->dump_stack_stats(CollectStackStat, &sc);
+    bool found = false;
+    for (const auto& r : sc.rows)
+    {
+        if (r.unfreedCount == 1u && r.unfreedBytes == 12345u)
+        {
+            found = true;
+        }
+    }
+    EXPECT_TRUE(found) << "closed snapshot must be unaffected by the empty interim call";
+    free(p);  // 闭窗后free→开窗前通道,无害
 }
 }  // namespace
 
