@@ -410,6 +410,8 @@ void EventTraceManager::SetDeviceReadyStatus(bool isReady)
     }
 }
 
+bool EventTraceManager::IsDeviceReady() { return deviceReady_.load(); }
+
 void EventTraceManager::CleanUpEventTraceManager()
 {
     // 这里可以添加其他的CleanUp操作,最好把析构函数中的抽象出来,放到stop实现

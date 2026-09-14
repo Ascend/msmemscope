@@ -131,6 +131,7 @@ class EventTraceManager
     void InitJudgeFuncTable();
     void SetAclInitStatus(bool isInit);
     void SetDeviceReadyStatus(bool isReady);
+    bool IsDeviceReady();
     void HandleWithATenCollect();
     void HandleWithDecompose();
     void HandleWithCpuTensorCollect();

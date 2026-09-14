@@ -648,6 +648,14 @@ bool GetDeviceInfo::GetDeviceProcMemInfo(int32_t devId, uint64_t& usedBytes)
 
 int64_t EventReport::QueryProcessUsed(int32_t devId)
 {
+    // aclrtSetDevice执行窗口（设备上下文未就绪，deviceReady_在真实调用成功返回后才置位）：
+    // 驱动侧dcmi进程内存查询可能卡死，窗口内跳过查询直接返回-1（预期瞬态，不告警）；
+    // 显存事件采集与deviceUsed查询不受影响，窗口外查询恢复
+    if (!EventTraceManager::Instance().IsDeviceReady())
+    {
+        return -1;
+    }
+
     uint64_t usedBytes = 0;
     if (!GetDeviceInfo::Instance().GetDeviceProcMemInfo(devId, usedBytes))
     {
