@@ -219,13 +219,15 @@ msmemscope.stop()  # 退出采集
 |--events|可选|采集事件。可选项有alloc、free、launch、access、traceback和none，默认值为alloc，free，launch，取值间以逗号（全角半角逗号均可）分隔。示例：--events=alloc,free,launch。<br> - **alloc**：采集内存申请事件。<br>- **free**：采集内存释放事件。<br> - **launch**：采集算子/kernel下发事件。<br> - **access**：采集内存访问事件。当前仅支持采集ATB和Ascend for PyTorch算子场景的内存访问事件。<br> - **traceback**：采集Python Trace事件。<br> - **none**：不采集任何事件类型。当`none`与其他事件类型值同时出现时，以`none`为准（清空所有事件类型），同时输出warning提示。<br>**需要注意的是**：<br>1. 如果`alloc`事件和`free`事件不成对配置，可能导致分配-释放配对信息缺失，影响数据在MindStudio Insight工具中的可视化效果（如内存时间线展示不完整、泄漏分析结果不准确等）。<br>2. --events=traceback仅支持通过API接口调用，无法在命令行环境中使用。|
 |--call-stack|可选|采集调用栈。可选项有python和c，可同时选择，以逗号（全角半角逗号均可）分隔。可设置调用栈的采集深度，在选项后输入数字，选项与数字以英文冒号间隔，表示采集深度，取值范围为[0,1000]，默认值为50，示例：--call-stack=python，--call-stack=c:20,python:10。<br> - **python**：采集python调用栈。<br> - **c**：采集c调用栈。|
 |--collect-mode|可选|内存采集方式。可选项有immediate和deferred，默认值为immediate，取值仅支持选择其一，示例：--collect-mode=immediate。<br> - **immediate**：立即采集，即用户脚本开始运行时，就开始采集内存信息，直到用户脚本运行结束；也可配合Python自定义采集接口控制采集范围。<br> - **deferred**：自定义采集，需配合Python自定义采集接口使用，等待msmemscope.start()脚本执行后，开始采集。如果仅设置--collect-mode=deferred，不使用Python自定义采集接口时，默认不采集任何数据（除少量系统数据）。|
-|--analysis|可选|启用相关内存分析功能。默认值为leaks，使用`none`关键字可不启用任何分析功能；可多选，取值间以逗号（全角半角逗号均可）分隔，示例：--analysis=leaks,decompose。<br> - **leaks**：识别内存泄漏事件。<br> - **inefficient**：识别低效内存，支持识别ATB LLM和Ascend for PyTorch单算子场景的低效内存，低效内存识别可通过接口设置，具体操作可参见[API参考](../api_reference/api.md)。<br> - **decompose**：开启内存拆解功能。<br> - **oom[:K]**：开启OOM详细分析功能，K为可选值，表示采集Top-K条未释放内存记录，默认值为10，取值范围[1,1000]，超出范围或非法取值时报错。当OOM发生时，自动采集触发OOM的操作信息（func、req_size、ret）、按时间排序的最近K条未释放记录，以及按大小排序的最大K条未释放记录。开启此功能后会自动联动开启alloc和free事件采集，无需额外配置--events参数。具体使用方式可参见[OOM分析功能介绍](./memory_analysis.md#oom分析功能介绍)。<br> - **none**：不启用任何分析功能。当`none`与其他分析类型值同时出现时，以`none`为准（清空所有分析类型），同时输出warning提示。|
+|--analysis|可选|启用相关内存分析功能。默认值为leaks，使用`none`关键字可不启用任何分析功能；可多选，取值间以逗号（全角半角逗号均可）分隔，示例：--analysis=leaks,decompose。<br> - **leaks**：识别内存泄漏事件。<br> - **inefficient**：识别低效内存，支持识别ATB LLM和Ascend for PyTorch单算子场景的低效内存，低效内存识别可通过接口设置，具体操作可参见[API参考](../api_reference/api.md)。<br> - **decompose**：开启内存拆解功能。<br> - **oom[:K]**：开启OOM详细分析功能，K为可选值，表示采集Top-K条未释放内存记录，默认值为10，取值范围[1,1000]，超出范围或非法取值时报错。当OOM发生时，自动采集触发OOM的操作信息（func、req_size、ret）、按时间排序的最近K条未释放记录，以及按大小排序的最大K条未释放记录。开启此功能后会自动联动开启alloc和free事件采集，无需额外配置--events参数。具体使用方式可参见[OOM分析功能介绍](./memory_analysis.md#oom分析功能介绍)。<br> - **host-leaks**：启用Host堆内存泄漏检测，检测区间内申请且未释放的Host堆内存块按调用栈聚合输出泄漏概览报告；与leaks、decompose、inefficient、oom互斥，同一配置中不可同时启用。详细参数与使用方式可参见[Host堆内存泄漏检测功能介绍](./memory_analysis.md#host堆内存泄漏检测功能介绍)。<br> - **none**：不启用任何分析功能。当`none`与其他分析类型值同时出现时，以`none`为准（清空所有分析类型），同时输出warning提示。|
 |--format|可选|输出的文件格式。可选项有db和csv，根据需求选择一种格式，取值不可为空，默认值为csv，示例：--format=db。<br> 当输出文件为db格式时，可使用MindStudio Insight工具展示，请参见[MindStudio Insight内存调优](https://gitcode.com/Ascend/msinsight/blob/master/docs/zh/user_guide/memory_tuning.md)。<br> - **db**：db格式文件。<br> - **csv**：csv格式文件。<br> 旧参数名--data-format仍兼容使用，但已废弃，使用时会有弃用告警提示。|
 |--watch|可选|内存块监测。可选项有start，out{*id*}，end和full-content，可多选，其中end为必选，取值间以逗号（全角半角逗号均可）分隔。参数设置格式为：--watch=start:out{*id*},end,full-content，示例：--watch=op0:out0,end,full-content。<br> - **start**：可选，字符串形式，表示一个算子，不同框架下格式不同。当需要设置out{*id*}时，start为必选。<br> - **out{*id*}**：可选，表示算子的output编号。当Tensor为一个列表时，可以指定需要落盘的Tensor，取值为Tensor在列表中的下标编号。<br> - **end**：必选，字符串形式，表示一个算子，不同框架下格式不同。<br> - **full-content**：可选，如果选择该值，表示落盘完整的Tensor数据，如果不选，则落盘Tensor对应的哈希值。|
 |--output-path|可选|指定输出文件落盘路径，路径最大输入长度为4096。默认的落盘目录为“memscopeDumpResults”。示例：--output-path=/home/projects/output。<br> 旧参数名--output仍兼容使用，但已废弃，使用时会有弃用告警提示。|
 |--log-level|可选|指定输出日志的级别，可选值有debug、info、warning、error，默认值为info。示例：--log-level=warning。<br> - **debug**：输出debug级别日志。<br> - **info**：输出info级别日志。<br> - **warning**：输出warning级别日志。<br> - **error**：输出error级别日志。<br> 旧取值warn仍兼容使用（等价于warning），但已废弃，使用时会有弃用告警提示。|
 |--compare|可选|开启Step间内存数据对比功能。仅当使用内存对比功能时，需要设置此参数。|
 |--input-path|可选|对比文件所在的绝对目录，需输入基线文件和对比文件的目录，以逗号（全角半角逗号均可）分隔，仅在compare功能开启时有效，路径最大输入长度为4096。示例：--input-path=/home/projects/input1,/home/projects/input2。<br> 仅当使用内存对比功能时，需要设置此参数。<br> 旧参数名--input仍兼容使用，但已废弃，使用时会有弃用告警提示。|
+|--pid, -p|可选|进程外控制通道附加模式：附加到已运行的目标进程（PID），进入交互式控制会话（支持tab补全），可下发启停、巡检、配置查看/修改等控制字。与--compare、直接启动命令互斥，不可同时使用。具体说明参见[进程外控制通道（动态附加）功能介绍](#进程外控制通道动态附加功能介绍)。|
+|--command, -c|可选|与--pid配合使用，单发一条控制字后退出，适合脚本化场景。示例：`msmemscope --pid 12345 --command "display memory summary"`。|
 
 > [!NOTE]
 >
@@ -292,6 +294,69 @@ msMemScope工具可以结合mstx打点能力进行内存采集，同时msMemScop
 ### 输出说明
 
 内存采集的输出结果请参见《[输出文件说明](./output_file_spec.md)》。
+
+## 进程外控制通道（动态附加）功能介绍
+
+### 功能说明
+
+进程外控制通道允许对**已运行中的**目标进程进行动态附加与巡检，无需重启进程即可下发控制字：
+
+- 目标进程需已装载`libascend_leaks.so`（即通过msMemScope启动，或执行`source msmemscope --load-api-env[=npu|host]`后启动的进程，两种钩子链均会带入该so），随进程常驻控制监听线程（线程名`msmemscope_ctrl`）。
+- 附加成功后进入交互式控制会话（提示符`msmemscope>`，支持tab补全），可下发启停、巡检、配置查看/修改等控制字。
+- 控制字经目标进程内白名单校验后分派执行，控制端不直接接触目标进程内存；控制字与目标进程通过本机Unix域socket通信，socket文件（`/tmp/msmemscope_socket_<PID>`）仅在握手期存在，目标进程注册成功后即删除。
+
+### 使用示例
+
+1. 附加目标进程（PID为进程号），进入交互式会话。
+
+    ```shell
+    msmemscope --pid 12345
+    ```
+
+    附加前控制端校验目标进程存在、uid一致（使用root用户执行attach命令时不受uid限制）、已装载`libascend_leaks.so`且控制监听线程就绪，任一不满足即报错且不发信号。
+
+2. 在会话中下发控制字，例如查询内存概览、查询Host堆泄漏中间概览、停止检测。
+
+    ```text
+    msmemscope> display memory summary
+    msmemscope> display host_leak summary
+    msmemscope> stop
+    ```
+
+3. 脚本化场景使用`--command`单发控制字，执行后立即退出。
+
+    ```shell
+    msmemscope --pid 12345 --command "display memory summary"
+    msmemscope --pid 12345 --command "display memory block --pool hal --TOPN 20"
+    ```
+
+### 控制字说明
+
+交互会话支持的控制字如下表所示，非法控制字回显错误提示。
+
+|控制字|说明|
+|--|--|
+|start|开启采集/检测（等价于`msmemscope.start()`）。|
+|stop|停止采集/检测（等价于`msmemscope.stop()`；Host堆泄漏检测窗口随之闭窗并输出报告）。|
+|step|标记一个Step（等价于`msmemscope.step()`）。|
+|display hook|显示目标进程已装载的钩子类别（Host/NPU/None）。|
+|display analyzer|列出目标进程已注册的分析器。|
+|display config|显示目标进程当前生效配置。|
+|display memory summary|内存概览：按卡输出device_used/process_used/hal_current/hal_peak，以及锁页内存（Host pinned）、CPU tensor（Host tensor）、各内存池（pta/pta_workspace/mindspore/atb）的当前值与峰值（无数据不展示）。|
+|display memory block [--pool \<pool\>] [--TOPN \<N\>]|按大小降序输出TOP N个未释放内存块（addr/size/alloc_ts/allocation_id）。`--pool`可选，取值为host/hal/pta/pta_workspace/atb/mindspore，不指定表示全部池；`--TOPN`取值范围1~100，默认10。|
+|display host_leak summary|查询Host堆泄漏检测窗口的中间概览（窗口开启时有效，不闭窗、不影响记账）；窗口关闭时回显`no active window`。内容与标注详见[窗口内中间概览（巡检）](./memory_analysis.md#窗口内中间概览巡检)。|
+|set config \<参数\>|更新目标进程配置（CLI风格参数，如`--analysis=host-leaks --host-leak-mode=summary`），仅停止态（未在采集）可用，采集期间下发被拒绝。|
+|exit|退出会话并解除附加。|
+|help|显示全部控制字帮助。|
+
+### 注意事项
+
+- 附加模式与`--compare`、直接启动命令互斥，不可同时使用。
+- 对已附加的进程重复附加时，控制端报already attached；若socket残留但目标进程不再监听（如目标进程已退出），控制端自动清理后重建。
+- `set config`仅可在停止态（未采集）下发，采集期间下发被拒绝并提示先stop。
+- `display host_leak summary`仅在Host堆泄漏检测窗口开启时返回中间概览；未开窗时回显`no active window`。
+- 交互会话支持tab补全：唯一候选直接补全、多候选列示并保持输入、公共前缀先扩展；动态分析器名首次使用时自动拉取。
+- 会话退出（exit/Ctrl+C/Ctrl+D）时自动清理socket残留，无残留文件；目标进程退出后，会话回显目标进程已退出的提示。
 
 ## 输出数据解读
 

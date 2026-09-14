@@ -77,17 +77,89 @@ Host堆内存泄漏检测的泄漏概览报告文件，检测窗口关闭后生�
 
 |章节|内容|
 |--|--|
-|Data Health Analysis|数据健康度分析：如实标注本窗口的追踪决策。包括检测窗口起止时间与时长、上报模式、总申请/释放计数、去重调用栈数（含记账键深K与类归因语义）、未归因块数及占比、死栈淘汰统计（仅发生时输出）、截断标注（bit0=块表满转溢出通道、bit1=栈表满转未知桶、bit2=溢出账本满记账停止，仅bit2构成数据不完整）、溢出通道分流与逆向修正统计、开窗前free统计、采样率（非1时标注采样视图）、块大小阈值与未追踪统计、符号化覆盖率（未解析栈数）。统计不可得时标注`Snapshot: unavailable`。|
+|Data Health Analysis|数据健康度分析：如实标注本窗口的追踪决策。包括检测窗口起止时间与时长、上报模式、总申请/释放计数、去重调用栈数（含记账键深K与类归因语义）、未归因块数及占比、死栈淘汰统计（仅发生时输出）、截断标注（bit0=块表满转溢出通道、bit1=栈表满且死栈回收无供给时新栈转未知桶、bit2=溢出账本满记账停止，仅bit2构成数据不完整）、溢出通道分流与逆向修正统计、开窗前free统计、采样率（非1时标注采样视图）、块大小阈值与未追踪统计、符号化覆盖率（未解析栈数）。统计不可得时标注`Snapshot: unavailable`。|
 |Total Unfreed|总泄漏量：本窗口内申请且未释放的字节数/块数合计（含未知桶与溢出通道存活块）及平均值、最大值。|
-|Unfreed Block Size Distribution|泄漏块大小排布：未释放块按大小分桶的块数、字节、占总泄漏量百分比。默认7桶：0~256B、256B~1K、1K~4K、4K~32K、32K~256K、256K~1M、1M以上。|
+|Unfreed Block Size Distribution|泄漏块大小排布：未释放块按大小分桶的块数、字节、占总泄漏量百分比。默认7桶：0~256B、256B~1kB、1kB~4kB、4kB~32kB、32kB~256kB、256kB~1MB、1MB以上。|
 |Pre-Window Free Size Distribution|开窗前free大小排布：开窗前申请、窗口期间释放的内存按大小分桶的释放次数与字节数。|
-|TOP N Leak Sites|TOP N泄漏点：按未释放字节降序的泄漏点列表，每行包含未释放块数/字节、申请/释放统计及完整符号化调用栈文本。默认N=10。未知桶行为`(unknown bucket: unattributed blocks)`，栈文本缺失标注`(unresolved stack)`。|
+|TOP N Leak Sites|TOP N泄漏点：按泄漏怀疑指数（LSI，Leak Suspicion Index，0~100）降序的泄漏点列表，默认N=10，上限1024。每行包含状态分类（suspected_leak/growth_watch，周转形态追加/turnover）、LSI值、Growth/Release/Lifetime/Pattern/Scale因子、未释放/申请/释放统计、序列增长斜率与拍数、降级标注及完整符号化调用栈文本。章节首行输出节拍序列元信息（top-k=256、max-stacks=1024、拍数与时长）。未知桶行为`(unknown bucket: unattributed blocks)`，栈文本缺失标注`(unresolved stack <stack id>)`。|
+|Resident Baselines|常驻基线子块：按未释放量降序的常驻栈列表，不占TOP N名额，判据来源标注resident/early或resident/turnover；闭窗报告不截断。开窗前free占窗口内总申请过半时，报告额外输出缓存周转NOTE提示。|
+
+### 内容示例
+
+leak_overview_{_stage_}.txt为纯文本报告（非表格文件），以下为event模式、单个检测窗口的报告内容示例（数值为示意，非真实采集数据）：
+
+```text
+====== Host Leak Overview: stage=1, pid=1234 ======
+LSI: Leak Suspicion Index (0-100); higher LSI = more likely a genuine leak. See TOP N Leak Sites section for details.
+
+--- Data Health Analysis ---
+Window: 100000000000 -> 200000000000 (duration: 100s)
+Mode: event
+Tracked: 102 allocations / 1149576B allocated; 0 freed / 0B
+Distinct stacks: 2 (key depth K=20, category semantics)
+Symbolized: 2/2 stacks (unresolved: 0)
+
+--- Total Unfreed ---
+Total unfreed: 1149576 bytes in 102 blocks (avg 11270B, max 1048576B)
+
+--- Unfreed Block Size Distribution ---
+range           blocks       bytes  % of total
+[0, 256)              0           0         0%
+[256, 1K)           101      101000         8%
+[1K, 4K)              0           0         0%
+[4K, 32K)             0           0         0%
+[32K, 256K)           0           0         0%
+[256K, 1M)            0           0         0%
+[1M, +inf)            1     1048576        91%
+
+--- Pre-Window Free Size Distribution ---
+range           frees       bytes
+(no pre-window frees)
+
+--- TOP 10 Leak Sites (by LSI desc) ---
+Series: top-k=256, max-stacks=1024, beats=101(100s, 1s/beat)
+  1. [suspected_leak] LSI 82  Growth 1.00  Release 1.00  Lifetime 0.50  Pattern 0.00  Scale 1.00  unfreed/alloc 1.00
+     unfreed 101000B(101 blocks) | alloc 101x1000B, freed 0x0B
+     growth 1000B/beat  pts 96  degraded -  stack 0x5
+     main
+     foo() [0x1]
+
+Resident baselines (1 stacks, 1MiB; G≈0 & early-allocated, or turnover (low unfreed/alloc & flat tail); excluded from suspect list, no TOP N slot):
+  1. [resident/early] LSI 31  Growth 0.00  Release 1.00  Lifetime 0.50  Scale 0.15  unfreed/alloc 1.00
+     unfreed 1048576B(1 blocks) | alloc 1x1MiB, freed 0x0B
+     growth 0B/beat  pts 96  degraded -  stack 0x6
+     pool
+```
+
+示例要点说明：
+
+- **头部与Data Health Analysis**：首行`====== Host Leak Overview: stage=1, pid=1234 ======`标识窗口序号与进程号；`Window`行为窗口起止时刻与时长；`Mode`为上报模式（event/summary）；`Tracked`行是窗口内经记账的申请/释放总量；`Distinct stacks`为去重栈数（键深K=20，类归因语义）；`Symbolized`为符号化覆盖率。出现截断、采样、死栈淘汰、溢出通道等情况时，本小节会追加对应标注行（仅发生时输出），例如：
+  - `Truncated: block table full (allocations -> overflow channel)`——块表满，申请转溢出通道（仅归因粒度退化）。
+  - `Truncated: stack table (dead-stack recycling active, no reclaimable stack at full)`——栈表满且死栈回收无供给，新栈归入未知桶（仅归因粒度退化）。
+  - `Truncated: overflow channel full (recording stopped at N live blocks) [window data incomplete: not a leak conclusion]`——溢出通道也满，记账停止，窗口数据不完整。
+  - `Evicted: N stacks recycled (M allocs / B bytes folded to unknown bucket)`——栈表满时死栈回收，折叠量并入未知桶。
+  - `Overflow channel: N allocations / B bytes diverted; M freed / C B (reverse-corrected)`——块表满时申请转溢出通道、释放做逆向修正的统计。
+  - `Pre-window frees: N / B bytes (allocated before window, not in ledger)`——开窗前申请、窗口期间释放的独立通道统计。
+  - `Sampling: 1/4 (sampled view)`——采样视图（采样率倒数>1时）。
+  - `Size threshold: 1024B (untracked: N allocations / M B)`——块大小阈值过滤（阈值>0时）。
+  - `Snapshot: unavailable (host hook not bound / query failed)`——统计不可得（极端早期退出等）。
+  三个截断位同时置位时，对应标注以` | `连接为一行输出（bit2置位时行尾追加`[window data incomplete: not a leak conclusion]`）。
+- **Total Unfreed**：一行给出窗口内未释放总量（块数/字节/均值/最大值），精确值不缩略。
+- **Unfreed Block Size Distribution**：默认7桶，表头`range/blocks/bytes/% of total`，末桶上限渲染为`+inf`；占比为整数截断（多桶占比之和可能不足100%）；无未释放块时输出`(no unfreed blocks)`。
+- **Pre-Window Free Size Distribution**：开窗前free独立通道，表头`range/frees/bytes`；无记录时输出`(no pre-window frees)`。
+- **TOP N Leak Sites**：`Series`行为节拍序列元信息（top-k=256、max-stacks=1024、拍数与窗口时长）；每个条目4行结构——首行`序号. [状态] LSI 值 + 五个研判因子 + unfreed/alloc占比`，第二行未释放/申请/释放统计，第三行增长斜率（B/拍）、有效拍数、降级原因（无降级显示`-`）与栈ID，其后为完整符号化栈文本（逐帧缩进）。序列降级（no_series/series_evicted/insufficient_series/no_warmup_thread）时Growth/Pattern因子显示`-`（Release/Lifetime/Scale仍为数值）；栈文本缺失标注`(unresolved stack <栈ID>)`。
+- **Resident Baselines**：头行标注常驻栈数与未释放量合计、判据来源（G≈0且早期分配，或周转形态）；条目结构同TOP N（差异：省略Pattern因子、不占TOP N名额）；闭窗报告不截断。
+- **NOTE行**：开窗前free字节超过窗口内总申请一半时，报告末尾输出缓存周转NOTE（如`NOTE: 64KiB pre-window allocations were freed within this window (cache turnover pattern); ...`），提示结合unfreed/alloc占比解读常驻分类。
+
+> [!NOTE]
+>
+> 窗口开启期间的中间概览（进程外控制通道`display host_leak summary`查询）章节结构与上述一致，差异（interim标注、冻结标注、常驻截断、不落盘）详见[窗口内中间概览（巡检）](./memory_analysis.md#窗口内中间概览巡检)。
 
 ## block_detail_{_stage_}.csv文件说明
 
 Host堆内存泄漏检测的泄漏代码块详情文件，仅在`--host-leak-mode=event`且窗口内存在未释放块时生成。文件保存在`msmemscope_{*PID*}_{_timestamp_}_ascend/host_leak`目录下，与同窗号概览报告对应。
 
-文件为CSV格式，表头为首行`addr,size,alloc_ts,call_stack`，逐块一行、块大小降序（相同大小按地址升序），字段如[**表 6**  block_detail_{_stage_}.csv文件字段及含义](#block_detail_stagecsv文件字段及含义)所示。
+文件为CSV格式，表头为首行`addr,size,alloc_ts,Call Stack(C),Call Stack(Python)`，逐块一行、块大小降序（相同大小按地址升序），字段如[**表 6**  block_detail_{_stage_}.csv文件字段及含义](#block_detail_stagecsv文件字段及含义)所示。
 
 **表 6**  block_detail_{_stage_}.csv文件字段及含义<a id="block_detail_stagecsv文件字段及含义"></a>
 
@@ -96,9 +168,10 @@ Host堆内存泄漏检测的泄漏代码块详情文件，仅在`--host-leak-mod
 |addr|未释放块起始地址|`0x`前缀 + 16位小写十六进制零填充。|
 |size|块大小（字节）|十进制。|
 |alloc_ts|窗口内分配时间戳（纳秒）|十进制。|
-|call_stack|完整符号化调用栈文本（自顶帧到root帧，帧间以换行分隔）|双引号包裹字符串（RFC 4180引号字段，内嵌换行保留，内部`"`转义为`""`）。栈文本缺失时写`(unresolved stack)`；未知桶（栈表超限块）写`(unknown bucket: unattributed blocks)`。|
+|Call Stack(C)|C调用栈文本（自顶帧到root帧，帧间以换行分隔）；混合栈（C+Python）中为该栈marker之前的纯C栈部分|双引号包裹字符串（RFC 4180引号字段，内嵌换行保留，内部`"`转义为`""`）。栈文本缺失时写`(unresolved stack)`；未知桶（栈表超限块）写`(unknown bucket: unattributed blocks)`。|
+|Call Stack(Python)|Python帧文本（混合栈中marker之后的py帧部分）|格式同C列。未采集Python帧的栈（纯C栈/占位行）该列为空`""`。|
 
 > [!NOTE]
 >
 > - 明细文件仅覆盖块表口径，溢出通道块（块表满降级转入，无栈归因）不进入明细；概览报告的Total Unfreed含溢出通道存活块，两者差值即溢出通道块。
-> - 调用栈文本逐块内联自含，不依赖同窗概览报告即可独立解析。
+> - 调用栈文本按块内联自含（C/Python两列），不依赖同窗概览报告即可独立解析。
