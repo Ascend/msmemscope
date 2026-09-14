@@ -259,8 +259,11 @@ drvError_t halMemCreate(drv_mem_handle_t **handle, size_t size, const struct drv
     if (traceMode == TraceMode::SHADOW)
     {
         uintptr_t addr = reinterpret_cast<uintptr_t>(*handle);
+        // 影子模式：halMemCreate 的 flag 是第4个参数（不含 devid 位），ReportHalMalloc 的
+        // flag&0x3FF 解析会是垃圾值，改用 ReportHalCreate(*prop)——prop.devid 即驱动域
+        // 物理卡号，与正常路径同源，FREE 事件回填与查询归一一致
         if (!EventReport::Instance(MemScopeCommType::SHARED_MEMORY)
-                 .ReportHalMalloc(reinterpret_cast<uint64_t>(addr), size, flag))
+                 .ReportHalCreate(reinterpret_cast<uint64_t>(addr), size, *prop))
         {
             LOG_ERROR("halMemCreate shadow report failed");
         }
