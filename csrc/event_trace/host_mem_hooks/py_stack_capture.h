@@ -30,7 +30,8 @@
  * 无解释器不采集,NA由闭窗按精确unfreed派生。
  *
  * 性能契约(热路径): ①配置门(1次原子读,未启用即返)→②约束判定(2次原子读+比较)
- * →③状态/解释器门(纯检查)。采集路径(慢): PyInterpGuard取GIL(Ensure/Release,已持GIL幂等)+走链
+ * →③状态/解释器门(纯检查)。采集路径(慢): ⑤.5身份门(PyGILState_GetThisThreadState,
+ * 未绑定tstate的纯native线程跳过)→PyInterpGuard取GIL(Ensure/Release,已持GIL幂等)+走链
  * +缓存+scratch格式化+RealMalloc拷贝;走链中Python API可能分配→钩子重入,
  * thread_local重入标记使递归层直接返回(防栈溢出)。
  *

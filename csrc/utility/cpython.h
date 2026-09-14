@@ -236,6 +236,7 @@ extern "C"
 {
     void Py_IncRef(PyObject*) __attribute__((weak));
     int PyGILState_Check(void) __attribute__((weak));
+    PyThreadState* PyGILState_GetThisThreadState(void) __attribute__((weak));
     int Py_IsInitialized(void) __attribute__((weak));
     void Py_DecRef(PyObject*) __attribute__((weak));
     void PyErr_Clear(void) __attribute__((weak));

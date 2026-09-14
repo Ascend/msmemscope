@@ -35,7 +35,8 @@
 #include "ustring.h"
 
 /*
- * 实现要点: 采集全程持GIL(PyInterpGuard Ensure/Release,已持GIL幂等);
+ * 实现要点: 采集全程持GIL(PyInterpGuard Ensure/Release,已持GIL幂等,仅
+ * tstate绑定线程参与——纯native线程无Python上下文直接跳过,不阻塞等GIL);
  * pyBuf经SharedStackPublishPyStack桥发布——栈分片锁内终判pyState并原子写入
  * pyBuf/pyLen/pyState(release store),与清表在途条目复位/并发第二采集互斥;
  * 读者acquire读CAPTURED后使用;采集期在途ref由RecordMalloc持有(dispose后移),
@@ -362,6 +363,11 @@ void PyStackCapture::CaptureIfEnabled(StackRecord& rec)
     {
         ~ReentryReset() { t_inCapture = false; }
     } reset;
+    // ⑤.5 GIL身份门: 仅绑定过tstate的线程
+    if (PyGILState_GetThisThreadState == nullptr || PyGILState_GetThisThreadState() == nullptr)
+    {
+        return;
+    }
     // ⑥ GIL守卫: 未持GIL区间(线程从eval释放GIL进入C++扩展,如torch/aclnn路径)
     // 经PyInterpGuard临时取GIL(Ensure/Release RAII,已持GIL幂等);
     // Ensure经解释器tstate池恢复本线程tstate,current_frame保持,采集语义与持GIL一致
