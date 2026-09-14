@@ -107,9 +107,10 @@ msMemScope支持对指定范围内的内存事件进行离线泄漏分析。使�
 Host堆内存泄漏检测针对训练与推理过程中宿主侧进程（CPU侧）堆内存长期未释放导致的内存增长问题，对检测区间（窗口）内申请且未释放的Host堆内存块按调用栈聚合，输出泄漏概览报告与逐块明细，帮助定位泄漏调用栈与泄漏规模。
 
 - **单账本 + 闭窗快照**：钩子侧块表为唯一账本，窗口期间数据零跨层传输，窗口结束时一次性聚合，热路径开销低（默认全量追踪，不依赖采样）。
-- **泄漏定位**：输出TOP N泄漏点调用栈（默认10个）、未释放块大小排布、逐块明细（可选）。
+- **泄漏定位与研判**：输出TOP N泄漏点调用栈（默认10个）、未释放块大小排布、逐块明细（可选）；结合节拍时间序列（1秒/拍）按泄漏怀疑指数（LSI）排序，区分疑似泄漏、增长观察与常驻基线三类。
 - **诚实性标注**：块阈值过滤、采样、表满降级、截断等追踪决策在报告“数据健康度分析”章节如实标注，无运行中隐式丢包。
-- **两种使用方式**：支持命令行方式和Python接口方式。
+- **窗口内巡检**：支持通过进程外控制通道（`msmemscope --pid <PID>`）在窗口开启期间查询中间泄漏概览（不闭窗、不影响记账）。
+- **三种使用方式**：支持命令行方式、Python接口方式和进程外控制通道方式。
 
 Host堆内存泄漏检测与显存（Device侧）内存泄漏分析相互独立，可分别使用；与分析项`leaks`、`decompose`、`inefficient`、`oom`互斥，不可在同一配置中同时启用。
 
@@ -119,6 +120,7 @@ Host堆内存泄漏检测与显存（Device侧）内存泄漏分析相互独立�
 
 - **命令行方式**：目标进程启动即开窗，进程退出时自动闭窗并输出报告。
 - **Python接口方式**：`msmemscope.start()`开窗、`msmemscope.stop()`关窗，每对start/stop对应一个检测窗口、输出一份报告；`analysis`中包含`host-leaks`是窗口开启的前提（使能配置），采集停止时自动闭窗并输出报告。
+- **进程外控制通道方式**：对已装载`libascend_leaks.so`且处于运行中的进程，`msmemscope --pid <PID>`附加后可通过`start`/`stop`控制开窗/闭窗、`display host_leak summary`查询窗口中间概览，详见[进程外控制通道（动态附加）功能介绍](./memory_profile.md#进程外控制通道动态附加功能介绍)。
 
 **命令行方式**
 
@@ -167,6 +169,30 @@ Host堆内存泄漏检测与显存（Device侧）内存泄漏分析相互独立�
     > - `analysis`中包含`host-leaks`时，若当前进程的Host钩子未装配（未执行`source msmemscope --load-api-env=host`），接口将抛出`ValueError`，提示先装载环境。
     > - 窗口关闭后报告立即输出；进程退出时若有未关闭窗口，将自动闭窗。
 
+**进程外控制通道方式**
+
+1. 目标进程需已装载`libascend_leaks.so`（通过msMemScope启动，或已执行`source msmemscope --load-api-env[=npu|host]`的进程）。
+
+2. 执行以下命令附加目标进程，PID为进程号，进入交互式控制会话。
+
+    ```shell
+    msmemscope --pid <PID>
+    ```
+
+3. 在会话中下发`display host_leak summary`查询当前检测窗口的中间泄漏概览（窗口开启时有效；窗口关闭时回显`no active window`）。
+
+    ```text
+    msmemscope> display host_leak summary
+    ```
+
+    中间概览的章节结构与闭窗报告一致，差异与标注详见[窗口内中间概览（巡检）](#窗口内中间概览巡检)。
+
+4. 脚本化巡检场景可使用`--command`参数单发控制字，执行后自动退出。
+
+    ```shell
+    msmemscope --pid <PID> --command "display host_leak summary"
+    ```
+
 ### 参数说明
 
 Host堆内存泄漏检测参数如[**表 1**  Host堆内存泄漏检测CLI参数说明](#host堆内存泄漏检测cli参数说明)所示。
@@ -178,7 +204,7 @@ Host堆内存泄漏检测参数如[**表 1**  Host堆内存泄漏检测CLI参数
 |`--analysis=host-leaks`|—（默认分析项为`leaks`）|启用Host堆内存泄漏检测。与`leaks`、`decompose`、`inefficient`、`oom`互斥，同一配置中不可同时启用。|
 |`--host-leak-mode <MODE>`|`summary`|上报模式：`summary`=仅输出按调用栈聚合的概览报告；`event`=除概览报告外，额外输出逐块明细CSV。|
 |`--block-size-threshold <N>`|`0`|块大小阈值（字节）：只记录size≥N的分配。默认0表示全量追踪；显式设置>0时，小于阈值的分配不进入账本，其数量与总量在报告的“数据健康度分析”章节标注。|
-|`--sample-rate <N>`|`1`|显式采样率倒数（2的幂向下归一）：1=不采样；N>1表示仅记录约1/N的分配，报告标注采样视图。仅在极端分配率场景下使用。|
+|`--sample-rate <N>`|`1`|显式采样率倒数：1=不采样；N>1表示仅记录约1/N的分配，非1值向上取整为2的幂（如3→4），超过2^30按2^30截断，报告标注采样视图。仅在极端分配率场景下使用。|
 
 阈值与采样率在窗口开启时快照生效，窗口期内修改不生效（对当前窗口无影响，自下一窗口起生效）。
 
@@ -202,7 +228,7 @@ Host堆内存泄漏检测的输出文件保存在`{output}/msmemscope_{*PID*}_{_
 |输出文件|存在条件|内容|
 |--|--|--|
 |`leak_overview_{*stage*}.txt`|默认输出，summary与event模式均生成|泄漏概览报告：数据健康度分析、总泄漏量、泄漏块大小排布、开窗前free大小排布、TOP N泄漏点调用栈。`{stage}`为窗口序号。|
-|`block_detail_{*stage*}.csv`|仅`--host-leak-mode=event`且窗口内存在未释放块时生成|逐块泄漏明细：`addr,size,alloc_ts,call_stack`，按块大小降序，调用栈文本内联（RFC 4180引号字段）。|
+|`block_detail_{*stage*}.csv`|仅`--host-leak-mode=event`且窗口内存在未释放块时生成|逐块泄漏明细：`addr,size,alloc_ts,Call Stack(C),Call Stack(Python)`，按块大小降序，调用栈文本内联（RFC 4180引号字段）。|
 
 两份文件与同窗号一一对应，字段及格式详见《[输出文件说明](./output_file_spec.md)》。
 
@@ -212,11 +238,26 @@ Host堆内存泄漏检测的输出文件保存在`{output}/msmemscope_{*PID*}_{_
 
 |章节|含义|
 |--|--|
-|Data Health Analysis（数据健康度分析）|如实标注本窗口的追踪决策：检测窗口起止时间、上报模式、总申请/释放计数、去重调用栈数（键深K=20，类=前K帧相同的归因语义）、未归因块数（栈表超限转未知桶）、死栈淘汰统计、截断标注（bit0=块表满转溢出通道、bit1=栈表满转未知桶、bit2=溢出账本满记账停止）、溢出通道统计、开窗前free统计、采样率（非1时标注采样视图）、块阈值与未追踪统计、符号化覆盖率。窗口数据不完整时明确标注“不可作为泄漏结论”。|
+|Data Health Analysis（数据健康度分析）|如实标注本窗口的追踪决策：检测窗口起止时间、上报模式、总申请/释放计数、去重调用栈数（键深K=20，类=前K帧相同的归因语义）、未归因块数（栈表超限转未知桶）、死栈淘汰统计、截断标注（bit0=块表满转溢出通道、bit1=栈表满且死栈回收无供给时新栈转未知桶、bit2=溢出账本满记账停止）、溢出通道统计、开窗前free统计、采样率（非1时标注采样视图）、块阈值与未追踪统计、符号化覆盖率。窗口数据不完整时明确标注“不可作为泄漏结论”。|
 |Total Unfreed（总泄漏量）|本窗口内申请且未释放的块数/字节合计（含未知桶与溢出通道存活块），闭窗遍历的精确值。|
-|Unfreed Block Size Distribution（泄漏块大小排布）|未释放块按大小分桶的块数/字节/占比（默认7桶：0~256B、256B~1K、1K~4K、4K~32K、32K~256K、256K~1M、1M以上）。|
+|Unfreed Block Size Distribution（泄漏块大小排布）|未释放块按大小分桶的块数/字节/占比（默认7桶：0~256B、256B~1kB、1kB~4kB、4kB~32kB、32kB~256kB、256kB~1MB、1MB以上）。|
 |Pre-Window Free Size Distribution（开窗前free大小排布）|开窗前申请、窗口期间释放的内存按大小归桶统计（独立通道，不参与泄漏判定，供缓存老化场景分析）。|
-|TOP N Leak Sites（TOP N泄漏点）|按未释放字节降序的泄漏点调用栈列表，每行含未释放/申请/释放统计与完整符号化栈文本。未归因块所在行为未知桶行，栈文本缺失标注`(unresolved stack)`。|
+|TOP N Leak Sites（TOP N泄漏点）|按泄漏怀疑指数（LSI，Leak Suspicion Index，0~100，越高越可能为真泄漏）降序的泄漏点列表（默认N=10，上限1024），每行含：状态分类（`suspected_leak`=疑似泄漏、`growth_watch`=增长观察，满足周转占比判据但尾部仍涨时追加`/turnover`）、LSI值、Growth/Release/Lifetime/Pattern/Scale五个研判因子、未释放/申请/释放统计、序列增长斜率（B/拍）与拍数，以及完整符号化栈文本。章节首行输出节拍序列元信息（top-k=256、max-stacks=1024、拍数与窗口时长）。未归因块所在行为未知桶行，栈文本缺失标注`(unresolved stack <stack id>)`。序列数据不可得时对应Growth/Pattern因子显示`-`并标注降级原因（no_series/series_evicted/insufficient_series/no_warmup_thread）。|
+|Resident Baselines（常驻基线子块）|窗口内未释放量可观的常驻栈列表，按未释放量降序，不占TOP N名额，每行判据来源标注`resident/early`（G≈0且早期分配）或`resident/turnover`（未释放/申请占比低且尾部不涨）。闭窗报告不截断；中间概览截断为不超过TOP N行。开窗前free超过窗口内总申请一半时，报告额外输出缓存周转NOTE提示。|
+
+### 窗口内中间概览（巡检）<a id="窗口内中间概览巡检"></a>
+
+检测窗口开启期间，可通过进程外控制通道的`display host_leak summary`命令查询窗口中间概览。中间概览由钩子在不闭窗、不清零、不影响记账的前提下对账本做一次性快照并聚合生成，章节结构与闭窗报告一致（Data Health Analysis/Total Unfreed/Unfreed Block Size Distribution/Pre-Window Free Size Distribution/TOP N Leak Sites/Resident Baselines），差异与标注如下：
+
+|差异项|说明|
+|--|--|
+|报告头部行与Window行|头部行标注`(interim snapshot)`（如`====== Host Leak Overview (interim snapshot): stage=1, pid=1234 ======`）；Window行标注`(interim snapshot, window open)`，窗口时长为开窗时刻至快照时刻。|
+|Snapshot freeze（冻结标注）|快照聚合期间到达的申请只计入统计计数、不进入本次快照的块表，概览如实标注其数量与字节（仅冻结期有申请时输出）。|
+|Snapshot degraded（快照降级标注）|本次快照读取存在部分分片锁获取失败时标注：块表读取=前缀数据、栈表读取=归因不完整、序列/开窗前free读取=部分缺失。仅影响本次快照，窗口继续正常记账。|
+|常驻子块|截断为不超过TOP N行（闭窗报告不截断）。|
+|逐块明细|中间概览不生成block_detail CSV。|
+
+窗口关闭（或未开窗）时执行该命令，回显`no active window`。
 
 ### 注意事项
 
@@ -229,6 +270,9 @@ Host堆内存泄漏检测的输出文件保存在`{output}/msmemscope_{*PID*}_{_
 - fork出的子进程不纳入检测（钩子在子进程中自动停用），分布式训练场景各进程独立开窗、独立报告。
 - 检测窗口内的快照与统计在闭窗时一次性拉取；极端早期退出导致统计不可得时，报告以`Snapshot: unavailable`标注，不输出臆测数据。
 - 进程退出时若窗口未关闭，msMemScope将自动闭窗并输出报告（闭窗聚合最长等待120s）。
+- LSI研判依赖节拍序列数据（1秒/拍、每拍top-k=256、序列栈上限1024）。序列缺失、槽被驱逐或过短、整窗无预热线程时，对应泄漏点的Growth/Pattern因子显示`-`，条目以`degraded`标注降级原因（no_series/series_evicted/insufficient_series/no_warmup_thread），LSI按中性处理。
+- `display host_leak summary`中间概览快照冻结期到达的申请已计入统计值、未进入快照块表，概览会如实标注；窗口继续记账不受影响。
+- 使用`msmemscope --pid`附加巡检时，目标进程需已装载`libascend_leaks.so`（通过msMemScope启动或执行`source msmemscope --load-api-env[=npu|host]`的进程）；附加模式与`--compare`、直接启动命令互斥，详见[进程外控制通道（动态附加）功能介绍](./memory_profile.md#进程外控制通道动态附加功能介绍)。
 
 ### 限制说明
 
