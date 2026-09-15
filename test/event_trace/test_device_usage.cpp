@@ -74,6 +74,10 @@ class DeviceUsageTest : public ::testing::Test
         report.Init();
         report.deviceUsedQueryWarned_ = false;   // 重置查询失败告警标志（Init 不重置，用例独立运行时"首次告警"断言才有效）
         report.processUsedQueryWarned_ = false;
+        // 设备就绪置位：QueryProcessUsed 带设备就绪门控（aclrSetDevice 执行窗口跳过查询
+        // 且不告警，见 event_report.cpp QueryProcessUsed），UT 环境 deviceReady_ 恒 false，
+        // 不置位则查询永远走提前返回路径，"查询失败→限频告警"断言无法触达
+        EventTraceManager::Instance().deviceReady_ = true;
 
         // 捕获事件：替换 DUMP 订阅（框架层已确认 SendEvent → Route 同步分发）
         EventDispatcher::GetInstance().UnSubscribe(SubscriberId::DUMP);
@@ -102,6 +106,7 @@ class DeviceUsageTest : public ::testing::Test
         MemoryStateManager::GetInstance().poolsMap_.clear();
         ConfigManager::Instance().SetConfig(Config{});
         EventTraceManager::Instance().SetTraceStatus(EventTraceStatus::NOT_IN_TRACING);
+        EventTraceManager::Instance().deviceReady_ = false;  // 复位设备就绪，保持用例独立
     }
 };
 
@@ -121,6 +126,21 @@ TEST_F(DeviceUsageTest, query_failed_returns_negative_one)
     EXPECT_EQ(MemoryStateManager::GetInstance().processUsedCache_[0], -1);
     EXPECT_TRUE(report.processUsedQueryWarned_);
     EXPECT_EQ(report.QueryProcessUsed(DEVICE_ID_CPU), -1);
+}
+
+// UT-2: 设备未就绪（aclrSetDevice 执行窗口）——QueryProcessUsed 跳过查询直接返回
+// -1，属预期瞬态不置限频告警位、不写缓存；就绪后查询恢复（失败仍置告警位）
+TEST_F(DeviceUsageTest, device_not_ready_skips_query_without_warning)
+{
+    EventReport& report = EventReport::Instance(MemScopeCommType::MEMORY_DEBUG);
+    EventTraceManager::Instance().deviceReady_ = false;  // 模拟 set device 未就绪窗口
+    EXPECT_EQ(report.QueryProcessUsed(0), -1);
+    EXPECT_FALSE(report.processUsedQueryWarned_);  // 瞬态跳过不告警（区别于查询失败）
+    EXPECT_EQ(MemoryStateManager::GetInstance().processUsedCache_[0], -1);  // 不写缓存
+    // 就绪后查询恢复：真实查询失败（DEVICE_ID_CPU 不在 dcmi 设备映射）→ 限频告警置位
+    EventTraceManager::Instance().deviceReady_ = true;
+    EXPECT_EQ(report.QueryProcessUsed(DEVICE_ID_CPU), -1);
+    EXPECT_TRUE(report.processUsedQueryWarned_);
 }
 
 // UT-2: 查询失败不覆盖最近一次成功缓存值（缓存保持原值）

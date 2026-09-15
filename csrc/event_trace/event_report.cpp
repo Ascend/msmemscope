@@ -653,7 +653,11 @@ bool GetDeviceInfo::QueryDevDrvProcMemInfo(int32_t devId, uint64_t& usedBytes)
     const int fd = open(kDevNode, O_RDWR);
     if (fd < 0)
     {
-        LOG_WARN("open %s failed: %s", kDevNode, strerror(errno));
+        // 通道降级(devdrv不可用→dcmi兜底,数据仍可查询),非故障按DEBUG打:
+        // 旧驱动节点上该接口每事件(每个HAL显存MALLOC/FREE)都会触发一次查询,
+        // WARN级别且无限频会形成日志洪水(外层GetDeviceProcMemInfo整体失败
+        // 才走限频WARN)
+        LOG_DEBUG("open %s failed: %s", kDevNode, strerror(errno));
         return false;
     }
 
@@ -688,7 +692,8 @@ bool GetDeviceInfo::QueryDevDrvProcMemInfo(int32_t devId, uint64_t& usedBytes)
     unsigned int pidsLen = sizeof(pids);
     if (!devdrvQuery(DEVDRV_PROCESS_RESOURCE, 0, DEVDRV_DEV_PROCESS_PID, pids, pidsLen))
     {
-        LOG_WARN("devdrv query process pid list failed, devId %d: %s", devId, strerror(errno));
+        // 通道降级(devdrv失败→dcmi兜底),非故障按DEBUG打,理由同open失败处
+        LOG_DEBUG("devdrv query process pid list failed, devId %d: %s", devId, strerror(errno));
         close(fd);
         return false;
     }
@@ -707,7 +712,8 @@ bool GetDeviceInfo::QueryDevDrvProcMemInfo(int32_t devId, uint64_t& usedBytes)
         if (!devdrvQuery(DEVDRV_PROCESS_RESOURCE, static_cast<unsigned int>(pids[i]), DEVDRV_DEV_PROCESS_MEM, &mem,
                          memLen))
         {
-            LOG_WARN("devdrv query process mem failed, devId %d pid %d: %s", devId, pids[i], strerror(errno));
+            // 通道降级(devdrv失败→dcmi兜底),非故障按DEBUG打,理由同open失败处
+            LOG_DEBUG("devdrv query process mem failed, devId %d pid %d: %s", devId, pids[i], strerror(errno));
             close(fd);
             return false;
         }
@@ -2247,15 +2253,30 @@ extern "C" int msmemscope_hostmem_is_suppressed(void) { return IsEventReportSupp
 // 会丢失窗口边界,故INFO不门控(默认日志级别WARN已过滤,仅--log-level=info可见);
 // WARN/ERROR为异常诊断,恒输出。回调上下文=钩子调用线程(开窗/闭窗/exit拦截器),
 // 禁止在此重入EventReport实例锁
+// EventTraceManager经直达指针访问(同g_hostMemReportInstance防御动机,见上):本回调
+// 可能被钩子线程在静态析构期触发,Instance()的magic-static在析构后重入会重新构造
+// 对象(Itanium ABI guard复位),退出期重构造状态混乱;DEBUG日志只可能在start后产生
+// (此刻实例必已构造),故首访缓存指针后直用,经IsTracingEnabled内部destroyed_检查兜底
+static std::atomic<EventTraceManager*> g_hostMemTraceManager{nullptr};
+
 extern "C" void msmemscope_hostmem_log(int severity, const char* fmt, va_list args)
 {
     if (fmt == nullptr)
     {
         return;
     }
-    if (severity == MSMEMSCOPE_HOSTMEM_LOG_DEBUG && !EventTraceManager::Instance().IsTracingEnabled())
+    if (severity == MSMEMSCOPE_HOSTMEM_LOG_DEBUG)
     {
-        return;
+        EventTraceManager* traceManager = g_hostMemTraceManager.load(std::memory_order_acquire);
+        if (traceManager == nullptr)
+        {
+            traceManager = &EventTraceManager::Instance();
+            g_hostMemTraceManager.store(traceManager, std::memory_order_release);
+        }
+        if (!traceManager->IsTracingEnabled())
+        {
+            return;
+        }
     }
     constexpr size_t HOSTMEM_LOG_BUF_SIZE = 1024;
     char buf[HOSTMEM_LOG_BUF_SIZE];

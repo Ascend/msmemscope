@@ -314,8 +314,11 @@ HostLeakAnalyzer::~HostLeakAnalyzer()
     }
     catch (...)
     {
-        // 临终处理阶段部分对象可能已析构,异常必须吞掉防std::terminate
-        LOG_WARN("analyzer cleanup aborted");
+        // 临终处理阶段部分对象可能已析构(含Log单例),异常必须吞掉防std::terminate;
+        // 打屏走stderr直写不依赖任何静态单例——LOG_WARN经Log::GetLog()访问可能
+        // 已析构的Log(析构期两者相对顺序无保证),与本块防御目标相悖
+        fprintf(stderr, "[msmemscope] host leak [pid=%llu] analyzer cleanup aborted\n",
+                static_cast<unsigned long long>(getpid()));
     }
 }
 

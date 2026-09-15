@@ -32,6 +32,8 @@
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
+#include <iostream>
+#include <sstream>
 #include <string>
 #include <unistd.h>
 #include <vector>
@@ -1245,4 +1247,43 @@ TEST_F(HostLeakAnalyzerTest, interim_snapshot_unbound)
     Dispatch(CreateStageEnd(pid, 4, 200));
     EXPECT_FALSE(HostLeakAnalyzer::GetInstance().windows_.at(pid).open);
     RemoveReportFiles(REPORT_DIR, "4");
+}
+
+// UT-A11: 落盘文件生成信息直接打屏(9fe4b0e)——WriteWindowReport 生成
+// leak_overview_*.txt 与 block_detail_*.csv 时经 std::cout 打屏(打屏=原有
+// 可观测性,Log::Printf 仅落日志文件不落 stdout),捕获 stdout 断言三条打屏行
+TEST_F(HostLeakAnalyzerTest, file_generation_prints_to_stdout)
+{
+    const uint64_t pid = 1234;
+    // 最小窗口状态(白盒构造,仿 UT-A9):仅注入一块存活块——overview 总泄漏量
+    // 按块明细回推、detail CSV 因 blocks 非空而生成,三条打屏行全触发
+    auto& ws = HostLeakAnalyzer::GetInstance().windows_[pid];
+    ws.open = false;
+    ws.stageId = 10;
+    ws.startTs = 100;
+    ws.endTs = 200;
+    ws.statsAvailable = false;
+    HostLeakAnalyzer::LiveBlock block;
+    block.addr = 0x1000;
+    block.size = 4096;
+    block.allocTs = 120;
+    block.stackId = 1;
+    ws.blocks.push_back(block);
+
+    // 重定向 stdout 捕获打屏输出,调用完成后立即恢复(恢复后再断言)
+    std::ostringstream captured;
+    std::streambuf* oldBuf = std::cout.rdbuf(captured.rdbuf());
+    HostLeakAnalyzer::GetInstance().WriteWindowReport(pid, ws, false);
+    std::cout.rdbuf(oldBuf);
+
+    const std::string out = captured.str();
+    EXPECT_NE(out.find("[msmemscope] Info: Host leak overview report created: "), std::string::npos);
+    EXPECT_NE(out.find("leak_overview_10.txt"), std::string::npos);
+    EXPECT_NE(out.find("[msmemscope] Info: Host leak block detail report created: "), std::string::npos);
+    EXPECT_NE(out.find("block_detail_10.csv"), std::string::npos);
+    EXPECT_NE(out.find("[msmemscope] Info: Host leak report generated: "), std::string::npos);
+    // 打屏对应的落盘文件确实生成
+    EXPECT_TRUE(FileExists(REPORT_DIR + "/leak_overview_10.txt"));
+    EXPECT_TRUE(FileExists(REPORT_DIR + "/block_detail_10.csv"));
+    RemoveReportFiles(REPORT_DIR, "10");
 }

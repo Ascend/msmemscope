@@ -280,6 +280,12 @@ bool EventTraceManager::IsTracingEnabled()
         return false;
     }
 
+    // 单例类析构之后不再访问其成员变量
+    if (destroyed_.load())
+    {
+        return false;
+    }
+
     return true;
 }
 
