@@ -83,6 +83,7 @@
 #include <atomic>
 #include <cerrno>
 #include <chrono>
+#include <cstdarg>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -866,6 +867,31 @@ void RecordSeriesRow(uint64_t stackId, uint32_t beat, int64_t liveBytes, uint32_
 }
 
 MsmemscopeHostmemApi g_api{};  // bind注册的回调表(release发布,enabled acquire可见)
+
+// 钩子侧日志入口: 经api->log回调路由到采集库日志系统(severity取值见
+// MsmemscopeHostmemLogLevel,级别门控在采集库侧实现)。未bind时(g_api.log为NULL,
+// 如__libc_start_main解析失败等构造早期场景)回退stderr打印,保持原有可观测性。
+// 钩子so为纯C ABI,不可直接使用采集库LOG_*宏。
+// 抑制守卫: 日志系统内部可能分配(首次写盘建文件/时间戳TZ数据等),且本入口的
+// 调用点含开闸后(g_enabled=true,如窗口时间线INFO)——守卫使这些分配零记账,
+// 与report_stage派发在开闸前执行的既有惯例一致
+static void HostMemLog(int severity, const char* fmt, ...)
+{
+    va_list args;
+    va_start(args, fmt);
+    if (g_api.log != nullptr)
+    {
+        HookSuppressGuard guard;
+        g_api.log(severity, fmt, args);
+    }
+    else
+    {
+        fprintf(stderr, "[msmemscope] hostmem: [pid=%llu] ", static_cast<unsigned long long>(getpid()));
+        vfprintf(stderr, fmt, args);
+        fputc('\n', stderr);
+    }
+    va_end(args);
+}
 
 size_t g_maxStacksPerShard = DEFAULT_MAX_STACKS / STACK_SHARDS;
 size_t g_maxBlocksPerShard = DEFAULT_MAX_BLOCKS / BLOCK_SHARDS;
@@ -3256,12 +3282,10 @@ void CloseAggregate()
     // 不在此处resize补齐: 补齐产出假数据(被破坏的全局范围不可知),且掩盖损坏症状
     if (g_preWindowDistCount.size() < bucketCount || g_preWindowDistBytes.size() < bucketCount)
     {
-        fprintf(stderr,
-                "[msmemscope] hostmem: [pid=%llu] CORRUPTION: pre-window dist vector undersized at "
-                "close (count=%zu bytes=%zu expect=%zu) - BSS overwrite suspected, pre-window "
-                "distribution dropped\n",
-                static_cast<unsigned long long>(getpid()), g_preWindowDistCount.size(), g_preWindowDistBytes.size(),
-                bucketCount);
+        HostMemLog(MSMEMSCOPE_HOSTMEM_LOG_ERROR,
+                   "CORRUPTION: pre-window dist vector undersized at close (count=%zu bytes=%zu expect=%zu) - "
+                   "BSS overwrite suspected, pre-window distribution dropped",
+                   g_preWindowDistCount.size(), g_preWindowDistBytes.size(), bucketCount);
     }
     else
     {
@@ -3329,15 +3353,12 @@ void SvcSetEnabled(int enabled)
             pthread_mutex_lock(&g_svcMtx);
             if (i % 25000u == 24999u)
             {
-                fprintf(stderr,
-                        "[msmemscope] hostmem: [pid=%llu] previous window still closing (waiting close aggregate)\n",
-                        static_cast<unsigned long long>(getpid()));
+                HostMemLog(MSMEMSCOPE_HOSTMEM_LOG_DEBUG, "previous window still closing (waiting close aggregate)");
             }
         }
         if (g_closing.load(std::memory_order_relaxed))
         {
-            fprintf(stderr, "[msmemscope] hostmem: [pid=%llu] previous window still closing after 60s, open skipped\n",
-                    static_cast<unsigned long long>(getpid()));
+            HostMemLog(MSMEMSCOPE_HOSTMEM_LOG_WARN, "previous window still closing after 60s, open skipped");
             pthread_mutex_unlock(&g_svcMtx);
             return;
         }
@@ -3384,8 +3405,7 @@ void SvcSetEnabled(int enabled)
         if (!EnsureWarmupThread())
         {
             g_warmupThreadFailed.store(true, std::memory_order_relaxed);
-            fprintf(stderr, "[msmemscope] hostmem: [pid=%llu] warmup thread create failed, symbol warmup degraded\n",
-                    static_cast<unsigned long long>(getpid()));
+            HostMemLog(MSMEMSCOPE_HOSTMEM_LOG_WARN, "warmup thread create failed, symbol warmup degraded");
         }
 
         // 4. 模块可执行段快照刷新: FP走栈pc校验依据。窗口间宿主可能已
@@ -3407,21 +3427,18 @@ void SvcSetEnabled(int enabled)
             }
             catch (...)
             {
-                fprintf(stderr,
-                        "[msmemscope] hostmem: [pid=%llu] stage start dispatch failed, window data may be empty\n",
-                        static_cast<unsigned long long>(getpid()));
+                HostMemLog(MSMEMSCOPE_HOSTMEM_LOG_WARN, "stage start dispatch failed, window data may be empty");
             }
         }
 
         // 6. 开闸(release: 与生产者acquire配对,上述初始化全部可见)
         g_enabled.store(true, std::memory_order_release);
         // 窗口时间线:每窗一行(可维护性日志)——ClearTables刚执行完(表应归零),
-        // 中途重开周期与进程归属在stderr直接可见,配合闭窗行还原完整窗口时间线
-        fprintf(stderr, "[msmemscope] hostmem: [pid=%llu] window open id=%llu (stacks=%llu blocks=%llu)\n",
-                static_cast<unsigned long long>(getpid()),
-                static_cast<unsigned long long>(g_windowId.load(std::memory_order_relaxed)),
-                static_cast<unsigned long long>(g_stackCount.load(std::memory_order_relaxed)),
-                static_cast<unsigned long long>(g_blockCount.load(std::memory_order_relaxed)));
+        // 中途重开周期与进程归属经日志系统可见,配合闭窗行还原完整窗口时间线
+        HostMemLog(MSMEMSCOPE_HOSTMEM_LOG_INFO, "window open id=%llu (stacks=%llu blocks=%llu)",
+                   static_cast<unsigned long long>(g_windowId.load(std::memory_order_relaxed)),
+                   static_cast<unsigned long long>(g_stackCount.load(std::memory_order_relaxed)),
+                   static_cast<unsigned long long>(g_blockCount.load(std::memory_order_relaxed)));
         pthread_mutex_unlock(&g_svcMtx);
         return;
     }
@@ -3440,12 +3457,10 @@ void SvcSetEnabled(int enabled)
         // 已发;本行出现而done缺失=闭窗从未真正启动(g_closing未置位)
         if (g_windowId.load(std::memory_order_relaxed) != 0)
         {
-            fprintf(stderr,
-                    "[msmemscope] hostmem: [pid=%llu] close requested but window already disabled "
-                    "(windowId=%llu closing=%d)\n",
-                    static_cast<unsigned long long>(getpid()),
-                    static_cast<unsigned long long>(g_windowId.load(std::memory_order_relaxed)),
-                    static_cast<int>(g_closing.load(std::memory_order_relaxed)));
+            HostMemLog(MSMEMSCOPE_HOSTMEM_LOG_WARN,
+                       "close requested but window already disabled (windowId=%llu closing=%d)",
+                       static_cast<unsigned long long>(g_windowId.load(std::memory_order_relaxed)),
+                       static_cast<int>(g_closing.load(std::memory_order_relaxed)));
         }
         return;
     }
@@ -3478,20 +3493,18 @@ void SvcSetEnabled(int enabled)
     // unattr=窗口内栈层失败转未知桶的块数(账本完整度100%而unattr上探=栈表拥塞,
     // 与分析器报告的未知栈桶行互证);truncated=截断标注(bit0块表满转溢出/bit1栈表满
     // 转未知桶/bit2溢出账本满记账停止)
-    fprintf(stderr,
-            "[msmemscope] hostmem: [pid=%llu] window close id=%llu done (stacks=%llu blocks=%llu "
-            "unattr=%llu truncated=%u)\n",
-            static_cast<unsigned long long>(getpid()),
-            static_cast<unsigned long long>(g_windowId.load(std::memory_order_relaxed)),
-            static_cast<unsigned long long>(g_stackCount.load(std::memory_order_relaxed)),
-            static_cast<unsigned long long>(g_blockCount.load(std::memory_order_relaxed)),
-            static_cast<unsigned long long>(g_unattributedCount.load(std::memory_order_relaxed) -
-                                            g_unattrWindowBase.load(std::memory_order_relaxed)),
-            static_cast<unsigned int>(g_truncated.load(std::memory_order_relaxed)));
+    HostMemLog(MSMEMSCOPE_HOSTMEM_LOG_INFO,
+               "window close id=%llu done (stacks=%llu blocks=%llu unattr=%llu truncated=%u)",
+               static_cast<unsigned long long>(g_windowId.load(std::memory_order_relaxed)),
+               static_cast<unsigned long long>(g_stackCount.load(std::memory_order_relaxed)),
+               static_cast<unsigned long long>(g_blockCount.load(std::memory_order_relaxed)),
+               static_cast<unsigned long long>(g_unattributedCount.load(std::memory_order_relaxed) -
+                                               g_unattrWindowBase.load(std::memory_order_relaxed)),
+               static_cast<unsigned int>(g_truncated.load(std::memory_order_relaxed)));
     // 符号缓存覆盖(诊断):top-K采样产物的符号帧数。接近SYM_CACHE_MAX_ENTRIES=
     // 缓存满提前停;明显小于=采样吞吐不足(调TOP_LEAK_SYMBOLIZE_K/INTERVAL)
-    fprintf(stderr, "[msmemscope] hostmem: [pid=%llu] symCache: %zu entries (warmup coverage, cap=%zu)\n",
-            static_cast<unsigned long long>(getpid()), g_symCache.size(), static_cast<size_t>(SYM_CACHE_MAX_ENTRIES));
+    HostMemLog(MSMEMSCOPE_HOSTMEM_LOG_DEBUG, "symCache: %zu entries (warmup coverage, cap=%zu)", g_symCache.size(),
+               static_cast<size_t>(SYM_CACHE_MAX_ENTRIES));
     // py采集收尾——清空帧串缓存(解释器存活性门控DecRef键)+配置复位。
     // 闭窗聚合已完成,pyBuf已消费(混合栈文本在CloseAggregate内组装进frameDesc);
     // 残余pyBuf随下次开窗ClearTables释放(此处不动栈表,闭窗态条目留存)
@@ -4382,9 +4395,9 @@ extern "C" int __libc_start_main(HostMemMainFn main, int argc, char** argv, void
         return realFn(&HostMemHookMainEntry, argc, argv, init, fini, rtldFini, stackEnd);
     }
     // 解析失败(理论不可达,libc恒在RTLD_NEXT链上):退化为无门控放行,宁采旧险不静默全丢;
-    // 直接调main会丢失fini/rtld_fini注册,仅作最后兜底
-    fprintf(stderr, "[msmemscope] hostmem: [pid=%llu] __libc_start_main resolve failed, main gate disabled\n",
-            static_cast<unsigned long long>(getpid()));
+    // 直接调main会丢失fini/rtld_fini注册,仅作最后兜底。此刻bind未发生(g_api.log为NULL),
+    // HostMemLog自动回退stderr
+    HostMemLog(MSMEMSCOPE_HOSTMEM_LOG_ERROR, "__libc_start_main resolve failed, main gate disabled");
     g_mainStarted.store(true, std::memory_order_release);
     return main(argc, argv, nullptr);
 }

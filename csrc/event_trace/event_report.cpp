@@ -23,6 +23,7 @@
 #include <unistd.h>
 
 #include <chrono>
+#include <cstdarg>
 #include <cstdlib>
 #include <iostream>
 #include <limits>
@@ -770,8 +771,7 @@ void EventReport::HostMemExitHandler()
     }
     catch (...)
     {
-        fprintf(stderr, "[msmemscope] host leak [pid=%llu] exit close aborted\n",
-                static_cast<unsigned long long>(getpid()));
+        LOG_WARN("exit close aborted");
     }
 }
 
@@ -2084,9 +2084,14 @@ extern "C" void msmemscope_hostmem_report_stage(int isStart, uint64_t timestamp,
     {
         // 退出闭窗派发链诊断(STAGE_END,极低频):到达采集库=钩子closing分支的
         // report_stage已越过bind边界;若此打点出现后分析器侧打点缺失,卡点在
-        // ReportHostStage→DispatchEvent的锁等待(与钩子侧"calling report_stage"互证)
-        fprintf(stderr, "[msmemscope] host leak [pid=%llu] report_stage: STAGE_END entered (stage=%llu)\n",
-                static_cast<unsigned long long>(getpid()), static_cast<unsigned long long>(stageId));
+        // ReportHostStage→DispatchEvent的锁等待(与钩子侧"window close done"互证)。
+        // 闭窗派发在set_enabled(0)调用线程同步发生:stop()路径status_仍为
+        // IN_TRACING(SetTraceStatus在ReportTraceStatus之后翻转),tracing门控不吞此打点
+        if (EventTraceManager::Instance().IsTracingEnabled())
+        {
+            LOG_DEBUG("report_stage: STAGE_END entered (stage=%llu)",
+                      static_cast<unsigned long long>(stageId));
+        }
     }
     try
     {
@@ -2104,6 +2109,45 @@ extern "C" void msmemscope_hostmem_report_stage(int isStart, uint64_t timestamp,
 }
 
 extern "C" int msmemscope_hostmem_is_suppressed(void) { return IsEventReportSuppressed() ? 1 : 0; }
+
+// 钩子侧日志回调: 钩子so为纯C ABI(禁止跨so解析C++符号,见host_mem_hooks.h),不直接
+// 使用采集库LOG_*宏,统一经本桥路由到日志系统。severity取值见
+// MsmemscopeHostmemLogLevel。级别门控: 仅DEBUG要求tracing期间(纯调试诊断,非tracing
+// 不落日志,用户诉求);INFO为窗口开闭时间线——start()的set_enabled(1)在status_置
+// IN_TRACING之前发出(deferred模式),关窗在stop()的status_翻转之前,若按tracing门控
+// 会丢失窗口边界,故INFO不门控(默认日志级别WARN已过滤,仅--log-level=info可见);
+// WARN/ERROR为异常诊断,恒输出。回调上下文=钩子调用线程(开窗/闭窗/exit拦截器),
+// 禁止在此重入EventReport实例锁
+extern "C" void msmemscope_hostmem_log(int severity, const char* fmt, va_list args)
+{
+    if (fmt == nullptr)
+    {
+        return;
+    }
+    if (severity == MSMEMSCOPE_HOSTMEM_LOG_DEBUG && !EventTraceManager::Instance().IsTracingEnabled())
+    {
+        return;
+    }
+    constexpr size_t HOSTMEM_LOG_BUF_SIZE = 1024;
+    char buf[HOSTMEM_LOG_BUF_SIZE];
+    vsnprintf(buf, sizeof(buf), fmt, args);
+    if (severity == MSMEMSCOPE_HOSTMEM_LOG_INFO)
+    {
+        LOG_INFO("%s", buf);
+    }
+    else if (severity == MSMEMSCOPE_HOSTMEM_LOG_WARN)
+    {
+        LOG_WARN("%s", buf);
+    }
+    else if (severity == MSMEMSCOPE_HOSTMEM_LOG_DEBUG)
+    {
+        LOG_DEBUG("%s", buf);
+    }
+    else  // ERROR及未知severity:宁重勿丢
+    {
+        LOG_ERROR("%s", buf);
+    }
+}
 
 extern "C" void msmemscope_hostmem_get_params(MsmemscopeHostmemParams* params)
 {
@@ -2146,6 +2190,7 @@ void EventReport::BindHostMemHook()
     api.report_stage = msmemscope_hostmem_report_stage;
     api.is_suppressed = msmemscope_hostmem_is_suppressed;
     api.get_params = msmemscope_hostmem_get_params;
+    api.log = msmemscope_hostmem_log;
     svcHostMem_ = bindFn(&api);
     if (svcHostMem_ == nullptr)
     {
@@ -2178,9 +2223,8 @@ void EventReport::CloseHostMemWindowAtExit()
     // 后者=本对象先于handler析构(时序异常,需查注册顺序)
     if (destroyed_.load() || svcHostMem_ == nullptr)
     {
-        fprintf(stderr, "[msmemscope] host leak [pid=%llu] exit close skipped: %s\n",
-                static_cast<unsigned long long>(getpid()),
-                destroyed_.load() ? "event report destroyed before handler" : "host hook not bound");
+        LOG_WARN("exit close skipped: %s",
+                 destroyed_.load() ? "event report destroyed before handler" : "host hook not bound");
         return;
     }
     // 复用stop闩锁语义(交集语义):置位后UpdateHostMemWindow必闭窗且此后不再
@@ -2207,8 +2251,7 @@ void EventReport::CloseHostMemWindowAtExit()
             // dlsym失败(钩子so已卸载/符号不可得):无法观测closing,无法确认闭窗
             // 完成。此态在退出期理论不可达(钩子so仍加载),出现即需查卸载时序;
             // 按"无需等待"放行,窗口报告由~HostLeakAnalyzer兜底
-            fprintf(stderr, "[msmemscope] host leak [pid=%llu] exit close skipped: status query unavailable\n",
-                    static_cast<unsigned long long>(getpid()));
+            LOG_WARN("exit close skipped: status query unavailable");
             return;
         }
         if ((status & 0x4) == 0)
@@ -2220,17 +2263,17 @@ void EventReport::CloseHostMemWindowAtExit()
         const auto now = std::chrono::steady_clock::now();
         if (now - closeStart >= std::chrono::seconds(120))
         {
-            fprintf(stderr,
-                    "[msmemscope] host leak [pid=%llu] exit close timed out after 120s, "
-                    "giving up (report degraded via destructor fallback)\n",
-                    static_cast<unsigned long long>(getpid()));
+            LOG_ERROR("exit close timed out after 120s, giving up (report degraded via destructor fallback)");
             return;
         }
         if (now >= nextLog)
         {
-            // 无环形缓冲/待补扫栈,进度日志为纯状态打点
-            fprintf(stderr, "[msmemscope] host leak [pid=%llu] window still closing at exit\n",
-                    static_cast<unsigned long long>(getpid()));
+            // 无环形缓冲/待补扫栈,进度日志为纯状态打点;等待期tracing未停
+            // (stop后无窗口可等,循环立即退出),tracing门控不吞此打点
+            if (EventTraceManager::Instance().IsTracingEnabled())
+            {
+                LOG_DEBUG("window still closing at exit");
+            }
             nextLog = now + std::chrono::seconds(5);
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(20));

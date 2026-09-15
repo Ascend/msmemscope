@@ -18,6 +18,7 @@
 #ifndef MSMEMSCOPE_HOST_MEM_HOOKS_H
 #define MSMEMSCOPE_HOST_MEM_HOOKS_H
 
+#include <stdarg.h>
 #include <stddef.h>
 #include <stdint.h>
 
@@ -93,6 +94,15 @@ extern "C"
         uint32_t pyStackDepth;
     } MsmemscopeHostmemParams;
 
+    /* 日志严重级别(api->log回调severity取值,见API表log字段注释) */
+    enum MsmemscopeHostmemLogLevel
+    {
+        MSMEMSCOPE_HOSTMEM_LOG_DEBUG = 0,  /* 调试诊断(符号缓存覆盖/等待进度等),非tracing期间不落日志 */
+        MSMEMSCOPE_HOSTMEM_LOG_INFO = 1,   /* 用户可感知信息(窗口开闭时间线),仅窗口生命周期触发 */
+        MSMEMSCOPE_HOSTMEM_LOG_WARN = 2,   /* 异常告警(降级/失败),恒输出 */
+        MSMEMSCOPE_HOSTMEM_LOG_ERROR = 3,  /* 错误/数据损坏,恒输出 */
+    };
+
     /* API表：libascend_leaks实现并注册，钩子调用 */
     typedef struct MsmemscopeHostmemApi
     {
@@ -105,6 +115,11 @@ extern "C"
         int (*is_suppressed)(void);
         /* 运行参数快照（栈深度/采样率/块阈值），钩子开窗时调用一次；可为NULL（用默认值） */
         void (*get_params)(MsmemscopeHostmemParams* params);
+        /* 钩子侧日志回调（可为NULL=钩子回退stderr打印）。钩子so为纯C ABI(禁止跨so解析
+         * C++符号),不直接使用采集库LOG_*宏,统一经本回调路由到采集库日志系统;
+         * severity取值见MsmemscopeHostmemLogLevel。追加于结构体末尾保持前段ABI兼容,
+         * 钩子侧先判空再调用 */
+        void (*log)(int severity, const char* fmt, va_list args);
     } MsmemscopeHostmemApi;
 
     /* 钩子侧统计（get_stats输出） */
