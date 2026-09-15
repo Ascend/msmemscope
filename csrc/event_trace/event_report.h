@@ -241,11 +241,18 @@ class GetDeviceInfo
     // 查询设备 HBM 用量（dcmi_get_device_hbm_info，与 npu-smi 同源，单位 MB 转出）；
     // 成功返回 true 并填写 usedMb/totalMb，失败（未 init/未建表/查询失败）返回 false
     bool GetDeviceHbmInfo(int32_t devId, uint64_t& usedMb, uint64_t& totalMb);
-    // 查询本进程在该设备上的显存占用（dcmi_get_npu_proc_mem_info，按 pid 过滤本进程，字节单位）
-    // 成功返回 true 并填写 usedBytes；失败（未 init/未建表/本进程不在该卡进程列表）返回 false
+    // 查询本进程在该设备上的显存占用，字节单位；成功返回 true 并填写 usedBytes。
+    // 主路径 devdrv 直连（/dev/davinci_manager ioctl → devmm 记账列表 + H2D 设备侧查询，
+    // 与 npu-smi 同源硬性一致）；devdrv 不可用（节点/权限/ioctl 失败）时降级 dcmi 接口
+    //（dcmi 内核入口的 UDIS 分支可能先命中空记账返回 0，值不可信但查询本身有效）
     bool GetDeviceProcMemInfo(int32_t devId, uint64_t& usedBytes);
 
    private:
+    // devdrv 直连查询实现：open /dev/davinci_manager + GET_DEV_RESOURCE_INFO ioctl
+    // （DEVDRV_PROCESS_RESOURCE + DEVDRV_DEV_PROCESS_PID/MEM，常量与结构见 event_report.cpp）
+    bool QueryDevDrvProcMemInfo(int32_t devId, uint64_t& usedBytes);
+    // dcmi 接口查询实现（原 dcmi_get_npu_proc_mem_info 路径，devdrv 降级兜底）
+    bool QueryDcmiProcMemInfo(int32_t devId, uint64_t& usedBytes);
     // dcmi_init 一次性初始化（失败则本进程内永久降级，不再重试）
     bool EnsureDcmiInit();
     // 一次性建表：acl 逻辑号 → (card_id, device_id)（dcmi_get_card_list + num_in_card + logic_id）

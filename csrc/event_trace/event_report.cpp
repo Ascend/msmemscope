@@ -18,6 +18,10 @@
 #include "event_report.h"
 
 #include <dlfcn.h>
+#include <cerrno>
+#include <cstring>
+#include <fcntl.h>
+#include <sys/ioctl.h>
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -74,6 +78,33 @@ using DcmiProcMemInfoFunc = int (*)(int, int, struct dcmi_proc_mem_info*, int*);
 // rtGetDeviceCount）与老包 fallback rtGetDeviceCount（libruntime.so，签名 int32_t*）
 using AclrtGetDeviceCountFunc = aclError (*)(uint32_t*);
 using RtGetDeviceCountFunc = rtError_t (*)(int32_t*);
+
+// DEVDRV 直连 ioctl 常量与结构（与驱动 devdrv_user_common.h 对齐，与 npu-smi 同源通道）：
+// /dev/davinci_manager + DEVDRV_MANAGER_GET_DEV_RESOURCE_INFO(_IO('M',175))，内核侧
+// devdrv_manager_ioctl_get_dev_resource_info 按 owner_type 分发到 DEVDRV_PROCESS_RESOURCE 分支：
+//   DEVDRV_DEV_PROCESS_PID → devmm 记账进程列表（get_device_pids_from_devmm，按 docker_id 过滤）
+//   DEVDRV_DEV_PROCESS_MEM → H2D 设备侧记账查询（devdrv_manager_h2d_query_resource_info，
+//                            按 (phyid, hostpid) 记账，载荷为 u64 字节数，buf_len 置 8）
+// 非容器下 devid 即物理卡号、pid 即 host pid；ioctl 返回时整个结构体拷回用户态（buf 为载荷）
+constexpr int DEVDRV_MANAGER_MAGIC = 'M';
+constexpr unsigned int DEVDRV_MANAGER_GET_DEV_RESOURCE_INFO = _IO(DEVDRV_MANAGER_MAGIC, 175);
+constexpr int DEVDRV_MAX_PAYLOAD_LEN = 256;
+constexpr int DEVDRV_MAX_PROC_NUM = DEVDRV_MAX_PAYLOAD_LEN / sizeof(int);  // 64，与驱动 out_cnt 上限一致
+constexpr int DEVDRV_DEV_RESOURCE = 0;
+constexpr int DEVDRV_VDEV_RESOURCE = 1;
+constexpr int DEVDRV_PROCESS_RESOURCE = 2;
+constexpr int DEVDRV_DEV_PROCESS_PID = 8;
+constexpr int DEVDRV_DEV_PROCESS_MEM = 9;
+struct devdrv_resource_info
+{
+    unsigned int devid;
+    unsigned int owner_type;
+    unsigned int owner_id;
+    unsigned int resource_type;
+    unsigned int tsid;
+    unsigned int buf_len;
+    char buf[DEVDRV_MAX_PAYLOAD_LEN];
+};
 
 constexpr uint64_t MEM_MODULE_ID_BIT = 56;
 constexpr uint64_t MEM_VIRT_BIT = 10;
@@ -593,6 +624,101 @@ bool GetDeviceInfo::GetDeviceHbmInfo(int32_t devId, uint64_t& usedMb, uint64_t& 
 }
 
 bool GetDeviceInfo::GetDeviceProcMemInfo(int32_t devId, uint64_t& usedBytes)
+{
+    // 主路径 devdrv 直连（devmm 记账 + H2D 设备侧查询，与 npu-smi 数据硬性一致）
+    if (QueryDevDrvProcMemInfo(devId, usedBytes))
+    {
+        return true;
+    }
+    // devdrv 不可用（节点不存在/无权限/ioctl 不支持）时降级 dcmi 接口：
+    // dcmi 内核入口可能被 UDIS 分支截获返回空记账（值不可信但查询本身有效），日志通道已标注
+    if (QueryDcmiProcMemInfo(devId, usedBytes))
+    {
+        return true;
+    }
+    return false;
+}
+
+bool GetDeviceInfo::QueryDevDrvProcMemInfo(int32_t devId, uint64_t& usedBytes)
+{
+    if (devId == DEVICE_ID_CPU || devId == GD_INVALID_NUM)
+    {
+        // 非真实设备无进程占用可查，与 dcmi 路径同语义（正常缺失，不告警）
+        LOG_DEBUG("devId %d not a real device, skip devdrv query", devId);
+        return false;
+    }
+    // 驱动查询内部可能有临时内存申请，抑制期间跳过上报，防止递归上报与幻影事件
+    EventReportSuppressor suppressor;
+    constexpr const char* kDevNode = "/dev/davinci_manager";
+    const int fd = open(kDevNode, O_RDWR);
+    if (fd < 0)
+    {
+        LOG_WARN("open %s failed: %s", kDevNode, strerror(errno));
+        return false;
+    }
+
+    // 内核 ioctl 入口：copy_from_user(struct devdrv_resource_info) → 按 owner_type 分发 →
+    // 整结构 copy_to_user 返回（buf 为载荷，buf_len 由内核改写为实际字节数）
+    auto devdrvQuery = [fd, devId](unsigned int ownerType, unsigned int ownerId, unsigned int resourceType,
+                                   void* buf, unsigned int& bufLen) -> bool {
+        struct devdrv_resource_info info{};
+        info.devid = static_cast<unsigned int>(devId);
+        info.owner_type = ownerType;
+        info.owner_id = ownerId;
+        info.resource_type = resourceType;
+        info.buf_len = bufLen;
+        if (ioctl(fd, DEVDRV_MANAGER_GET_DEV_RESOURCE_INFO, &info) != 0)
+        {
+            return false;
+        }
+        const unsigned int outLen = (info.buf_len <= bufLen) ? info.buf_len : bufLen;
+        if (outLen > 0)
+        {
+            memcpy_s(buf, bufLen, info.buf, outLen);
+        }
+        bufLen = outLen;
+        return true;
+    };
+
+    // 1) 进程列表：devmm 记账（buf_len = 数量 * sizeof(int)，非容器下 pid 即 host pid）
+    int pids[DEVDRV_MAX_PROC_NUM]{};
+    unsigned int pidsLen = sizeof(pids);
+    if (!devdrvQuery(DEVDRV_PROCESS_RESOURCE, 0, DEVDRV_DEV_PROCESS_PID, pids, pidsLen))
+    {
+        LOG_WARN("devdrv query process pid list failed, devId %d: %s", devId, strerror(errno));
+        close(fd);
+        return false;
+    }
+    const int procNum = static_cast<int>(pidsLen / sizeof(pids[0]));
+
+    // 2) 逐进程内存：H2D 设备侧查询（按 (phyid, hostpid) 记账），载荷为 u64 字节数
+    const uint64_t selfPid = Utility::GetPid();
+    for (int i = 0; i < procNum; i++)
+    {
+        if (static_cast<uint64_t>(pids[i]) != selfPid)
+        {
+            continue;
+        }
+        uint64_t mem = 0;
+        unsigned int memLen = sizeof(mem);
+        if (!devdrvQuery(DEVDRV_PROCESS_RESOURCE, static_cast<unsigned int>(pids[i]), DEVDRV_DEV_PROCESS_MEM, &mem,
+                         memLen))
+        {
+            LOG_WARN("devdrv query process mem failed, devId %d pid %d: %s", devId, pids[i], strerror(errno));
+            close(fd);
+            return false;
+        }
+        usedBytes = mem;
+        close(fd);
+        return true;
+    }
+    // 本进程不在该卡记账列表（未申请过内存/已退出），按查询失败处理
+    LOG_DEBUG("pid %llu not in device %d devdrv proc mem list", static_cast<unsigned long long>(selfPid), devId);
+    close(fd);
+    return false;
+}
+
+bool GetDeviceInfo::QueryDcmiProcMemInfo(int32_t devId, uint64_t& usedBytes)
 {
     if (!EnsureDcmiInit() || !BuildDeviceMap())
     {
