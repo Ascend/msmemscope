@@ -26,6 +26,7 @@
 #include <cstdlib>
 #include <fstream>
 #include <iomanip>
+#include <iostream>
 #include <sstream>
 #include <utility>
 
@@ -856,6 +857,7 @@ void HostLeakAnalyzer::WriteWindowReport(uint64_t pid, WindowState& ws, bool atE
         return;
     }
     LOG_INFO("Host leak overview report created: %s", overviewPath.c_str());
+    std::cout << "[msmemscope] Info: Host leak overview report created: " << overviewPath << std::endl;
 
     // ---- 数据健康度分析 ----
     out << "====== Host Leak Overview: stage=" << ws.stageId << ", pid=" << pid << " ======\n";
@@ -1211,6 +1213,7 @@ void HostLeakAnalyzer::WriteWindowReport(uint64_t pid, WindowState& ws, bool atE
         if (detail.is_open())
         {
             LOG_INFO("Host leak block detail report created: %s", detailPath.c_str());
+            std::cout << "[msmemscope] Info: Host leak block detail report created: " << detailPath << std::endl;
             // 块明细排序:块大小降序(泄漏定位优先看大块),相同大小按地址升序保证确定性
             std::sort(ws.blocks.begin(), ws.blocks.end(),
                       [](const LiveBlock& a, const LiveBlock& b)
@@ -1312,6 +1315,7 @@ void HostLeakAnalyzer::WriteWindowReport(uint64_t pid, WindowState& ws, bool atE
     }
 
     LOG_INFO("Host leak report generated: %s", overviewPath.c_str());
+    std::cout << "[msmemscope] Info: Host leak report generated: " << overviewPath << std::endl;
 }
 
 void HostLeakAnalyzer::RenderInterimOverview(uint64_t pid, uint64_t stageId, uint64_t startTs, InterimCollector& ic,

@@ -244,7 +244,7 @@ class GetDeviceInfo
     // 查询本进程在该设备上的显存占用，字节单位；成功返回 true 并填写 usedBytes。
     // 主路径 devdrv 直连（/dev/davinci_manager ioctl → devmm 记账列表 + H2D 设备侧查询，
     // 与 npu-smi 同源硬性一致）；devdrv 不可用（节点/权限/ioctl 失败）时降级 dcmi 接口
-    //（dcmi 内核入口的 UDIS 分支可能先命中空记账返回 0，值不可信但查询本身有效）
+    // （dcmi 内核入口的 UDIS 分支可能先命中空记账返回 0，值不可信但查询本身有效）
     bool GetDeviceProcMemInfo(int32_t devId, uint64_t& usedBytes);
 
    private:

@@ -97,10 +97,10 @@ extern "C"
     /* 日志严重级别(api->log回调severity取值,见API表log字段注释) */
     enum MsmemscopeHostmemLogLevel
     {
-        MSMEMSCOPE_HOSTMEM_LOG_DEBUG = 0,  /* 调试诊断(符号缓存覆盖/等待进度等),非tracing期间不落日志 */
-        MSMEMSCOPE_HOSTMEM_LOG_INFO = 1,   /* 用户可感知信息(窗口开闭时间线),仅窗口生命周期触发 */
-        MSMEMSCOPE_HOSTMEM_LOG_WARN = 2,   /* 异常告警(降级/失败),恒输出 */
-        MSMEMSCOPE_HOSTMEM_LOG_ERROR = 3,  /* 错误/数据损坏,恒输出 */
+        MSMEMSCOPE_HOSTMEM_LOG_DEBUG = 0, /* 调试诊断(符号缓存覆盖/等待进度等),非tracing期间不落日志 */
+        MSMEMSCOPE_HOSTMEM_LOG_INFO = 1,  /* 用户可感知信息(窗口开闭时间线),仅窗口生命周期触发 */
+        MSMEMSCOPE_HOSTMEM_LOG_WARN = 2,  /* 异常告警(降级/失败),恒输出 */
+        MSMEMSCOPE_HOSTMEM_LOG_ERROR = 3, /* 错误/数据损坏,恒输出 */
     };
 
     /* API表：libascend_leaks实现并注册，钩子调用 */

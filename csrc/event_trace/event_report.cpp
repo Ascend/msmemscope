@@ -18,17 +18,17 @@
 #include "event_report.h"
 
 #include <dlfcn.h>
-#include <cerrno>
-#include <cstring>
 #include <fcntl.h>
 #include <sys/ioctl.h>
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
+#include <cerrno>
 #include <chrono>
 #include <cstdarg>
 #include <cstdlib>
+#include <cstring>
 #include <iostream>
 #include <limits>
 
@@ -659,9 +659,12 @@ bool GetDeviceInfo::QueryDevDrvProcMemInfo(int32_t devId, uint64_t& usedBytes)
 
     // 内核 ioctl 入口：copy_from_user(struct devdrv_resource_info) → 按 owner_type 分发 →
     // 整结构 copy_to_user 返回（buf 为载荷，buf_len 由内核改写为实际字节数）
-    auto devdrvQuery = [fd, devId](unsigned int ownerType, unsigned int ownerId, unsigned int resourceType,
-                                   void* buf, unsigned int& bufLen) -> bool {
-        struct devdrv_resource_info info{};
+    auto devdrvQuery = [fd, devId](unsigned int ownerType, unsigned int ownerId, unsigned int resourceType, void* buf,
+                                   unsigned int& bufLen) -> bool
+    {
+        struct devdrv_resource_info info
+        {
+        };
         info.devid = static_cast<unsigned int>(devId);
         info.owner_type = ownerType;
         info.owner_id = ownerId;
@@ -2122,6 +2125,7 @@ void EventReport::ReportMemorySnapshotOnOOM(const CallStackString& stack)
             if (!result.IsBad())
             {
                 LOG_INFO("OOM memory snapshot created via Python take_snapshot");
+                std::cout << "[msmemscope] Info: OOM memory snapshot created via Python take_snapshot" << std::endl;
                 return;
             }
         }
@@ -2215,8 +2219,7 @@ extern "C" void msmemscope_hostmem_report_stage(int isStart, uint64_t timestamp,
         // IN_TRACING(SetTraceStatus在ReportTraceStatus之后翻转),tracing门控不吞此打点
         if (EventTraceManager::Instance().IsTracingEnabled())
         {
-            LOG_DEBUG("report_stage: STAGE_END entered (stage=%llu)",
-                      static_cast<unsigned long long>(stageId));
+            LOG_DEBUG("report_stage: STAGE_END entered (stage=%llu)", static_cast<unsigned long long>(stageId));
         }
     }
     try
