@@ -33,9 +33,7 @@
         }                                                                                   \
     } while (0);
 
-constexpr uint32_t DATA_LENGTH = 1024;
-
-extern "C" void add_kernel_do(uint32_t blockDim, void *l2ctrl, void *stream, uint8_t *x, uint8_t *y, uint8_t *z);
+extern "C" void test_kernel_do(uint32_t blockDim, void *l2ctrl, void *stream, uint8_t *gm);
 
 int main(void)
 {
@@ -47,25 +45,18 @@ int main(void)
     aclrtStream stream = nullptr;
     CHECK_ACL(aclrtCreateStream(&stream));
 
-    size_t bufferSize = DATA_LENGTH * sizeof(float);
-    float *x = nullptr;
-    float *y = nullptr;
-    float *z = nullptr;
-    CHECK_ACL(aclrtMalloc((void **)&x, bufferSize, ACL_MEM_MALLOC_HUGE_FIRST));
-    CHECK_ACL(aclrtMalloc((void **)&y, bufferSize, ACL_MEM_MALLOC_HUGE_FIRST));
-    CHECK_ACL(aclrtMalloc((void **)&z, bufferSize, ACL_MEM_MALLOC_HUGE_FIRST));
+    uint8_t *gm = nullptr;
+    CHECK_ACL(aclrtMalloc((void **)&gm, 256, ACL_MEM_MALLOC_HUGE_FIRST));
 
     uint64_t blockDim = 1UL;
 
     uint64_t id_1 = mstxRangeStartA("step start", nullptr);  // 使用"step start"的mstxRangeStartA接口标识step开始
     uint64_t id_2 = mstxRangeStartA("step start", nullptr);  // 这里仅作模拟，请按实际情况打点
 
-    add_kernel_do(blockDim, nullptr, stream, (uint8_t *)x, (uint8_t *)y, (uint8_t *)z);
+    test_kernel_do(blockDim, nullptr, stream, gm);
     CHECK_ACL(aclrtSynchronizeStream(stream));
     mstxRangeEnd(id_2);  // 使用mstxRangeEnd接口标识step结束
-    // CHECK_ACL(aclrtFree(z)); // 这里不释放模拟HAL内存泄漏
-    CHECK_ACL(aclrtFree(x));
-    CHECK_ACL(aclrtFree(y));
+    // CHECK_ACL(aclrtFree(gm)); // 这里不释放模拟HAL内存泄漏
     CHECK_ACL(aclrtDestroyStream(stream));
     CHECK_ACL(aclrtDestroyContext(context));
     mstxRangeEnd(id_1);
