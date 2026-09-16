@@ -158,6 +158,8 @@ struct Config
     bool collectAllNpu;
     bool collectCpu;
     /* 当前单机最多16卡，用32bits表示足够了，后续有需要再扩充 */
+    // --device npu:N 位图。N 为物理卡号域（与事件 device 归一后的物理卡号一致：
+    // 池事件经 TransDeviceId 转换、HAL 事件 flag/prop 解析均落物理域）
     uint32_t npuSlots;
     bool isEffective;
     // 进程外控制通道:attach目标进程pid(0=未指定,--pid)

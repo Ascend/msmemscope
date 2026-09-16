@@ -18,12 +18,19 @@
 #include "event_report.h"
 
 #include <dlfcn.h>
+#include <fcntl.h>
+#include <sys/ioctl.h>
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
+#include <cerrno>
 #include <chrono>
+#include <cstdarg>
 #include <cstdlib>
+#include <cstring>
+#include <iostream>
+#include <limits>
 
 #include "bit_field.h"
 #include "cpython.h"
@@ -67,6 +74,37 @@ using DcmiGetDeviceNumInCardFunc = int (*)(int, int*);
 using DcmiGetDeviceLogicIdFunc = int (*)(int*, int, int);
 using DcmiGetHbmInfoFunc = int (*)(int, int, struct dcmi_hbm_info*);
 using DcmiProcMemInfoFunc = int (*)(int, int, struct dcmi_proc_mem_info*, int*);
+// 受限模式探测用：aclrtGetDeviceCountImpl（libacl_rt_impl.so，aclrt_impl/device.cpp 转发
+// rtGetDeviceCount）与老包 fallback rtGetDeviceCount（libruntime.so，签名 int32_t*）
+using AclrtGetDeviceCountFunc = aclError (*)(uint32_t*);
+using RtGetDeviceCountFunc = rtError_t (*)(int32_t*);
+
+// DEVDRV 直连 ioctl 常量与结构（与驱动 devdrv_user_common.h 对齐，与 npu-smi 同源通道）：
+// /dev/davinci_manager + DEVDRV_MANAGER_GET_DEV_RESOURCE_INFO(_IO('M',175))，内核侧
+// devdrv_manager_ioctl_get_dev_resource_info 按 owner_type 分发到 DEVDRV_PROCESS_RESOURCE 分支：
+//   DEVDRV_DEV_PROCESS_PID → devmm 记账进程列表（get_device_pids_from_devmm，按 docker_id 过滤）
+//   DEVDRV_DEV_PROCESS_MEM → H2D 设备侧记账查询（devdrv_manager_h2d_query_resource_info，
+//                            按 (phyid, hostpid) 记账，载荷为 u64 字节数，buf_len 置 8）
+// 非容器下 devid 即物理卡号、pid 即 host pid；ioctl 返回时整个结构体拷回用户态（buf 为载荷）
+constexpr int DEVDRV_MANAGER_MAGIC = 'M';
+constexpr unsigned int DEVDRV_MANAGER_GET_DEV_RESOURCE_INFO = _IO(DEVDRV_MANAGER_MAGIC, 175);
+constexpr int DEVDRV_MAX_PAYLOAD_LEN = 256;
+constexpr int DEVDRV_MAX_PROC_NUM = DEVDRV_MAX_PAYLOAD_LEN / sizeof(int);  // 64，与驱动 out_cnt 上限一致
+constexpr int DEVDRV_DEV_RESOURCE = 0;
+constexpr int DEVDRV_VDEV_RESOURCE = 1;
+constexpr int DEVDRV_PROCESS_RESOURCE = 2;
+constexpr int DEVDRV_DEV_PROCESS_PID = 8;
+constexpr int DEVDRV_DEV_PROCESS_MEM = 9;
+struct devdrv_resource_info
+{
+    unsigned int devid;
+    unsigned int owner_type;
+    unsigned int owner_id;
+    unsigned int resource_type;
+    unsigned int tsid;
+    unsigned int buf_len;
+    char buf[DEVDRV_MAX_PAYLOAD_LEN];
+};
 
 constexpr uint64_t MEM_MODULE_ID_BIT = 56;
 constexpr uint64_t MEM_VIRT_BIT = 10;
@@ -191,17 +229,243 @@ bool GetDeviceInfo::GetDeviceId(int32_t& devId)
     return TransDeviceId(devId);
 }
 
+// 镜像 runtime SplitString（runtime.cc GetVisibleDevices 前置解析）语义：
+// 首字符必须为数字；token 为连续数字串；token 间仅允许单个 ',' 分隔；
+// 首个非法字符处截断（保留此前已解析出的 token）
+static std::vector<std::string> SplitEnvTokens(const std::string& str)
+{
+    std::vector<std::string> tokens;
+    if (str.empty() || (str[0] < '0' || str[0] > '9'))
+    {
+        return tokens;
+    }
+    std::string cur;
+    size_t commaCnt = 0;
+    for (size_t i = 0; i < str.size(); i++)
+    {
+        if (str[i] >= '0' && str[i] <= '9')
+        {
+            cur.push_back(str[i]);
+            commaCnt = 0;
+        }
+        else
+        {
+            if (!cur.empty())
+            {
+                tokens.push_back(cur);
+                cur.clear();
+            }
+            if (str[i] != ',')
+            {
+                break;
+            }
+            commaCnt++;
+            if (commaCnt > 1)
+            {
+                break;
+            }
+        }
+    }
+    if (!cur.empty())
+    {
+        tokens.push_back(cur);
+    }
+    return tokens;
+}
+
+// 镜像 runtime IsdigitString：token 必须全为数字
+static bool IsEnvDigitString(const std::string& str)
+{
+    if (str.empty())
+    {
+        return false;
+    }
+    for (char c : str)
+    {
+        if (c < '0' || c > '9')
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
+// 真实物理设备数（dcmi 卡片/设备枚举，与 runtime drvGetDevNum 同源）；<=0 表示不可得
+// （dcmi 未就绪/驱动异常），调用方跳过 range 校验。注意 dcmi 不受 ASCEND_RT_VISIBLE_DEVICES
+// 影响，返回的始终是物理全集
+static int32_t GetRealDeviceCount()
+{
+    static auto getCardList = VallinaSymbol<DcmiLibLoader>::Instance().Get<DcmiGetCardListFunc>("dcmi_get_card_list");
+    static auto getDeviceNum =
+        VallinaSymbol<DcmiLibLoader>::Instance().Get<DcmiGetDeviceNumInCardFunc>("dcmi_get_device_num_in_card");
+    if (getCardList == nullptr || getDeviceNum == nullptr)
+    {
+        return 0;
+    }
+    int cardList[DCMI_MAX_CARD_NUM] = {0};
+    int cardNum = 0;
+    {
+        EventReportSuppressor suppressor;
+        if (getCardList(&cardNum, cardList, DCMI_MAX_CARD_NUM) != DCMI_OK)
+        {
+            return 0;
+        }
+    }
+    int32_t total = 0;
+    for (int i = 0; i < cardNum && i < DCMI_MAX_CARD_NUM; i++)
+    {
+        int deviceNum = 0;
+        {
+            EventReportSuppressor suppressor;
+            if (getDeviceNum(cardList[i], &deviceNum) != DCMI_OK)
+            {
+                return 0;
+            }
+        }
+        total += deviceNum;
+    }
+    return total;
+}
+
+void GetDeviceInfo::EnsureEnvParsed()
+{
+    // 一次性解析 ASCEND_RT_VISIBLE_DEVICES 并探测 runtime 受限模式。解析语义与 runtime
+    // GetVisibleDevices（runtime.cc）逐条对齐
+    std::call_once(
+        envParseFlag_,
+        [this]()
+        {
+            const char* env = std::getenv("ASCEND_RT_VISIBLE_DEVICES");
+            if (env == nullptr)
+            {
+                LOG_DEBUG("ASCEND_RT_VISIBLE_DEVICES environment variable not found!");
+                return;
+            }
+
+            std::vector<std::string> tokens = SplitEnvTokens(std::string(env));
+            // range 校验上界（物理设备数）；dcmi 不可得时跳过 range 校验
+            int32_t realCnt = EnsureDcmiInit() ? GetRealDeviceCount() : 0;
+
+            int32_t userCnt = 0;
+            for (const auto& token : tokens)
+            {
+                if (!IsEnvDigitString(token))
+                {
+                    break;  // 非纯数字 token → 截断保留前缀
+                }
+                int64_t id = 0;
+                try
+                {
+                    id = std::stoll(token);
+                }
+                catch (...)
+                {
+                    break;  // 数值溢出 → 截断保留前缀
+                }
+                if (id > std::numeric_limits<int32_t>::max())
+                {
+                    break;  // 超过 int32（runtime stoi 溢出后越界截断）→ 截断保留前缀
+                }
+                if (realCnt > 0 && id > realCnt - 1)
+                {
+                    break;  // range 越界 → 截断保留前缀
+                }
+                // 乱序/重复 → 整体拒绝（与 runtime RT_ALL_ORDER_ERROR/RT_ALL_DUPLICATED_ERROR 一致）
+                for (int32_t j = 0; j < userCnt; j++)
+                {
+                    if (id == visibleDeviceMap[j])
+                    {
+                        LOG_ERROR("ASCEND_RT_VISIBLE_DEVICES[%s] duplicated device id %lld, disabled", env,
+                                  static_cast<long long>(id));
+                        return;
+                    }
+                }
+                if (userCnt > 0 && id < visibleDeviceMap[userCnt - 1])
+                {
+                    LOG_ERROR("ASCEND_RT_VISIBLE_DEVICES[%s] not in ascending order, disabled", env);
+                    return;
+                }
+                visibleDeviceMap[userCnt] = static_cast<int32_t>(id);
+                userCnt++;
+                if (realCnt > 0 && userCnt >= realCnt)
+                {
+                    break;  // 可见设备数不可能超过物理设备数
+                }
+            }
+            if (userCnt == 0)
+            {
+                // runtime 对空/无效 env 同样整体拒绝（RT_ALL_DATA_ERROR）
+                LOG_ERROR("ASCEND_RT_VISIBLE_DEVICES[%s] invalid, disabled", env);
+                return;
+            }
+            setVisibleDevice = true;
+
+            // 域探测：受限 ⟺ GetDeviceCount 返回可见设备数而非物理设备数
+            int32_t deviceCnt = 0;
+            bool cntOk = false;
+            {
+                // 进入真实运行时调用窗口：运行时内部的内存申请会被hook捕获并尝试上报，
+                // 抑制期间直接跳过，防止递归上报与幻影事件
+                EventReportSuppressor suppressor;
+                static auto getDeviceCount =
+                    VallinaSymbol<ACLImplLibLoader>::Instance().Get<AclrtGetDeviceCountFunc>("aclrtGetDeviceCountImpl");
+                if (getDeviceCount != nullptr)
+                {
+                    cntOk = (getDeviceCount(reinterpret_cast<uint32_t*>(&deviceCnt)) == ACL_SUCCESS);
+                }
+                else
+                {
+                    // 老包兼容：acl_rt_impl 无该符号时退回 libruntime.so 的 rtGetDeviceCount
+                    static auto rtGetDeviceCount =
+                        VallinaSymbol<RuntimeLibLoader>::Instance().Get<RtGetDeviceCountFunc>("rtGetDeviceCount");
+                    if (rtGetDeviceCount != nullptr)
+                    {
+                        cntOk = (rtGetDeviceCount(&deviceCnt) == RT_ERROR_NONE);
+                    }
+                }
+            }
+            if (!cntOk)
+            {
+                // 探测失败（符号缺失/驱动不可用）：保守假设受限（保留原转换行为）并告警
+                LOG_WARN("probe device count failed, assume runtime restricted");
+                runtimeRestricted_ = true;
+            }
+            else if (realCnt > 0)
+            {
+                // 受限 ⟺ 运行时可见设备数 < 物理设备数（对 env 未设置/旧 runtime/芯片无
+                // 可见设备特性均得非受限，pool 事件 deviceIndex 即物理域，直传正确）
+                runtimeRestricted_ = (deviceCnt < realCnt);
+            }
+            else
+            {
+                // dcmi 不可得：退化为与解析前缀长度比较（受限时 GetDeviceCount == env 长度）
+                runtimeRestricted_ = (deviceCnt == userCnt);
+            }
+            LOG_INFO("ASCEND_RT_VISIBLE_DEVICES[%s] parsed %d devices, deviceCnt %d realCnt %d, restricted %d", env,
+                     userCnt, deviceCnt, realCnt, runtimeRestricted_);
+            std::cout << "[msmemscope] Info: Set ASCEND_RT_VISIBLE_DEVICES successfully!" << std::endl;
+        });
+}
+
 bool GetDeviceInfo::TransDeviceId(int32_t& devId)
 {
-    // 新增可见卡选项
-    if (!setVisibleDevice)
+    // 首次调用时惰性解析 env 并探测 runtime 受限模式（见 EnsureEnvParsed 注释）
+    EnsureEnvParsed();
+    // 未设置/被拒绝的 env 或 runtime 未受限（事件 device 已是物理域）：不转换
+    if (!setVisibleDevice || !runtimeRestricted_)
     {
         return true;
     }
     auto it = visibleDeviceMap.find(devId);
     if (it == visibleDeviceMap.end())
     {
-        LOG_ERROR("Key %d not found in visibleDeviceMap!", devId);
+        // 越界输入：疑为物理域直传（旧产线/非 torch 生产者），不做置换直传并返回 false，
+        // 调用方保留原值——事件 device/缓存槽位/查询路径均按物理卡号归一，直传可命中正确卡片
+        if (!transDevIdWarned_.exchange(true))
+        {
+            LOG_WARN("devId %d out of visible device range(%d), pass through as physical id", devId,
+                     static_cast<int32_t>(visibleDeviceMap.size()));
+        }
         return false;
     }
     devId = it->second;
@@ -292,6 +556,23 @@ bool GetDeviceInfo::BuildDeviceMap()
                     devIdToDcmiMap_[logicId] = {cardList[i], deviceId};
                 }
             }
+            if (devIdToDcmiMap_.empty())
+            {
+                LOG_ERROR("dcmi device map is empty, degrade dcmi query permanently");
+                return;
+            }
+            // 稠密度校验：查询侧按逻辑号直接查表，键必须构成 [0, 芯片数) 稠密区间；
+            // 出现空洞说明 id 域假设失配（如驱动按物理卡枚举而事件按逻辑号上报），
+            // 拒绝建表——call_once 已消耗，dcmiMapReady_ 保持 false 即本进程内永久降级
+            for (int32_t i = 0; i < static_cast<int32_t>(devIdToDcmiMap_.size()); i++)
+            {
+                if (devIdToDcmiMap_.find(i) == devIdToDcmiMap_.end())
+                {
+                    LOG_ERROR("dcmi device map has hole at logic id %d, degrade dcmi query permanently", i);
+                    devIdToDcmiMap_.clear();
+                    return;
+                }
+            }
             dcmiMapReady_ = true;
         });
     return dcmiMapReady_;
@@ -306,8 +587,16 @@ bool GetDeviceInfo::GetDeviceHbmInfo(int32_t devId, uint64_t& usedMb, uint64_t& 
     auto it = devIdToDcmiMap_.find(devId);
     if (it == devIdToDcmiMap_.end())
     {
-        // 未在设备映射中的逻辑号（如 HOST 设备 DEVICE_ID_CPU）无整卡用量
-        LOG_DEBUG("devId %d not in dcmi device map", devId);
+        // 未在设备映射中的逻辑号：HOST 设备（DEVICE_ID_CPU）/无效号（GD_INVALID_NUM）属
+        // 正常缺失（无整卡用量），其余 miss 说明查询域与建表域不一致，升级为错误告警
+        if (devId == DEVICE_ID_CPU || devId == GD_INVALID_NUM)
+        {
+            LOG_DEBUG("devId %d not in dcmi device map", devId);
+        }
+        else
+        {
+            LOG_ERROR("devId %d not in dcmi device map, device id domain mismatch", devId);
+        }
         return false;
     }
     static auto getHbmInfo =
@@ -336,6 +625,110 @@ bool GetDeviceInfo::GetDeviceHbmInfo(int32_t devId, uint64_t& usedMb, uint64_t& 
 
 bool GetDeviceInfo::GetDeviceProcMemInfo(int32_t devId, uint64_t& usedBytes)
 {
+    // 主路径 devdrv 直连（devmm 记账 + H2D 设备侧查询，与 npu-smi 数据硬性一致）
+    if (QueryDevDrvProcMemInfo(devId, usedBytes))
+    {
+        return true;
+    }
+    // devdrv 不可用（节点不存在/无权限/ioctl 不支持）时降级 dcmi 接口：
+    // dcmi 内核入口可能被 UDIS 分支截获返回空记账（值不可信但查询本身有效），日志通道已标注
+    if (QueryDcmiProcMemInfo(devId, usedBytes))
+    {
+        return true;
+    }
+    return false;
+}
+
+bool GetDeviceInfo::QueryDevDrvProcMemInfo(int32_t devId, uint64_t& usedBytes)
+{
+    if (devId == DEVICE_ID_CPU || devId == GD_INVALID_NUM)
+    {
+        // 非真实设备无进程占用可查，与 dcmi 路径同语义（正常缺失，不告警）
+        LOG_DEBUG("devId %d not a real device, skip devdrv query", devId);
+        return false;
+    }
+    // 驱动查询内部可能有临时内存申请，抑制期间跳过上报，防止递归上报与幻影事件
+    EventReportSuppressor suppressor;
+    constexpr const char* kDevNode = "/dev/davinci_manager";
+    const int fd = open(kDevNode, O_RDWR);
+    if (fd < 0)
+    {
+        // 通道降级(devdrv不可用→dcmi兜底,数据仍可查询),非故障按DEBUG打:
+        // 旧驱动节点上该接口每事件(每个HAL显存MALLOC/FREE)都会触发一次查询,
+        // WARN级别且无限频会形成日志洪水(外层GetDeviceProcMemInfo整体失败
+        // 才走限频WARN)
+        LOG_DEBUG("open %s failed: %s", kDevNode, strerror(errno));
+        return false;
+    }
+
+    // 内核 ioctl 入口：copy_from_user(struct devdrv_resource_info) → 按 owner_type 分发 →
+    // 整结构 copy_to_user 返回（buf 为载荷，buf_len 由内核改写为实际字节数）
+    auto devdrvQuery = [fd, devId](unsigned int ownerType, unsigned int ownerId, unsigned int resourceType, void* buf,
+                                   unsigned int& bufLen) -> bool
+    {
+        struct devdrv_resource_info info
+        {
+        };
+        info.devid = static_cast<unsigned int>(devId);
+        info.owner_type = ownerType;
+        info.owner_id = ownerId;
+        info.resource_type = resourceType;
+        info.buf_len = bufLen;
+        if (ioctl(fd, DEVDRV_MANAGER_GET_DEV_RESOURCE_INFO, &info) != 0)
+        {
+            return false;
+        }
+        const unsigned int outLen = (info.buf_len <= bufLen) ? info.buf_len : bufLen;
+        if (outLen > 0)
+        {
+            memcpy_s(buf, bufLen, info.buf, outLen);
+        }
+        bufLen = outLen;
+        return true;
+    };
+
+    // 1) 进程列表：devmm 记账（buf_len = 数量 * sizeof(int)，非容器下 pid 即 host pid）
+    int pids[DEVDRV_MAX_PROC_NUM]{};
+    unsigned int pidsLen = sizeof(pids);
+    if (!devdrvQuery(DEVDRV_PROCESS_RESOURCE, 0, DEVDRV_DEV_PROCESS_PID, pids, pidsLen))
+    {
+        // 通道降级(devdrv失败→dcmi兜底),非故障按DEBUG打,理由同open失败处
+        LOG_DEBUG("devdrv query process pid list failed, devId %d: %s", devId, strerror(errno));
+        close(fd);
+        return false;
+    }
+    const int procNum = static_cast<int>(pidsLen / sizeof(pids[0]));
+
+    // 2) 逐进程内存：H2D 设备侧查询（按 (phyid, hostpid) 记账），载荷为 u64 字节数
+    const uint64_t selfPid = Utility::GetPid();
+    for (int i = 0; i < procNum; i++)
+    {
+        if (static_cast<uint64_t>(pids[i]) != selfPid)
+        {
+            continue;
+        }
+        uint64_t mem = 0;
+        unsigned int memLen = sizeof(mem);
+        if (!devdrvQuery(DEVDRV_PROCESS_RESOURCE, static_cast<unsigned int>(pids[i]), DEVDRV_DEV_PROCESS_MEM, &mem,
+                         memLen))
+        {
+            // 通道降级(devdrv失败→dcmi兜底),非故障按DEBUG打,理由同open失败处
+            LOG_DEBUG("devdrv query process mem failed, devId %d pid %d: %s", devId, pids[i], strerror(errno));
+            close(fd);
+            return false;
+        }
+        usedBytes = mem;
+        close(fd);
+        return true;
+    }
+    // 本进程不在该卡记账列表（未申请过内存/已退出），按查询失败处理
+    LOG_DEBUG("pid %llu not in device %d devdrv proc mem list", static_cast<unsigned long long>(selfPid), devId);
+    close(fd);
+    return false;
+}
+
+bool GetDeviceInfo::QueryDcmiProcMemInfo(int32_t devId, uint64_t& usedBytes)
+{
     if (!EnsureDcmiInit() || !BuildDeviceMap())
     {
         return false;
@@ -343,8 +736,16 @@ bool GetDeviceInfo::GetDeviceProcMemInfo(int32_t devId, uint64_t& usedBytes)
     auto it = devIdToDcmiMap_.find(devId);
     if (it == devIdToDcmiMap_.end())
     {
-        // 未在设备映射中的逻辑号（如 HOST 设备 DEVICE_ID_CPU）无进程占用可查
-        LOG_DEBUG("devId %d not in dcmi device map", devId);
+        // 未在设备映射中的逻辑号：HOST 设备（DEVICE_ID_CPU）/无效号（GD_INVALID_NUM）属
+        // 正常缺失（无进程占用可查），其余 miss 说明查询域与建表域不一致，升级为错误告警
+        if (devId == DEVICE_ID_CPU || devId == GD_INVALID_NUM)
+        {
+            LOG_DEBUG("devId %d not in dcmi device map", devId);
+        }
+        else
+        {
+            LOG_ERROR("devId %d not in dcmi device map, device id domain mismatch", devId);
+        }
         return false;
     }
     static auto getProcMemInfo =
@@ -383,6 +784,14 @@ bool GetDeviceInfo::GetDeviceProcMemInfo(int32_t devId, uint64_t& usedBytes)
 
 int64_t EventReport::QueryProcessUsed(int32_t devId)
 {
+    // aclrtSetDevice执行窗口（设备上下文未就绪，deviceReady_在真实调用成功返回后才置位）：
+    // 驱动侧dcmi进程内存查询可能卡死，窗口内跳过查询直接返回-1（预期瞬态，不告警）；
+    // 显存事件采集与deviceUsed查询不受影响，窗口外查询恢复
+    if (!EventTraceManager::Instance().IsDeviceReady())
+    {
+        return -1;
+    }
+
     uint64_t usedBytes = 0;
     if (!GetDeviceInfo::Instance().GetDeviceProcMemInfo(devId, usedBytes))
     {
@@ -497,8 +906,7 @@ void EventReport::HostMemExitHandler()
     }
     catch (...)
     {
-        fprintf(stderr, "[msmemscope] host leak [pid=%llu] exit close aborted\n",
-                static_cast<unsigned long long>(getpid()));
+        LOG_WARN("exit close aborted");
     }
 }
 
@@ -703,6 +1111,8 @@ bool EventReport::ReportMemPoolRecord(EventSubType type, const MemoryUsage& info
     }
 
     int32_t realDevice = static_cast<int32_t>(info.deviceIndex);
+    // 转换失败（越界，疑为物理域直传）时保留原值直传：不丢弃事件——事件 device/缓存槽位/
+    // 查询路径均按物理卡号归一，直传可命中正确卡片（失败详情与限频告警见 TransDeviceId 内部）
     GetDeviceInfo::Instance().TransDeviceId(realDevice);
     if (IsNeedSkip(realDevice))
     {
@@ -798,6 +1208,41 @@ bool EventReport::ReportHalCreate(uint64_t addr, uint64_t size, const drv_mem_pr
     event->processUsed = QueryProcessUsed(prop.devid);
 
     Process::GetInstance().SendEvent(event);
+    return true;
+}
+
+// Shadow overload (no callstack): minimal event for NOT_IN_TRACING mode
+bool EventReport::ReportHalCreate(uint64_t addr, uint64_t size, const drv_mem_prop& prop)
+{
+    if (IsNeedSkip(prop.devid))
+    {
+        return true;
+    }
+
+    auto event = std::make_shared<MemoryEvent>();
+    event->eventType = EventBaseType::MALLOC;
+    event->eventSubType = EventSubType::HAL;
+    event->poolType = PoolType::HAL;
+    event->addr = addr;
+    event->name = "N/A";
+    event->size = static_cast<int64_t>(size);
+    // 与正常路径同源：prop.devid 即驱动域物理卡号（区别于 flag 解析的 shadow ReportHalMalloc）
+    event->device = prop.devid;
+    event->space = MemOpSpace::DEVICE;
+    event->isShadowEvent = true;
+    event->kernelIndex = kernelLaunchRecordIndex_;
+    // No callstack, no moduleId, no pageType, no owner for shadow events
+
+    {
+        if (!destroyed_.load())
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            halPtrs_.emplace(addr, prop.devid);
+        }
+    }
+
+    Process::GetInstance().SendEvent(event);
+
     return true;
 }
 
@@ -1686,6 +2131,7 @@ void EventReport::ReportMemorySnapshotOnOOM(const CallStackString& stack)
             if (!result.IsBad())
             {
                 LOG_INFO("OOM memory snapshot created via Python take_snapshot");
+                std::cout << "[msmemscope] Info: OOM memory snapshot created via Python take_snapshot" << std::endl;
                 return;
             }
         }
@@ -1774,9 +2220,13 @@ extern "C" void msmemscope_hostmem_report_stage(int isStart, uint64_t timestamp,
     {
         // 退出闭窗派发链诊断(STAGE_END,极低频):到达采集库=钩子closing分支的
         // report_stage已越过bind边界;若此打点出现后分析器侧打点缺失,卡点在
-        // ReportHostStage→DispatchEvent的锁等待(与钩子侧"calling report_stage"互证)
-        fprintf(stderr, "[msmemscope] host leak [pid=%llu] report_stage: STAGE_END entered (stage=%llu)\n",
-                static_cast<unsigned long long>(getpid()), static_cast<unsigned long long>(stageId));
+        // ReportHostStage→DispatchEvent的锁等待(与钩子侧"window close done"互证)。
+        // 闭窗派发在set_enabled(0)调用线程同步发生:stop()路径status_仍为
+        // IN_TRACING(SetTraceStatus在ReportTraceStatus之后翻转),tracing门控不吞此打点
+        if (EventTraceManager::Instance().IsTracingEnabled())
+        {
+            LOG_DEBUG("report_stage: STAGE_END entered (stage=%llu)", static_cast<unsigned long long>(stageId));
+        }
     }
     try
     {
@@ -1794,6 +2244,60 @@ extern "C" void msmemscope_hostmem_report_stage(int isStart, uint64_t timestamp,
 }
 
 extern "C" int msmemscope_hostmem_is_suppressed(void) { return IsEventReportSuppressed() ? 1 : 0; }
+
+// 钩子侧日志回调: 钩子so为纯C ABI(禁止跨so解析C++符号,见host_mem_hooks.h),不直接
+// 使用采集库LOG_*宏,统一经本桥路由到日志系统。severity取值见
+// MsmemscopeHostmemLogLevel。级别门控: 仅DEBUG要求tracing期间(纯调试诊断,非tracing
+// 不落日志,用户诉求);INFO为窗口开闭时间线——start()的set_enabled(1)在status_置
+// IN_TRACING之前发出(deferred模式),关窗在stop()的status_翻转之前,若按tracing门控
+// 会丢失窗口边界,故INFO不门控(默认日志级别WARN已过滤,仅--log-level=info可见);
+// WARN/ERROR为异常诊断,恒输出。回调上下文=钩子调用线程(开窗/闭窗/exit拦截器),
+// 禁止在此重入EventReport实例锁
+// EventTraceManager经直达指针访问(同g_hostMemReportInstance防御动机,见上):本回调
+// 可能被钩子线程在静态析构期触发,Instance()的magic-static在析构后重入会重新构造
+// 对象(Itanium ABI guard复位),退出期重构造状态混乱;DEBUG日志只可能在start后产生
+// (此刻实例必已构造),故首访缓存指针后直用,经IsTracingEnabled内部destroyed_检查兜底
+static std::atomic<EventTraceManager*> g_hostMemTraceManager{nullptr};
+
+extern "C" void msmemscope_hostmem_log(int severity, const char* fmt, va_list args)
+{
+    if (fmt == nullptr)
+    {
+        return;
+    }
+    if (severity == MSMEMSCOPE_HOSTMEM_LOG_DEBUG)
+    {
+        EventTraceManager* traceManager = g_hostMemTraceManager.load(std::memory_order_acquire);
+        if (traceManager == nullptr)
+        {
+            traceManager = &EventTraceManager::Instance();
+            g_hostMemTraceManager.store(traceManager, std::memory_order_release);
+        }
+        if (!traceManager->IsTracingEnabled())
+        {
+            return;
+        }
+    }
+    constexpr size_t HOSTMEM_LOG_BUF_SIZE = 1024;
+    char buf[HOSTMEM_LOG_BUF_SIZE];
+    vsnprintf(buf, sizeof(buf), fmt, args);
+    if (severity == MSMEMSCOPE_HOSTMEM_LOG_INFO)
+    {
+        LOG_INFO("%s", buf);
+    }
+    else if (severity == MSMEMSCOPE_HOSTMEM_LOG_WARN)
+    {
+        LOG_WARN("%s", buf);
+    }
+    else if (severity == MSMEMSCOPE_HOSTMEM_LOG_DEBUG)
+    {
+        LOG_DEBUG("%s", buf);
+    }
+    else  // ERROR及未知severity:宁重勿丢
+    {
+        LOG_ERROR("%s", buf);
+    }
+}
 
 extern "C" void msmemscope_hostmem_get_params(MsmemscopeHostmemParams* params)
 {
@@ -1836,6 +2340,7 @@ void EventReport::BindHostMemHook()
     api.report_stage = msmemscope_hostmem_report_stage;
     api.is_suppressed = msmemscope_hostmem_is_suppressed;
     api.get_params = msmemscope_hostmem_get_params;
+    api.log = msmemscope_hostmem_log;
     svcHostMem_ = bindFn(&api);
     if (svcHostMem_ == nullptr)
     {
@@ -1868,9 +2373,8 @@ void EventReport::CloseHostMemWindowAtExit()
     // 后者=本对象先于handler析构(时序异常,需查注册顺序)
     if (destroyed_.load() || svcHostMem_ == nullptr)
     {
-        fprintf(stderr, "[msmemscope] host leak [pid=%llu] exit close skipped: %s\n",
-                static_cast<unsigned long long>(getpid()),
-                destroyed_.load() ? "event report destroyed before handler" : "host hook not bound");
+        LOG_WARN("exit close skipped: %s",
+                 destroyed_.load() ? "event report destroyed before handler" : "host hook not bound");
         return;
     }
     // 复用stop闩锁语义(交集语义):置位后UpdateHostMemWindow必闭窗且此后不再
@@ -1897,8 +2401,7 @@ void EventReport::CloseHostMemWindowAtExit()
             // dlsym失败(钩子so已卸载/符号不可得):无法观测closing,无法确认闭窗
             // 完成。此态在退出期理论不可达(钩子so仍加载),出现即需查卸载时序;
             // 按"无需等待"放行,窗口报告由~HostLeakAnalyzer兜底
-            fprintf(stderr, "[msmemscope] host leak [pid=%llu] exit close skipped: status query unavailable\n",
-                    static_cast<unsigned long long>(getpid()));
+            LOG_WARN("exit close skipped: status query unavailable");
             return;
         }
         if ((status & 0x4) == 0)
@@ -1910,17 +2413,17 @@ void EventReport::CloseHostMemWindowAtExit()
         const auto now = std::chrono::steady_clock::now();
         if (now - closeStart >= std::chrono::seconds(120))
         {
-            fprintf(stderr,
-                    "[msmemscope] host leak [pid=%llu] exit close timed out after 120s, "
-                    "giving up (report degraded via destructor fallback)\n",
-                    static_cast<unsigned long long>(getpid()));
+            LOG_ERROR("exit close timed out after 120s, giving up (report degraded via destructor fallback)");
             return;
         }
         if (now >= nextLog)
         {
-            // 无环形缓冲/待补扫栈,进度日志为纯状态打点
-            fprintf(stderr, "[msmemscope] host leak [pid=%llu] window still closing at exit\n",
-                    static_cast<unsigned long long>(getpid()));
+            // 无环形缓冲/待补扫栈,进度日志为纯状态打点;等待期tracing未停
+            // (stop后无窗口可等,循环立即退出),tracing门控不吞此打点
+            if (EventTraceManager::Instance().IsTracingEnabled())
+            {
+                LOG_DEBUG("window still closing at exit");
+            }
             nextLog = now + std::chrono::seconds(5);
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(20));

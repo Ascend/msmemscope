@@ -20,6 +20,7 @@
 #include <dlfcn.h>
 #include <securec.h>
 
+#include "log.h"
 #include "utils.h"
 
 namespace Utility
@@ -202,6 +203,7 @@ bool FileCreateManager::CreateCsvFile(FILE** filefp, int32_t devId, const std::s
         FILE* fp = CreateFile(dirPath, fileName, DEFAULT_UMASK_FOR_CSV_FILE);
         if (fp != nullptr)
         {
+            // 文件创建信息直接打屏（打屏=原有可观测性，Log::Printf仅落日志文件不落stdout）
             std::cout << "[msmemscope] Info: create file " << filePath << "." << std::endl;
             fprintf(fp, "%s", headers.c_str());
             *filefp = fp;
@@ -252,6 +254,7 @@ bool FileCreateManager::CreateDbFile(sqlite3** filefp, int32_t devId, const std:
         }
         else
         {
+            // 文件创建信息直接打屏（打屏=原有可观测性，Log::Printf仅落日志文件不落stdout）
             std::cout << "[msmemscope] Info: create dbfile " << filePath << "." << std::endl;
         }
         sqlite3* db = nullptr;
@@ -300,6 +303,8 @@ bool FileCreateManager::CreateLogFile(FILE** filefp, const char* taskDir, char* 
         }
         else
         {
+            // 日志文件自身的创建信息不能用LOG_*: Log::Printf持mtx_调本函数(见log.h),
+            // 此处LOG_*将重入同一把非递归锁而死锁;std::cout保持原有可观测性
             std::cout << "[msmemscope] Info: logging into file " << filePath << std::endl;
             *filefp = fp;
             if (strncpy_s(logFilePath, size, filePath.c_str(), filePath.length()) != EOK)
@@ -326,6 +331,7 @@ bool FileCreateManager::CreateConfigFile(FILE** filefp, const std::string& fileN
         }
         else
         {
+            // 文件创建信息直接打屏（打屏=原有可观测性，Log::Printf仅落日志文件不落stdout）
             std::cout << "[msmemscope] Info: Config into file " << configFilePath << std::endl;
             *filefp = fp;
         }

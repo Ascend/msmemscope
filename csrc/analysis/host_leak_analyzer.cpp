@@ -26,6 +26,7 @@
 #include <cstdlib>
 #include <fstream>
 #include <iomanip>
+#include <iostream>
 #include <sstream>
 #include <utility>
 
@@ -279,10 +280,7 @@ HostLeakAnalyzer::~HostLeakAnalyzer()
         // 内存随进程回收),退出路径不再有任何无界等待
         if (!mutex_.try_lock_for(std::chrono::seconds(15)))
         {
-            fprintf(stderr,
-                    "[msmemscope] host leak [pid=%llu] fallback report skipped: analyzer lock busy >15s at "
-                    "destructor\n",
-                    static_cast<unsigned long long>(getpid()));
+            LOG_WARN("fallback report skipped: analyzer lock busy >15s at destructor");
             return;
         }
         std::lock_guard<std::timed_mutex> lock(mutex_, std::adopt_lock);
@@ -298,10 +296,7 @@ HostLeakAnalyzer::~HostLeakAnalyzer()
         }
         if (openWindows != 0)
         {
-            fprintf(stderr,
-                    "[msmemscope] host leak [pid=%llu] fallback report: %zu window(s) still open at analyzer "
-                    "destructor\n",
-                    static_cast<unsigned long long>(getpid()), openWindows);
+            LOG_WARN("fallback report: %zu window(s) still open at analyzer destructor", openWindows);
         }
         for (auto& window : windows_)
         {
@@ -319,7 +314,9 @@ HostLeakAnalyzer::~HostLeakAnalyzer()
     }
     catch (...)
     {
-        // 临终处理阶段部分对象可能已析构,异常必须吞掉防std::terminate
+        // 临终处理阶段部分对象可能已析构(含Log单例),异常必须吞掉防std::terminate;
+        // 打屏走stderr直写不依赖任何静态单例——LOG_WARN经Log::GetLog()访问可能
+        // 已析构的Log(析构期两者相对顺序无保证),与本块防御目标相悖
         fprintf(stderr, "[msmemscope] host leak [pid=%llu] analyzer cleanup aborted\n",
                 static_cast<unsigned long long>(getpid()));
     }
@@ -423,10 +420,8 @@ void HostLeakAnalyzer::EventHandle(std::shared_ptr<EventBase>& event, MemoryStat
     // 正常路径锁竞争毫秒级,15s不可达。
     if (!mutex_.try_lock_for(std::chrono::seconds(15)))
     {
-        fprintf(stderr,
-                "[msmemscope] host leak [pid=%llu] EventHandle: analyzer lock busy >15s, event skipped "
-                "(subtype=%d)\n",
-                static_cast<unsigned long long>(getpid()), static_cast<int>(event->eventSubType));
+        LOG_WARN("EventHandle: analyzer lock busy >15s, event skipped (subtype=%d)",
+                 static_cast<int>(event->eventSubType));
         return;
     }
     std::lock_guard<std::timed_mutex> lock(mutex_, std::adopt_lock);
@@ -864,6 +859,8 @@ void HostLeakAnalyzer::WriteWindowReport(uint64_t pid, WindowState& ws, bool atE
         LOG_WARN("Host leak report aborted: cannot open %s", overviewPath.c_str());
         return;
     }
+    LOG_INFO("Host leak overview report created: %s", overviewPath.c_str());
+    std::cout << "[msmemscope] Info: Host leak overview report created: " << overviewPath << std::endl;
 
     // ---- 数据健康度分析 ----
     out << "====== Host Leak Overview: stage=" << ws.stageId << ", pid=" << pid << " ======\n";
@@ -1218,6 +1215,8 @@ void HostLeakAnalyzer::WriteWindowReport(uint64_t pid, WindowState& ws, bool atE
         std::ofstream detail(detailPath);
         if (detail.is_open())
         {
+            LOG_INFO("Host leak block detail report created: %s", detailPath.c_str());
+            std::cout << "[msmemscope] Info: Host leak block detail report created: " << detailPath << std::endl;
             // 块明细排序:块大小降序(泄漏定位优先看大块),相同大小按地址升序保证确定性
             std::sort(ws.blocks.begin(), ws.blocks.end(),
                       [](const LiveBlock& a, const LiveBlock& b)
@@ -1319,6 +1318,7 @@ void HostLeakAnalyzer::WriteWindowReport(uint64_t pid, WindowState& ws, bool atE
     }
 
     LOG_INFO("Host leak report generated: %s", overviewPath.c_str());
+    std::cout << "[msmemscope] Info: Host leak report generated: " << overviewPath << std::endl;
 }
 
 void HostLeakAnalyzer::RenderInterimOverview(uint64_t pid, uint64_t stageId, uint64_t startTs, InterimCollector& ic,

@@ -69,6 +69,7 @@ bool TensorDumper::DumpTensorBinary(const std::vector<uint8_t>& hostData, std::s
     }
     std::string binOutDir = dumpDir_ + "/" + "device_" + std::to_string(devId) + "/" + WATCH_DUMP_DIR;
     // 判断watch_dump的目录是否存在，如不存在则提示用户将要创建。
+    // 目录创建信息直接打屏（打屏=原有可观测性，Log::Printf仅落日志文件不落stdout）
     if (access(binOutDir.c_str(), F_OK) != 0)
     {
         std::cout << "[msmemscope] Info: Created watch_dump directory at " << binOutDir << "." << std::endl;

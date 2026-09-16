@@ -69,6 +69,7 @@ class EventReport
    public:
     static EventReport& Instance(MemScopeCommType type);
     bool ReportHalCreate(uint64_t addr, uint64_t size, const drv_mem_prop& prop, CallStackString&& stack);
+    bool ReportHalCreate(uint64_t addr, uint64_t size, const drv_mem_prop& prop);  // shadow mode (no callstack)
     bool ReportHalRelease(uint64_t addr, CallStackString&& stack);
     bool ReportHalMalloc(uint64_t addr, uint64_t size, unsigned long long flag, CallStackString&& stack);
     bool ReportHalMalloc(uint64_t addr, uint64_t size, unsigned long long flag);  // shadow mode (no callstack)
@@ -240,66 +241,30 @@ class GetDeviceInfo
     // 查询设备 HBM 用量（dcmi_get_device_hbm_info，与 npu-smi 同源，单位 MB 转出）；
     // 成功返回 true 并填写 usedMb/totalMb，失败（未 init/未建表/查询失败）返回 false
     bool GetDeviceHbmInfo(int32_t devId, uint64_t& usedMb, uint64_t& totalMb);
-    // 查询本进程在该设备上的显存占用（dcmi_get_npu_proc_mem_info，按 pid 过滤本进程，字节单位）
-    // 成功返回 true 并填写 usedBytes；失败（未 init/未建表/本进程不在该卡进程列表）返回 false
+    // 查询本进程在该设备上的显存占用，字节单位；成功返回 true 并填写 usedBytes。
+    // 主路径 devdrv 直连（/dev/davinci_manager ioctl → devmm 记账列表 + H2D 设备侧查询，
+    // 与 npu-smi 同源硬性一致）；devdrv 不可用（节点/权限/ioctl 失败）时降级 dcmi 接口
+    // （dcmi 内核入口的 UDIS 分支可能先命中空记账返回 0，值不可信但查询本身有效）
     bool GetDeviceProcMemInfo(int32_t devId, uint64_t& usedBytes);
 
    private:
+    // devdrv 直连查询实现：open /dev/davinci_manager + GET_DEV_RESOURCE_INFO ioctl
+    // （DEVDRV_PROCESS_RESOURCE + DEVDRV_DEV_PROCESS_PID/MEM，常量与结构见 event_report.cpp）
+    bool QueryDevDrvProcMemInfo(int32_t devId, uint64_t& usedBytes);
+    // dcmi 接口查询实现（原 dcmi_get_npu_proc_mem_info 路径，devdrv 降级兜底）
+    bool QueryDcmiProcMemInfo(int32_t devId, uint64_t& usedBytes);
     // dcmi_init 一次性初始化（失败则本进程内永久降级，不再重试）
     bool EnsureDcmiInit();
     // 一次性建表：acl 逻辑号 → (card_id, device_id)（dcmi_get_card_list + num_in_card + logic_id）
     bool BuildDeviceMap();
+    // 惰性 env 解析 + 受限模式探测（一次性）：镜像 runtime GetVisibleDevices 的解析语义
+    // （不 trim/纯数字 token/单逗号分隔/非法或越界 prefix break/乱序或重复整体拒绝），
+    // 并经 aclrtGetDeviceCountImpl 探测 runtime 是否处于可见设备受限模式——
+    // 受限才做 user→real 转换（详见 event_report.cpp 实现处注释）
+    void EnsureEnvParsed();
 
-    GetDeviceInfo()
-    {
-        const char* visibleDeviceEnv = std::getenv("ASCEND_RT_VISIBLE_DEVICES");
-        if (!visibleDeviceEnv)
-        {
-            LOG_DEBUG("ASCEND_RT_VISIBLE_DEVICES environment variable not found!");
-            return;
-        }
-
-        std::string visibleDeviceStr(visibleDeviceEnv);
-        std::vector<std::string> deviceTokens;
-        std::istringstream iss(visibleDeviceStr);
-        std::string token;
-
-        while (std::getline(iss, token, ','))
-        {
-            // 去除首尾空格
-            token.erase(0, token.find_first_not_of(" \t\n\r\f\v"));
-            token.erase(token.find_last_not_of(" \t\n\r\f\v") + 1);
-
-            if (!token.empty())
-            {
-                deviceTokens.push_back(token);
-            }
-        }
-
-        int32_t deviceId = 0;
-        for (const auto& dev : deviceTokens)
-        {
-            size_t pos;
-            try
-            {
-                int32_t id = std::stoi(dev, &pos);
-                if (pos != dev.length() || id < 0)
-                {
-                    throw std::invalid_argument("Invalid format: '" + std::string(dev) + "'");
-                }
-                visibleDeviceMap[deviceId] = id;
-                deviceId++;
-            }
-            catch (const std::invalid_argument& e)
-            {
-                LOG_ERROR("Invalid format for ASCEND_RT_VISIBLE_DEVICES:%s", e.what());
-                visibleDeviceMap.clear();
-                return;
-            }
-        }
-        setVisibleDevice = true;
-        std::cout << "[msmemscope] Info: Set ASCEND_RT_VISIBLE_DEVICES successfully!" << std::endl;
-    }
+    // env 解析延迟到首次使用时（EnsureEnvParsed），构造函数不解析
+    GetDeviceInfo() = default;
 
    private:
     ~GetDeviceInfo() = default;
@@ -309,8 +274,16 @@ class GetDeviceInfo
     GetDeviceInfo(GetDeviceInfo&&) = delete;
     GetDeviceInfo& operator=(GetDeviceInfo&&) = delete;
 
-    bool setVisibleDevice = false;  // 是否存在可见卡
+    bool setVisibleDevice = false;  // env 有效且被接受（解析成功后置位，决定是否走转换）
     std::unordered_map<int32_t, int32_t> visibleDeviceMap;
+
+    std::once_flag envParseFlag_;
+    // runtime 是否处于可见设备受限模式：受限时 GetDeviceCount 返回可见设备数而非物理数，
+    // 池事件 deviceIndex/GetDeviceId 为 user 域，TransDeviceId 需做 user→real 转换；
+    // 非受限（旧 runtime/芯片不支持可见设备特性/env 未设置）时事件 device 已是物理域，直传
+    bool runtimeRestricted_ = false;
+    // TransDeviceId 越界直传的限频告警标记（首个越界日志后静默）
+    std::atomic<bool> transDevIdWarned_{false};
 
     std::once_flag dcmiInitFlag_;
     bool dcmiReady_ = false;  // dcmi_init 成功后才置位

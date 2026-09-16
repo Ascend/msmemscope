@@ -280,6 +280,12 @@ bool EventTraceManager::IsTracingEnabled()
         return false;
     }
 
+    // 单例类析构之后不再访问其成员变量
+    if (destroyed_.load())
+    {
+        return false;
+    }
+
     return true;
 }
 
@@ -409,6 +415,8 @@ void EventTraceManager::SetDeviceReadyStatus(bool isReady)
         Utility::MemScopePythonCall("msmemscope.cpu_tensor_collection", "on_device_ready");
     }
 }
+
+bool EventTraceManager::IsDeviceReady() { return deviceReady_.load(); }
 
 void EventTraceManager::CleanUpEventTraceManager()
 {
