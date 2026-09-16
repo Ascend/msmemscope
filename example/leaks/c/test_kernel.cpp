@@ -1,23 +1,11 @@
-#include "kernel_operator.h"
 #include "acl/acl.h"
+#include "kernel_operator.h"
 using namespace AscendC;
 
-constexpr int32_t BYTESIZE = 256;
-constexpr int32_t BYTESIZE_LARGE = 512;
-constexpr int32_t NUM_DATA = BYTESIZE / sizeof(half);
-constexpr int32_t NUM_DATA_LARGE = BYTESIZE_LARGE / sizeof(half);
-
-extern "C" __global__ __aicore__ void test_kernel(__gm__ uint8_t *gm)
-{
-    TPipe pipe;
-    TBuf<QuePosition::VECCALC> xlm;
-    GlobalTensor<half> xGm;
-    pipe.InitBuffer(xlm, BYTESIZE_LARGE);
-    LocalTensor<half> xLm = xlm.Get<half>();
-    xGm.SetGlobalBuffer((__gm__ half *)gm, NUM_DATA);
-    DataCopy(xLm, xGm, NUM_DATA_LARGE);
-    DataCopy(xGm, xLm, NUM_DATA_LARGE);
-}
+// 本案例用于验证 msmemscope 工具的内存泄漏采集能力,内核无需执行真实计算,
+// 因此 test_kernel 保持空实现即可。泄漏检测依赖 host 侧的 aclrtMalloc/aclrtFree
+// 事件与 mstx step 打点(见 main.cpp),与内核内部逻辑无关,空内核不影响采集结果。
+extern "C" __global__ __aicore__ void test_kernel(__gm__ uint8_t *gm) {}
 
 extern "C" void test_kernel_do(uint32_t blockDim, void *l2ctrl, void *stream, uint8_t *gm)
 {
