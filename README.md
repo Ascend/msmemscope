@@ -133,10 +133,10 @@ msMemScope 工具提供 API 接口，便于快速分析内存情况，请参见 
 
 ## ⚖️ 相关说明
 
-🔹 《[版本说明](https://gitcode.com/Ascend/msmemscope/releases)》
-🔹 《[许可证声明](./docs/zh/legal/license_notice.md)》
-🔹 《[安全声明](./docs/zh/legal/security_statement.md)》
-🔹 《[免责声明](./docs/zh/legal/disclaimer.md)》
+🔹 《[版本说明](https://gitcode.com/Ascend/msmemscope/releases)》<br>
+🔹 《[许可证声明](./docs/zh/legal/license_notice.md)》<br>
+🔹 《[安全声明](./docs/zh/legal/security_statement.md)》<br>
+🔹 《[免责声明](./docs/zh/legal/disclaimer.md)》<br>
 
 ## 🤝 建议与交流
 
