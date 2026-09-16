@@ -213,7 +213,7 @@ msmemscope.stop()  # 退出采集
 |--verbose, -v|可选|设置日志级别为debug，等价于--log-level=debug。|
 |--quiet, -q|可选|设置日志级别为error，等价于--log-level=error。|
 |--debug|可选|设置日志级别为debug，等价于--log-level=debug。|
-|--steps|可选|选择要采集内存信息的Step ID，须配置为实际Step范围内的整数，可配置1个或多个，当前最多支持配置5个。输入的Step ID以逗号（全角半角逗号均可）分割。如果不配置该参数，则默认采集所有Step的内存信息。示例：--steps=1,2,3。|
+|--steps|可选|选择要采集内存信息的Step ID，须配置为实际Step范围内的整数，可配置1个或多个，当前最多支持配置5个。输入的Step ID以逗号（全角半角逗号均可）分隔。如果不配置该参数，则默认采集所有Step的内存信息。示例：--steps=1,2,3。|
 |--device|可选|采集的设备信息。可选项有npu、npu:{*id*}和cpu，默认值为npu，取值不可为空，可同时选择多个，取值间以逗号（全角半角逗号均可）分隔，示例：--device=npu。<br>  如果取值中同时包含npu和npu:{*id*}，那么默认还是采集所有npu的内存信息，npu:{*id*}不生效。<br> - **npu**：采集所有的npu内存信息。<br> - **npu:{*id*}**：采集指定卡号的npu内存信息，其中id为指定的卡号，需输入有效id，取值范围为[0,31]，可采集多个卡的内存信息，取值间以逗号（全角半角逗号均可）分隔，示例：--device=npu:2,npu:7。<br> - **cpu**：采集cpu内存信息，包括offload锁页内存（pinned memory）和CPU tensor数据内存。CPU内存事件类型统一为HOST，输出到device_cpu/目录。锁页内存在Attr中标记pinned:true（不含total字段），CPU tensor数据内存在Attr中包含total字段（不含pinned:true标记）。CPU内存事件仅落盘，不参与泄漏分析等任何分析项。|
 |--level|可选|采集的算子信息。可选项有op和kernel，默认值为op，示例：--level=op。<br> - **op**：采集op算子的信息。<br> - **kernel**：采集kernel算子的信息。<br> 旧取值0和1仍兼容使用（0等价于op，1等价于kernel），但已废弃，使用时会提示弃用告警。|
 |--events|可选|采集事件。可选项有alloc、free、launch、access、traceback和none，默认值为alloc，free，launch，取值间以逗号（全角半角逗号均可）分隔。示例：--events=alloc,free,launch。<br> - **alloc**：采集内存申请事件。<br>- **free**：采集内存释放事件。<br> - **launch**：采集算子/kernel下发事件。<br> - **access**：采集内存访问事件。当前仅支持采集ATB和Ascend for PyTorch算子场景的内存访问事件。<br> - **traceback**：采集Python Trace事件。<br> - **none**：不采集任何事件类型。当`none`与其他事件类型值同时出现时，以`none`为准（清空所有事件类型），同时输出warning提示。<br>**需要注意的是**：<br>1. 如果`alloc`事件和`free`事件不成对配置，可能导致分配-释放配对信息缺失，影响数据在MindStudio Insight工具中的可视化效果（如内存时间线展示不完整、泄漏分析结果不准确等）。<br>2. --events=traceback仅支持通过API接口调用，无法在命令行环境中使用。|
