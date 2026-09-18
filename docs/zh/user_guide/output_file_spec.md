@@ -10,7 +10,7 @@ msMemScope工具进行内存分析后，输出的文件如[**表 1**  输出文�
 |--|--|
 |memscope_dump_{_timestamp_}.csv|使用内存分析功能时，输出内存信息结果文件，并默认保存在msmemscope_{*PID*}_{_timestamp_}_ascend/device_{*device_id*}/dump目录下，具体详情信息可参见[memscope_dump_{_timestamp_}.csv文件说明](#memscope_dump_timestampcsv文件说明)。|
 |memory_compare_{*timestamp*}.csv|使用内存对比功能时，输出内存对比信息结果文件，记录的是基线内存信息、对比内存信息和对比后的内存差异信息，输出文件默认保存在memscopeDumpResults/compare目录下，具体详情信息可参见[memory_compare_{_timestamp_}.csv文件说明](#memory_compare_timestampcsv文件说明)。|
-|memscope_dump_{_timestamp_}.db|db格式的内存信息结果文件，默认保存在msmemscope_{*PID*}_{_timestamp_}_ascend/device_{*device_id*}/dump目录下，可使用MindStudio Insight工具展示，展示结果及具体操作请参见[MindStudio Insight内存调优](https://gitcode.com/Ascend/msinsight/blob/master/docs/zh/user_guide/memory_tuning.md)。|
+|memscope_dump_{_timestamp_}.db|db格式的内存信息结果文件，默认保存在msmemscope_{*PID*}_{_timestamp_}_ascend/device_{*device_id*}/dump目录下，可使用MindStudio Insight工具展示，展示结果及具体操作请参见[MindStudio Insight内存调优](https://gitcode.com/Ascend/msinsight/blob/26.2.0/docs/zh/user_guide/memory_tuning.md)。|
 |python_trace_{_TID_}_{_timestamp_}.csv|Python Trace采集的结果文件，默认保存在msmemscope_{*PID*}_{_timestamp_}_ascend/device_{*device_id*}/dump目录下，具体详情信息可参见[python_trace_{_TID_}_{_timestamp_}.csv文件说明](#python_trace_tid_timestampcsv文件说明)。|
 |config.json|Python接口自定义采集的配置信息文件，默认保存在msmemscope_{*PID*}_{_timestamp_}_ascend目录下。|
 |leak_overview_{*stage*}.txt|Host堆内存泄漏检测的泄漏概览报告，默认保存在msmemscope_{*PID*}_{_timestamp_}_ascend/host_leak目录下，具体详情信息可参见[leak_overview_{*stage*}.txt文件说明](#leak_overview_stagetxt文件说明)。|
