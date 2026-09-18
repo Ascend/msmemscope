@@ -377,6 +377,7 @@ msMemScope工具可以结合mstx打点能力进行内存采集，同时msMemScop
 >
 > - 程序初始化阶段，设备上下文还未完成初始化，process_used和device_used可能采集不到（字段省略），属正常现象，初始化完成后可正常采集。
 > - 采集不到该值时（无卡、无驱动环境、权限不足等），process_used和device_used字段将被省略，不输出。
+> - 系统未安装systemd时，工具会跳过dcmi初始化以避免其挂起，process_used和device_used可能无法采集（字段省略）。
 
 ### 整卡显存曲线
 

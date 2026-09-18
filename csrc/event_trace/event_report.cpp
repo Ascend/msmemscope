@@ -27,6 +27,7 @@
 #include <cerrno>
 #include <chrono>
 #include <cstdarg>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
@@ -472,6 +473,36 @@ bool GetDeviceInfo::TransDeviceId(int32_t& devId)
     return true;
 }
 
+// dcmi_init挂起风险预判(防御):dcmi_init→dcmi_run_env_init→dcmi_is_in_docker→
+// dcmi_is_in_docker_by_cmd会fork子进程执行/usr/bin/systemd-detect-virt(绝对路径,
+// dcmi_environment_judge.c)。该命令不可执行→子进程execvp失败后调exit(1)(应为
+// _exit)→执行继承的析构链挂死→父进程waitpid永久阻塞。预判与dcmi一致:容器内
+// (cgroup含docker标记或/.dockerenv)由by_file短路不走到fork,无风险;非容器且
+// 命令不可执行→必挂→短路dcmi_init,本进程永久降级(查询路径按无dcmi处理)
+static bool DcmiInitHasHangRisk()
+{
+    if (access("/.dockerenv", F_OK) == 0)
+    {
+        return false;
+    }
+    FILE* fp = fopen("/proc/self/cgroup", "r");
+    if (fp != nullptr)
+    {
+        char line[256];
+        while (fgets(line, sizeof(line), fp) != nullptr)
+        {
+            // dcmi按小写匹配docker-/docker/(dcmi_strlwr),cgroup内容本身小写,直接匹配
+            if (strstr(line, "docker-") != nullptr || strstr(line, "docker/") != nullptr)
+            {
+                fclose(fp);
+                return false;
+            }
+        }
+        fclose(fp);
+    }
+    return access("/usr/bin/systemd-detect-virt", X_OK) != 0;
+}
+
 bool GetDeviceInfo::EnsureDcmiInit()
 {
     // dcmi_init 只尝试一次：失败（权限/驱动问题）后本进程内永久降级，
@@ -479,6 +510,12 @@ bool GetDeviceInfo::EnsureDcmiInit()
     std::call_once(dcmiInitFlag_,
                    [this]()
                    {
+                       // 防御预判:命中挂起风险(环境探测fork子进程必挂)则短路dcmi_init
+                       if (DcmiInitHasHangRisk())
+                       {
+                           LOG_ERROR("dcmi_init would hang (systemd-detect-virt unavailable), skip dcmi init");
+                           return;
+                       }
                        static auto initFunc = VallinaSymbol<DcmiLibLoader>::Instance().Get<DcmiInitFunc>("dcmi_init");
                        if (initFunc == nullptr)
                        {
