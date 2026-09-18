@@ -93,11 +93,11 @@ msMemScope 工具提供内存采集、内存分析两大功能。
 
 ## 🚀 快速入门
 
-快速入门旨在帮助用户快速熟悉 msMemScope 工具的使用方式，请参见 《[msMemScope 快速入门](./docs/zh/quick_start/quick_start.md)》。
+快速入门旨在帮助用户快速熟悉 msMemScope 工具，通过一个简单的PyTorch脚本介绍msMemScope工具的使用方法以及功能。详情请参见 《[msMemScope 快速入门](./docs/zh/quick_start/quick_start.md)》。
 
 ## 📦 安装指南
 
-msMemScope 工具支持通过软件包和源码两种方式进行安装，可根据实际需求选择合适的安装方式，请参见 《[msMemScope 安装指南](./docs/zh/install_guide/install_guide.md)》。
+msMemScope 工具支持在线安装、离线安装和源码安装三种方式进行安装，可根据实际需求选择合适的安装方式，请参见 《[msMemScope 安装指南](./docs/zh/install_guide/install_guide.md)》。
 
 msMemScope 工具当前支持 CANN、Ascend for PyTorch、MindSpore 以及 Aten 算子的内存采集，具体版本支持情况如下表所示。
 
