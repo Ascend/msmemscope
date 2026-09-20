@@ -337,13 +337,15 @@ class InefficientAnalyzer(BaseAnalyzer):
 
     def _event_convert(self, origin_event: OriginEvent):
         # 将origin_event类转化为低效显存识别的ineff_event类
-        if not origin_event.attr.strip():
+        raw_attr = origin_event.attr
+        # CSV短行缺失字段为None,统一按空串处理,避免对None调用.strip()抛异常
+        if not raw_attr or not raw_attr.strip():
             allocation_id = -1
             size = -1
             api_id = -1
             access_type = ""
         else:
-            raw_attr = origin_event.attr.strip()
+            raw_attr = raw_attr.strip()
             attr_str = raw_attr[1:-1].strip()
             attr_pairs = attr_str.split(',')
             attr_dict = {}
@@ -355,8 +357,13 @@ class InefficientAnalyzer(BaseAnalyzer):
                     value = key_value[1].strip().strip('"')
                     attr_dict[key] = value
 
-            allocation_id = int(attr_dict.get('allocation_id', '-1'))
-            size = int(attr_dict.get('size', '-1'))
+            # 容错解析:allocation_id/size非数字时降级为-1(与字段缺失等价),不中断分析
+            alloc_id_val = safe_convert_int(
+                attr_dict.get('allocation_id', '-1'), context=f"line {origin_event.row_num}, allocation_id"
+            )
+            size_val = safe_convert_int(attr_dict.get('size', '-1'), context=f"line {origin_event.row_num}, size")
+            allocation_id = alloc_id_val if alloc_id_val is not None else -1
+            size = size_val if size_val is not None else -1
             access_type = attr_dict.get('type', "")
             api_id = -1
 

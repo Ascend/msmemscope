@@ -178,9 +178,13 @@ class LeaksAnalyzer(BaseAnalyzer):
         # 记录MALLOC事件
         if section1_start <= safe_convert_int(event_id) <= section1_end and event.get('Event') == 'MALLOC':
             alloc_addr = event.get('Ptr', '')
-            match = re.search(r'size:(\d+)', event.get('Attr', ''))  # 匹配 "size:数字"
+            # CSV短行缺失字段为None,统一按空串处理
+            attr = event.get('Attr') or ''
+            match = re.search(r'size:(\d+)', attr)  # 匹配 "size:数字"
             if match is None:
-                raise ValueError("input data may broken")
+                # Attr缺失/畸形时跳过该条记录,避免单条脏数据中断整个分析
+                print(f"WARNING: Malformed HAL MALLOC Attr for event {event_id}, this record will be skipped")
+                return
             alloc_size = safe_convert_int(match.group(1)) / BYTE_TO_MB  # 提取数字并转为整数
             allocations[event_id] = {"addr": alloc_addr, "size": alloc_size}
 
