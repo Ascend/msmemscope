@@ -84,7 +84,8 @@ void MstxManager::ReportMarkA(const char* msg, aclrtStream stream, MemScopeCommT
         return;
     }
 
-    std::string markMsg = std::string(msg);
+    // msg来自被插桩应用,可能为空,判空后按空串处理(与ReportDomainCreateA一致)
+    std::string markMsg = msg ? std::string(msg) : "";
     if (!EventReport::Instance(type).ReportMark(MarkType::MARK_A, markMsg, streamId, onlyMarkId_))
     {
         LOG_ERROR("Report Mark FAILED");
@@ -95,7 +96,8 @@ void MstxManager::ReportMarkA(const char* msg, aclrtStream stream, MemScopeCommT
 uint64_t MstxManager::ReportRangeStart(const char* msg, aclrtStream stream)
 {
     uint64_t rangeId = GetRangeId();
-    std::string markMsg = std::string(msg);
+    // msg来自被插桩应用,可能为空,判空后按空串处理(与ReportDomainCreateA一致)
+    std::string markMsg = msg ? std::string(msg) : "";
     int32_t streamId = -1;
     GetStreamID(stream, &streamId);
     if (!EventReport::Instance(MemScopeCommType::SHARED_MEMORY)
