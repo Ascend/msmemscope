@@ -718,6 +718,7 @@ void AttachController::RunInteractive()
         if (interrupted)
         {
             // 提示符态Ctrl-C:退出清理路径(退出码130由RunImpl按g_exitRequested裁决)
+            g_exitRequested = 1;
             std::cout << "Interrupted" << std::endl;
             return;
         }
@@ -809,6 +810,12 @@ void AttachController::RunInteractive()
             {
                 RefreshAnalyzerCache(analyzerResp);
             }
+        }
+        // 历史只保留下发成功(ok=true且完整往返)的命令:业务拒绝(ok=false)、
+        // 等待被打断/超时/断联(SendControl失败)、未知控制字/本地命令均不入
+        if (cmdOk)
+        {
+            LineEditor::AddHistory(line);
         }
     }
 }

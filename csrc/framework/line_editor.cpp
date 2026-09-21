@@ -24,6 +24,7 @@
 #include <cerrno>
 #include <csignal>
 #include <cstring>
+#include <deque>
 
 namespace MemScope
 {
@@ -34,6 +35,9 @@ constexpr size_t kMaxLineLen = 4096;
 std::string g_prompt = "msmemscope> ";  // 会话提示符(AttachController按pid注入)
 constexpr int kIdlePollMs = 200;        // 空闲tick:对端存活探针轮询周期
 constexpr int kPeerGoneCode = -2;       // 对端断联(区别于EOF/错误-1)
+constexpr size_t kMaxHistory = 3;       // 历史上限(只保留下发成功命令,最新在前)
+constexpr int kEscapeTimeoutMs = 100;   // ESC序列续读超时(裸ESC判定,不阻塞等待)
+std::deque<std::string> g_history;      // 会话级历史(AddHistory写入,上下键浏览)
 
 std::vector<std::string> g_dynamicAnalyzers;  // 懒加载缓存(AttachController注入provider时填充)
 
@@ -266,6 +270,25 @@ int DefaultReadChar()
 
 void DefaultWriteStr(const std::string& text) { (void)::write(STDOUT_FILENO, text.data(), text.size()); }
 
+// ESC序列续读(短超时kEscapeTimeoutMs):返回字符;-1=超时/EOF/错误(序列中止,
+// 整体丢弃)。独立于DefaultReadChar:后者空闲tick无限等待,裸ESC(无后续字节)
+// 走它会把输入挂住。
+int DefaultReadEscapeChar()
+{
+    struct pollfd pfd = {STDIN_FILENO, POLLIN, 0};
+    const int pr = ::poll(&pfd, 1, kEscapeTimeoutMs);
+    if (pr > 0 && (pfd.revents & POLLIN) != 0)
+    {
+        char c = 0;
+        const ssize_t n = ::read(STDIN_FILENO, &c, 1);
+        if (n == 1)
+        {
+            return static_cast<unsigned char>(c);
+        }
+    }
+    return -1;
+}
+
 // 输入流/输出流(测试缝;未注入时指向默认实现)
 std::function<int()>& GetReadCharFn()
 {
@@ -276,6 +299,13 @@ std::function<int()>& GetReadCharFn()
 std::function<void(const std::string&)>& GetWriteStrFn()
 {
     static std::function<void(const std::string&)> fn = &DefaultWriteStr;
+    return fn;
+}
+
+// ESC续读流(测试缝;未注入时指向默认实现)
+std::function<int()>& GetEscapeReadFn()
+{
+    static std::function<int()> fn = &DefaultReadEscapeChar;
     return fn;
 }
 
@@ -314,6 +344,42 @@ void LineEditor::SetIoForTest(ReadCharFn readFn, WriteStrFn writeFn)
     }
 }
 
+void LineEditor::SetEscapeReaderForTest(ReadEscapeFn fn)
+{
+    if (fn)
+    {
+        GetEscapeReadFn() = std::move(fn);
+    }
+    else
+    {
+        GetEscapeReadFn() = &DefaultReadEscapeChar;
+    }
+}
+
+void LineEditor::ClearHistoryLine() { g_history.clear(); }
+
+void LineEditor::AddHistory(const std::string& cmd)
+{
+    if (cmd.empty())
+    {
+        return;
+    }
+    // 全表去重(命中先删除,保证只留一份);插入队首;超上限淘汰最旧
+    for (auto it = g_history.begin(); it != g_history.end(); ++it)
+    {
+        if (*it == cmd)
+        {
+            g_history.erase(it);
+            break;
+        }
+    }
+    g_history.push_front(cmd);
+    if (g_history.size() > kMaxHistory)
+    {
+        g_history.pop_back();
+    }
+}
+
 void LineEditor::SetQuitFlagProvider(QuitFlagFn provider)
 {
     if (provider)
@@ -338,15 +404,17 @@ void LineEditor::SetPeerAliveProvider(PeerAliveFn provider)
     }
 }
 
-void LineEditor::RedrawLine(const std::string& line, const WriteStrFn& write)
+void LineEditor::RedrawLine(const std::string& line, size_t cursor, const WriteStrFn& write)
 {
-    // 简单重绘:回退到行首清行后重写(终端宽度内的行编辑,不做光标移动)
+    // 整行重绘:回退行首+清行+重写提示符与输入,再按绝对列定位光标
+    // (提示符与输入均为ASCII,显示列=字符数;列号=promptLen+cursor+1,1基)
     write("\r\x1b[K");
     write(g_prompt);
     write(line);
+    write("\x1b[" + std::to_string(g_prompt.size() + cursor + 1) + "G");
 }
 
-bool LineEditor::TryComplete(std::string& line, const WriteStrFn& write)
+bool LineEditor::TryComplete(std::string& line, size_t& cursor, const WriteStrFn& write)
 {
     const std::vector<std::string> candidates = CompletionTable::Complete(line);
     if (candidates.empty())
@@ -361,7 +429,8 @@ bool LineEditor::TryComplete(std::string& line, const WriteStrFn& write)
     {
         // 唯一候选:替换最后一个token
         line = lastSpace == std::string::npos ? candidates[0] : line.substr(0, lastSpace + 1) + candidates[0];
-        RedrawLine(line, write);
+        cursor = line.size();  // 补全后光标置行尾
+        RedrawLine(line, cursor, write);
         return true;
     }
     // 多候选:计算公共前缀,比当前输入长则扩展,否则列示候选
@@ -378,17 +447,18 @@ bool LineEditor::TryComplete(std::string& line, const WriteStrFn& write)
     if (common.size() > prefix.size())
     {
         line = lastSpace == std::string::npos ? common : line.substr(0, lastSpace + 1) + common;
-        RedrawLine(line, write);
+        cursor = line.size();
+        RedrawLine(line, cursor, write);
         return true;
     }
-    // 列示候选(每行一个)+ 重绘当前输入
+    // 列示候选(每行一个)+ 重绘当前输入(无文本变化,光标保持)
     write("\r\n");
     for (const std::string& c : candidates)
     {
         write(c + "  ");
     }
     write("\r\n");
-    RedrawLine(line, write);
+    RedrawLine(line, cursor, write);
     return false;
 }
 
@@ -400,6 +470,7 @@ bool LineEditor::ReadLine(std::string& line, bool* interrupted)
     }
     std::function<int()>& readChar = GetReadCharFn();
     std::function<void(const std::string&)>& write = GetWriteStrFn();
+    std::function<int()>& escapeRead = GetEscapeReadFn();
 
     // 仅tty路径进入raw mode;测试/非tty由调用方绕过
     TermiosGuard guard;
@@ -421,6 +492,12 @@ bool LineEditor::ReadLine(std::string& line, bool* interrupted)
     }
 
     line.clear();
+    // 行内光标(字符偏移0..len)与历史浏览状态(每次调用从编辑态开始:
+    // 进入历史前保存草稿,下键越过最新一条恢复草稿)
+    size_t cursor = 0;
+    std::string draft;
+    size_t histIndex = 0;
+    bool inHistory = false;
     write(g_prompt);
     for (;;)
     {
@@ -428,7 +505,7 @@ bool LineEditor::ReadLine(std::string& line, bool* interrupted)
         if (c == kPeerGoneCode)
         {
             // 对端断联提示已由探针打印:重绘当前行恢复输入编辑,继续等待
-            RedrawLine(line, write);
+            RedrawLine(line, cursor, write);
             continue;
         }
         if (c < 0)
@@ -446,24 +523,110 @@ bool LineEditor::ReadLine(std::string& line, bool* interrupted)
             write("\r\n");
             return true;
         }
-        if (c == 0x7f || c == 0x08)  // 退格
+        if (c == 0x7f || c == 0x08)  // 退格:删除光标前一字符
         {
-            if (!line.empty())
+            if (cursor > 0)
             {
-                line.pop_back();
-                RedrawLine(line, write);
+                line.erase(cursor - 1, 1);
+                --cursor;
+                RedrawLine(line, cursor, write);
             }
             continue;
         }
         if (c == '\t')  // 补全
         {
-            TryComplete(line, write);
+            TryComplete(line, cursor, write);
             continue;
+        }
+        if (c == 0x1b)  // ESC:方向键序列(CSI/SS3)或裸ESC(无绑定,丢弃)
+        {
+            const int b2 = escapeRead();  // 续读(短超时,超时/EOF=-1)
+            if (b2 == '[' || b2 == 'O')
+            {
+                const int b3 = escapeRead();
+                if (b3 == 'A' || b3 == 'B' || b3 == 'C' || b3 == 'D')
+                {
+                    // 上/下=历史浏览;左/右=光标移动
+                    if (b3 == 'A')  // 上:进入历史取最新,或向更旧移动(到底停)
+                    {
+                        if (g_history.empty())
+                        {
+                            write("\a");
+                        }
+                        else if (!inHistory)
+                        {
+                            draft = line;
+                            histIndex = 0;
+                            inHistory = true;
+                            line = g_history[0];
+                            cursor = line.size();
+                            RedrawLine(line, cursor, write);
+                        }
+                        else if (histIndex + 1 < g_history.size())
+                        {
+                            ++histIndex;
+                            line = g_history[histIndex];
+                            cursor = line.size();
+                            RedrawLine(line, cursor, write);
+                        }
+                        else
+                        {
+                            write("\a");  // 已到最旧:蜂鸣,不循环
+                        }
+                    }
+                    else if (b3 == 'B')  // 下:向新移动,越过最新一条恢复草稿
+                    {
+                        if (!inHistory)
+                        {
+                            write("\a");  // 编辑态无下可切
+                        }
+                        else if (histIndex > 0)
+                        {
+                            --histIndex;  // 向新移动(0=最新)
+                            line = g_history[histIndex];
+                            cursor = line.size();
+                            RedrawLine(line, cursor, write);
+                        }
+                        else
+                        {
+                            inHistory = false;
+                            line = draft;
+                            cursor = line.size();
+                            RedrawLine(line, cursor, write);
+                        }
+                    }
+                    else if (b3 == 'C')  // 右:光标右移(越界clamp)
+                    {
+                        if (cursor < line.size())
+                        {
+                            ++cursor;
+                            RedrawLine(line, cursor, write);
+                        }
+                    }
+                    else  // 'D' 左:光标左移(越界clamp)
+                    {
+                        if (cursor > 0)
+                        {
+                            --cursor;
+                            RedrawLine(line, cursor, write);
+                        }
+                    }
+                    continue;
+                }
+                // 其他CSI/SS3序列(Delete/Home等):消费到终结字节(0x40~0x7e)后整体丢弃
+                int bc = b3;
+                while (bc >= 0 && (bc < 0x40 || bc > 0x7e))
+                {
+                    bc = escapeRead();
+                }
+            }
+            continue;  // 裸ESC/未知序列:整体丢弃
         }
         if (c == 0x03)  // 提示符态Ctrl-C:中断退出(exit清理路径,退出130)
         {
             write("^C\r\n");
             line.clear();
+            cursor = 0;
             if (interrupted != nullptr)
             {
                 *interrupted = true;
@@ -488,8 +651,9 @@ bool LineEditor::ReadLine(std::string& line, bool* interrupted)
             write("\a");
             continue;
         }
-        line.push_back(static_cast<char>(c));
-        write(std::string(1, static_cast<char>(c)));
+        line.insert(cursor, 1, static_cast<char>(c));  // 光标处插入
+        ++cursor;
+        RedrawLine(line, cursor, write);
     }
 }
 
