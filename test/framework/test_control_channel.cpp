@@ -406,6 +406,7 @@ class LineEditorScriptedTest : public ::testing::Test
     {
         script_.clear();
         writes_.clear();
+        MemScope::LineEditor::ClearHistoryLine();
         MemScope::LineEditor::SetIoForTest(
             [this]() -> int
             {
@@ -416,11 +417,23 @@ class LineEditorScriptedTest : public ::testing::Test
                 return static_cast<int>(script_[pos_++]);
             },
             [this](const std::string& t) { writes_ += t; });
+        // ESC续读与主输入共用脚本流(方向键\x1b[A:首字节主读,续字节走本缝;
+        // 耗尽=-1=超时/序列中止)
+        MemScope::LineEditor::SetEscapeReaderForTest(
+            [this]() -> int
+            {
+                if (pos_ >= script_.size())
+                {
+                    return -1;
+                }
+                return static_cast<int>(script_[pos_++]);
+            });
     }
 
     void TearDown() override
     {
         MemScope::LineEditor::SetIoForTest([]() { return -1; }, [](const std::string&) {});
+        MemScope::LineEditor::SetEscapeReaderForTest(nullptr);
     }
 
     void Type(const std::string& chars) { script_ += chars; }
@@ -525,6 +538,133 @@ TEST_F(LineEditorScriptedTest, enter_commits)
     std::string line;
     EXPECT_TRUE(MemScope::LineEditor::ReadLine(line));
     EXPECT_EQ(line, "step");
+}
+
+// 左右键光标移动+行中插入: "ab"+左左+"X"→"Xab"
+TEST_F(LineEditorScriptedTest, left_arrow_moves_cursor_and_inserts)
+{
+    Type(std::string("ab") + "\x1b[D\x1b[D" + "X\r");
+    std::string line;
+    EXPECT_TRUE(MemScope::LineEditor::ReadLine(line));
+    EXPECT_EQ(line, "Xab");
+}
+
+// 退格删除光标前一字符: "ab"+左+退格→"b"(删除的是光标前字符)
+TEST_F(LineEditorScriptedTest, backspace_at_cursor)
+{
+    Type(std::string("ab") + "\x1b[D" + "\x7f\r");
+    std::string line;
+    EXPECT_TRUE(MemScope::LineEditor::ReadLine(line));
+    EXPECT_EQ(line, "b");
+}
+
+// 光标越界clamp:行首再按左/行尾再按右均无变化
+TEST_F(LineEditorScriptedTest, arrow_clamps_at_bounds)
+{
+    Type("a" + std::string("\x1b[D\x1b[D") + "X" + std::string("\x1b[C\x1b[C") + "Y\r");
+    std::string line;
+    EXPECT_TRUE(MemScope::LineEditor::ReadLine(line));
+    EXPECT_EQ(line, "XaY");
+}
+
+// 裸ESC(续读耗尽):整体丢弃,不影响后续输入(中途EOF提交当前行)
+TEST_F(LineEditorScriptedTest, bare_esc_discarded)
+{
+    Type("ab\x1b");
+    std::string line;
+    EXPECT_TRUE(MemScope::LineEditor::ReadLine(line));
+    EXPECT_EQ(line, "ab");
+}
+
+// 未知CSI序列(Delete键\x1b[3~):整体消费丢弃,'~'不残留为输入
+TEST_F(LineEditorScriptedTest, unknown_csi_sequence_discarded)
+{
+    Type(std::string("ab") + "\x1b[3~" + "c\r");
+    std::string line;
+    EXPECT_TRUE(MemScope::LineEditor::ReadLine(line));
+    EXPECT_EQ(line, "abc");
+}
+
+// 上键:从编辑态进入历史取最新一条
+TEST_F(LineEditorScriptedTest, history_up_recalls_newest)
+{
+    MemScope::LineEditor::AddHistory("start");
+    MemScope::LineEditor::AddHistory("stop");
+    Type("\x1b[A\r");
+    std::string line;
+    EXPECT_TRUE(MemScope::LineEditor::ReadLine(line));
+    EXPECT_EQ(line, "stop");
+}
+
+// 上键连按:向更旧移动,到最旧停住不循环(蜂鸣)
+TEST_F(LineEditorScriptedTest, history_up_oldest_stops)
+{
+    MemScope::LineEditor::AddHistory("start");
+    MemScope::LineEditor::AddHistory("stop");
+    Type("\x1b[A\x1b[A\x1b[A\r");
+    std::string line;
+    EXPECT_TRUE(MemScope::LineEditor::ReadLine(line));
+    EXPECT_EQ(line, "start");
+    EXPECT_NE(writes_.find("\a"), std::string::npos);  // 到底蜂鸣
+}
+
+// 下键:越过最新一条恢复进入历史前的草稿
+TEST_F(LineEditorScriptedTest, history_down_restores_draft)
+{
+    MemScope::LineEditor::AddHistory("start");
+    Type("mycmd" + std::string("\x1b[A\x1b[B") + "\r");
+    std::string line;
+    EXPECT_TRUE(MemScope::LineEditor::ReadLine(line));
+    EXPECT_EQ(line, "mycmd");
+}
+
+// 下键:向新移动(回归:曾用++histIndex+size条件,从最旧按下键直接跳草稿)
+TEST_F(LineEditorScriptedTest, history_down_moves_newer)
+{
+    MemScope::LineEditor::AddHistory("a");
+    MemScope::LineEditor::AddHistory("b");
+    MemScope::LineEditor::AddHistory("c");  // 期望序列:c(新)→b→a(旧)
+    Type(std::string("\x1b[A\x1b[A\x1b[A\x1b[B") + "\r");  // 到最旧再下:应回"b"而非空白
+    std::string line;
+    EXPECT_TRUE(MemScope::LineEditor::ReadLine(line));
+    EXPECT_EQ(line, "b");
+}
+
+// 下键:多历史时,最新一条处按下次键才恢复草稿(不落到更旧条目)
+TEST_F(LineEditorScriptedTest, history_down_restores_draft_from_newest)
+{
+    MemScope::LineEditor::AddHistory("a");
+    MemScope::LineEditor::AddHistory("b");
+    MemScope::LineEditor::AddHistory("c");
+    Type("x" + std::string("\x1b[A\x1b[B") + "\r");  // 上到"c"(最新),下恢复草稿"x"
+    std::string line;
+    EXPECT_TRUE(MemScope::LineEditor::ReadLine(line));
+    EXPECT_EQ(line, "x");
+}
+
+// 空历史上键:蜂鸣,输入不变
+TEST_F(LineEditorScriptedTest, history_empty_up_bells)
+{
+    Type("x" + std::string("\x1b[A") + "\r");
+    std::string line;
+    EXPECT_TRUE(MemScope::LineEditor::ReadLine(line));
+    EXPECT_EQ(line, "x");
+    EXPECT_NE(writes_.find("\a"), std::string::npos);
+}
+
+// 历史:全表去重(命中移到队首)+上限3条淘汰最旧
+TEST_F(LineEditorScriptedTest, history_dedup_and_cap)
+{
+    MemScope::LineEditor::AddHistory("a");
+    MemScope::LineEditor::AddHistory("b");
+    MemScope::LineEditor::AddHistory("c");
+    MemScope::LineEditor::AddHistory("b");  // 命中:移到队首
+    MemScope::LineEditor::AddHistory("d");  // 超3:淘汰最旧
+    // 期望序列:d→b→c(最旧)
+    Type("\x1b[A\x1b[A\x1b[A\r");
+    std::string line;
+    EXPECT_TRUE(MemScope::LineEditor::ReadLine(line));
+    EXPECT_EQ(line, "c");
 }
 
 }  // namespace
