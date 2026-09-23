@@ -311,74 +311,108 @@ create_set_env_script() {
 # msmemscope environment setup script
 # This script sets up PYTHONPATH and PATH for msmemscope
 
-# Get the directory where this script is located
-SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+# Get the directory where this script is located:
+# - bash (sourced or executed): BASH_SOURCE[0] is the script path
+# - other shells (e.g. zsh): BASH_SOURCE is unset, fall back to $0, which
+#   points to the sourced script while sourcing (FUNCTION_ARGZERO is on
+#   by default in zsh; a wrong fallback result is caught later by the
+#   version.txt check in msmemscope_setup_env)
+_SCRIPT_SELF="${BASH_SOURCE:-$0}"
+SCRIPT_DIR=$(cd "$(dirname "$_SCRIPT_SELF")" && pwd)
+unset _SCRIPT_SELF
 
 echo "Setting up msmemscope environment..."
 
-# FORCE msmemscope paths to be at the front
+msmemscope_filter_paths() {
+    # Drop entries containing "msmemscope" from a colon-separated list
+    local value="$1"
+    local filtered=""
+    local rest="$value"
+    local entry=""
+    while [ -n "$rest" ]; do
+        entry="${rest%%:*}"
+        case "$entry" in
+            *msmemscope*) ;;
+            *) filtered="${filtered:+$filtered:}$entry" ;;
+        esac
+        if [ "$rest" = "${rest#*:}" ]; then
+            break
+        fi
+        rest="${rest#*:}"
+    done
+    printf '%s' "$filtered"
+}
 
-# For PYTHONPATH: remove any existing instances and add to front
-if [ -d "$SCRIPT_DIR/python" ]; then
-    # Remove all occurrences of msmemscope python paths
-    local new_pythonpath=""
-    if [ -n "$PYTHONPATH" ]; then
-        # Split by colon and filter out msmemscope paths
-        IFS=':' read -ra paths <<< "$PYTHONPATH"
-        for path in "${paths[@]}"; do
-            if [[ "$path" != *"msmemscope"* ]]; then
-                if [ -z "$new_pythonpath" ]; then
-                    new_pythonpath="$path"
-                else
-                    new_pythonpath="$new_pythonpath:$path"
-                fi
-            fi
-        done
+msmemscope_setup_env() {
+    # Fail loudly when the script cannot be located in a valid installation,
+    # instead of silently modifying the environment with a wrong directory.
+    # version.txt ships unconditionally in the installation root next to this
+    # script (the installer's own marker of a valid installation directory);
+    # checking it also catches shells where self-location fell back to the
+    # current working directory (e.g. zsh with FUNCTION_ARGZERO off, or POSIX
+    # shells dot-sourcing this script).
+    if [ ! -f "$SCRIPT_DIR/version.txt" ]; then
+        echo "[msmemscope]: ERROR: cannot locate the msmemscope installation directory (resolved to: $SCRIPT_DIR)." >&2
+        echo "[msmemscope]: Please source the set_env.sh from the installation location:" >&2
+        echo "[msmemscope]:     source <install-path>/msmemscope/set_env.sh" >&2
+        return 1
     fi
 
-    # Add msmemscope python path at the very beginning
-    if [ -z "$new_pythonpath" ]; then
-        export PYTHONPATH="$SCRIPT_DIR/python"
-    else
-        export PYTHONPATH="$SCRIPT_DIR/python:$new_pythonpath"
+    if [ ! -d "$SCRIPT_DIR/python" ] && [ ! -d "$SCRIPT_DIR/bin" ]; then
+        echo "[msmemscope]: ERROR: $SCRIPT_DIR is not a valid msmemscope installation directory (python/ or bin/ not found)." >&2
+        echo "[msmemscope]: Please source the set_env.sh from the installation location:" >&2
+        echo "[msmemscope]:     source <install-path>/msmemscope/set_env.sh" >&2
+        return 1
     fi
-    echo "✓ Added to PYTHONPATH (forced to front): $SCRIPT_DIR/python"
+
+    # FORCE msmemscope paths to be at the front
+
+    # For PYTHONPATH: remove any existing instances and add to front
+    if [ -d "$SCRIPT_DIR/python" ]; then
+        local new_pythonpath="$(msmemscope_filter_paths "${PYTHONPATH:-}")"
+
+        # Add msmemscope python path at the very beginning
+        if [ -z "$new_pythonpath" ]; then
+            export PYTHONPATH="$SCRIPT_DIR/python"
+        else
+            export PYTHONPATH="$SCRIPT_DIR/python:$new_pythonpath"
+        fi
+        echo "✓ Added to PYTHONPATH (forced to front): $SCRIPT_DIR/python"
+    fi
+
+    # For PATH: remove any existing instances and add to front
+    if [ -d "$SCRIPT_DIR/bin" ]; then
+        local new_path="$(msmemscope_filter_paths "${PATH:-}")"
+
+        # Add msmemscope bin path at the very beginning
+        if [ -z "$new_path" ]; then
+            export PATH="$SCRIPT_DIR/bin"
+        else
+            export PATH="$SCRIPT_DIR/bin:$new_path"
+        fi
+        echo "✓ Added to PATH (forced to front): $SCRIPT_DIR/bin"
+    fi
+}
+
+msmemscope_setup_env
+_setup_status=$?
+unset -f msmemscope_filter_paths msmemscope_setup_env
+
+# Propagate failure without killing the caller's shell:
+# "return" applies when sourced, "exit" is the fallback for direct execution
+if [ "$_setup_status" -ne 0 ]; then
+    unset _setup_status
+    return 1 2>/dev/null || exit 1
 fi
-
-# For PATH: remove any existing instances and add to front
-if [ -d "$SCRIPT_DIR/bin" ]; then
-    # Remove all occurrences of msmemscope bin paths
-    local new_path=""
-    if [ -n "$PATH" ]; then
-        # Split by colon and filter out msmemscope paths
-        IFS=':' read -ra paths <<< "$PATH"
-        for path in "${paths[@]}"; do
-            if [[ "$path" != *"msmemscope"* ]]; then
-                if [ -z "$new_path" ]; then
-                    new_path="$path"
-                else
-                    new_path="$new_path:$path"
-                fi
-            fi
-        done
-    fi
-
-    # Add msmemscope bin path at the very beginning
-    if [ -z "$new_path" ]; then
-        export PATH="$SCRIPT_DIR/bin"
-    else
-        export PATH="$SCRIPT_DIR/bin:$new_path"
-    fi
-    echo "✓ Added to PATH (forced to front): $SCRIPT_DIR/bin"
-fi
+unset _setup_status
 
 echo "msmemscope environment setup completed"
 
 # Verification
 echo ""
 echo "Environment verification:"
-echo "PYTHONPATH starts with: $(echo $PYTHONPATH | cut -d: -f1)"
-echo "PATH starts with: $(echo $PATH | cut -d: -f1)"
+echo "PYTHONPATH starts with: $(echo "${PYTHONPATH:-}" | cut -d: -f1)"
+echo "PATH starts with: $(echo "${PATH:-}" | cut -d: -f1)"
 SETENV_EOF
 
     log_info "Environment setup script created: $set_env_script"
