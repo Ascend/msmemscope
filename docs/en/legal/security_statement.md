@@ -2,6 +2,10 @@
 
 Before using the tool, read the following security instructions carefully to prevent potential risks.
 
+## System Security Hardening
+
+  This repository provides VS Code and devcontainer configurations for development and debugging. Use them only to develop and debug this repository in a secure debugging environment. Review the configuration security and adjust it to your actual requirements.
+
 ## Installation and Usage Constraints
 
   msMemScope is a development and debugging tool and should not be used in the production environment.
