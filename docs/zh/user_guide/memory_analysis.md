@@ -155,14 +155,14 @@ Host堆内存泄漏检测与显存（Device侧）内存泄漏分析相互独立�
 
     ```python
     import msmemscope
-    # 配置使能: analysis中包含host-leaks为开窗前提(可随时调整host_leak_mode等参数)
+    # 配置使能: analysis中包含host-leaks为开窗前提(host_leak_mode等参数调整需在窗口关闭后进行)
     msmemscope.config(analysis=["host-leaks"], host_leak_mode="summary", block_size_threshold="1024")
     msmemscope.start()          # 开窗: 开始检测区间
     # ... 训练若干step ...
     msmemscope.stop()           # 关窗: 结束检测区间,闭窗聚合输出报告
     ```
 
-    每对`start()`/`stop()`对应一个检测窗口，输出一份概览报告（窗口序号递增）；检测期间也可随时下发`config(analysis=[])`停止检测并闭窗。
+    每对`start()`/`stop()`对应一个检测窗口，输出一份概览报告（窗口序号递增）。检测窗口开启期间（`start()`后、`stop()`前），`config()`调用不生效并打印warning提示；如需调整检测参数，请先`stop()`闭窗，调整后重新`start()`开启新窗口。
 
     > [!NOTE]
     >
