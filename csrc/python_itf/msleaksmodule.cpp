@@ -19,6 +19,7 @@
 
 #include <cstdlib>
 #include <cstring>
+#include <iostream>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -129,6 +130,8 @@ PyDoc_STRVAR(ConfigDoc,
              "    - watch: Watch mode, start[:outid],end[,full-content]\n"
              "    - format: Output file format, csv | db\n"
              "    - output_path: Output directory [default: ./memscopeDumpResults]\n\n"
+             "Notes:\n"
+             "    config() is ignored while tracing is in progress (after start()); stop first.\n\n"
              "Examples:\n"
              "    msmemscope.config(call_stack=\"c:10,python:5\", level=\"op\", format=\"db\", "
              "output_path=\"./output\")\n"
@@ -136,6 +139,13 @@ PyDoc_STRVAR(ConfigDoc,
              "block_size_threshold=\"1024\")");
 static PyObject* MsmemscopeConfig(PyObject* self, PyObject* args, PyObject* kwargs)
 {
+    // 与控制通道set config同源的stop-only门控:start(追踪窗口开启)期间配置变更会
+    // 与在途采集状态冲突,本次调用不生效并提示先stop
+    if (EventTraceManager::Instance().IsTracingEnabled())
+    {
+        std::cout << "[msmemscope] Warn: config ignored: tracing in progress (stop first)." << std::endl;
+        Py_RETURN_NONE;
+    }
     if (PyTuple_Size(args) > 0)
     {
         PyErr_SetString(PyExc_TypeError, "config() takes no positional arguments");
