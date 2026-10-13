@@ -1,5 +1,23 @@
+# -------------------------------------------------------------------------
+# This file is part of the MindStudio project.
+# Copyright (c) 2026 Huawei Technologies Co.,Ltd.
+#
+# MindStudio is licensed under Mulan PSL v2.
+# You can use this software according to the terms and conditions of the Mulan PSL v2.
+# You may obtain a copy of Mulan PSL v2 at:
+#
+#          http://license.coscl.org.cn/MulanPSL2
+#
+# THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND,
+# EITHER EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT,
+# MERCHANTABILITY OR FIT FOR A PARTICULAR PURPOSE.
+# See the Mulan PSL v2 for more details.
+# -------------------------------------------------------------------------
+
+# pylint: disable=redefined-builtin
 import os
 import sys
+
 # 确保可以导入项目模块
 sys.path.append(os.path.abspath('.'))
 
@@ -31,14 +49,14 @@ language = 'zh_CN'
 
 # 3. 添加必要扩展（支持 Markdown、代码高亮、目录生成等）
 extensions = [
-    'sphinx.ext.autodoc',    # 自动生成代码文档
-    'sphinx.ext.napoleon',   # 支持 Google/Numpy 风格的注释
-    'myst_parser',           # 支持 Markdown 文件
-    'sphinx.ext.todo',       # 支持 TODO 标记
-    'sphinx.ext.intersphinx', # 支持跨文档引用
-    'sphinx.ext.imgconverter', # 支持图片格式转换
-    'sphinx.ext.mathjax',    # 支持数学公式
-    'sphinx.ext.viewcode',   # 查看代码源文件
+    'sphinx.ext.autodoc',  # 自动生成代码文档
+    'sphinx.ext.napoleon',  # 支持 Google/Numpy 风格的注释
+    'myst_parser',  # 支持 Markdown 文件
+    'sphinx.ext.todo',  # 支持 TODO 标记
+    'sphinx.ext.intersphinx',  # 支持跨文档引用
+    'sphinx.ext.imgconverter',  # 支持图片格式转换
+    'sphinx.ext.mathjax',  # 支持数学公式
+    'sphinx.ext.viewcode',  # 查看代码源文件
 ]
 
 # 4. 若使用 Markdown，需指定源文件后缀
@@ -59,9 +77,9 @@ myst_enable_extensions = [
     'linkify',
     'html_image',
     'smartquotes',
-    'dollarmath',            # 支持 $ 分隔的数学公式
-    'html_admonition',       # 支持 HTML 警告框
-    'replacements',          # 支持文本替换
+    'dollarmath',  # 支持 $ 分隔的数学公式
+    'html_admonition',  # 支持 HTML 警告框
+    'replacements',  # 支持文本替换
 ]
 
 # （可选）配置 Mermaid 输出格式
@@ -70,9 +88,9 @@ myst_mermaid_output_format = 'svg'  # 或 'png'
 # 添加以下配置来解决Pygments无法识别mermaid的问题
 # 忽略Pygments无法识别mermaid的警告
 suppress_warnings = [
-    'myst.xref_missing',     # 忽略交叉引用丢失的警告
-    'myst.header',           # 忽略标题格式警告
-    'misc.highlighting_failure', # 忽略语法高亮失败的警告
+    'myst.xref_missing',  # 忽略交叉引用丢失的警告
+    'myst.header',  # 忽略标题格式警告
+    'misc.highlighting_failure',  # 忽略语法高亮失败的警告
 ]
 
 # 添加交叉引用支持
@@ -85,9 +103,9 @@ myst_dmath_double_inline = True
 
 # 忽略特定的警告
 suppress_warnings = [
-    'myst.xref_missing',     # 忽略交叉引用丢失的警告
-    'myst.header',           # 忽略标题格式警告
-    'misc.highlighting_failure', # 忽略语法高亮失败的警告
+    'myst.xref_missing',  # 忽略交叉引用丢失的警告
+    'myst.header',  # 忽略标题格式警告
+    'misc.highlighting_failure',  # 忽略语法高亮失败的警告
 ]
 
 # 8. 添加静态文件路径配置
@@ -98,10 +116,11 @@ html_static_path = ['_static']
 html_sidebars = {
     '**': [
         'localtoc.html',  # 当前页面的目录
-        'relations.html', # 上一篇/下一篇导航
-        'searchbox.html', # 搜索框
+        'relations.html',  # 上一篇/下一篇导航
+        'searchbox.html',  # 搜索框
     ]
 }
+
 
 # 9. 解决中文路径问题
 # 确保路径正确编码
