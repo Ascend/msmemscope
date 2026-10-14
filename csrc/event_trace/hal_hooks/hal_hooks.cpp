@@ -31,6 +31,23 @@
 
 using namespace MemScope;
 
+namespace
+{
+// 解析驱动侧真函数，入参为驱动符号名（调用方传 __func__，与钩子名一致）：
+// 优先查找拼接 *Inner 尾缀后的符号（仅导出 Inner 实现的驱动包），找不到再取 RTLD_NEXT
+// 同名符号——本 so 经 LD_PRELOAD 位于全局查找序首位，命中的即驱动库实现。
+void *ResolveDriverSymbol(const char *name)
+{
+    std::string innerName = std::string(name) + "Inner";
+    void *func = dlsym(RTLD_DEFAULT, innerName.c_str());
+    if (func == nullptr)
+    {
+        func = dlsym(RTLD_NEXT, name);
+    }
+    return func;
+}
+}  // namespace
+
 // 通用OOM错误处理函数
 void HandleOOM(size_t size, uint64_t flag, int ret, const char *funcName)
 {
@@ -100,15 +117,15 @@ void HandleOOM(size_t size, uint64_t flag, int ret, const char *funcName)
 
 drvError_t halMemAlloc(void **pp, unsigned long long size, unsigned long long flag)
 {
-    static auto inner_func =
+    static auto driver_func =
         reinterpret_cast<drvError_t (*)(void **pp, unsigned long long size, unsigned long long flag)>(
-            dlsym(RTLD_DEFAULT, "halMemAllocInner"));
-    if (inner_func == nullptr)
+            ResolveDriverSymbol(__func__));
+    if (driver_func == nullptr)
     {
         LOG_ERROR("HAL memory alloc func not found");
         return DRV_ERROR_NOT_SUPPORT;
     }
-    drvError_t ret = inner_func(pp, size, flag);
+    drvError_t ret = driver_func(pp, size, flag);
     if (ret != DRV_ERROR_NONE)
     {
         // Check for OOM errors
@@ -153,13 +170,13 @@ drvError_t halMemAlloc(void **pp, unsigned long long size, unsigned long long fl
 
 drvError_t halMemFree(void *pp)
 {
-    static auto inner_func = reinterpret_cast<drvError_t (*)(void *pp)>(dlsym(RTLD_DEFAULT, "halMemFreeInner"));
-    if (inner_func == nullptr)
+    static auto driver_func = reinterpret_cast<drvError_t (*)(void *pp)>(ResolveDriverSymbol(__func__));
+    if (driver_func == nullptr)
     {
         LOG_ERROR("HAL memory free func not found");
         return DRV_ERROR_NOT_SUPPORT;
     }
-    drvError_t ret = inner_func(pp);
+    drvError_t ret = driver_func(pp);
     if (ret != DRV_ERROR_NONE)
     {
         return ret;
@@ -197,31 +214,19 @@ drvError_t halMemFree(void *pp)
 
 drvError_t halMemCreate(drv_mem_handle_t **handle, size_t size, const struct drv_mem_prop *prop, uint64_t flag)
 {
-    static auto inner_func =
+    static auto driver_func =
         reinterpret_cast<drvError_t (*)(drv_mem_handle_t **, size_t, const struct drv_mem_prop *, uint64_t)>(
-            dlsym(RTLD_DEFAULT, "halMemCreateInner"));
+            ResolveDriverSymbol(__func__));
 
     drvError_t ret = DRV_ERROR_NONE;
 
-    if (inner_func)
+    if (driver_func == nullptr)
     {
-        // 驱动新包，含有halMemCreateInner实现
-        ret = inner_func(handle, size, prop, flag);
+        ret = DRV_ERROR_RESERVED;
     }
     else
     {
-        // 老驱动包：查找原始halMemCreate
-        static auto original_func =
-            reinterpret_cast<drvError_t (*)(drv_mem_handle_t **, size_t, const struct drv_mem_prop *, uint64_t)>(
-                dlsym(RTLD_NEXT, "halMemCreate"));
-        if (original_func == nullptr)
-        {
-            ret = DRV_ERROR_RESERVED;
-        }
-        else
-        {
-            ret = original_func(handle, size, prop, flag);
-        }
+        ret = driver_func(handle, size, prop, flag);
     }
 
     if (ret != DRV_ERROR_NONE)
@@ -286,29 +291,17 @@ drvError_t halMemCreate(drv_mem_handle_t **handle, size_t size, const struct drv
 
 drvError_t halMemRelease(drv_mem_handle_t *handle)
 {
-    static auto inner_func =
-        reinterpret_cast<drvError_t (*)(drv_mem_handle_t *)>(dlsym(RTLD_DEFAULT, "halMemReleaseInner"));
+    static auto driver_func = reinterpret_cast<drvError_t (*)(drv_mem_handle_t *)>(ResolveDriverSymbol(__func__));
 
     drvError_t ret = DRV_ERROR_NONE;
 
-    if (inner_func)
+    if (driver_func == nullptr)
     {
-        // 驱动新包，含有halMemReleaseInner实现
-        ret = inner_func(handle);
+        ret = DRV_ERROR_RESERVED;
     }
     else
     {
-        // 老驱动包：查找原始halMemRelease
-        static auto original_func =
-            reinterpret_cast<drvError_t (*)(drv_mem_handle_t *)>(dlsym(RTLD_NEXT, "halMemRelease"));
-        if (original_func == nullptr)
-        {
-            ret = DRV_ERROR_RESERVED;
-        }
-        else
-        {
-            ret = original_func(handle);
-        }
+        ret = driver_func(handle);
     }
 
     if (ret != DRV_ERROR_NONE)
