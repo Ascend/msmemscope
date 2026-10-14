@@ -57,10 +57,10 @@ TEST(HalHooksTest, HalMemCreate)
     EXPECT_EQ(result, DRV_ERROR_RESERVED);
 }
  
-TEST(HalHooksTest, halMemReleaseInner)
+TEST(HalHooksTest, HalMemRelease)
 {
     drv_mem_handle_t* ptr = nullptr;
- 
+
     drvError_t result = halMemRelease(ptr);
     EXPECT_EQ(result, DRV_ERROR_RESERVED);
 }
