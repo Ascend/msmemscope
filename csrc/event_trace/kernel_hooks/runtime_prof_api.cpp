@@ -75,6 +75,7 @@ uint64_t GetHashIdCallBackImply(const char *hashInfo, size_t len)
 }
 
 int32_t ApiReporterCallbackImpl(uint32_t agingFlag, const MsprofApi *const data) { return 0; }
+int32_t AdditionalInfoCallbackImpl(uint32_t agingFlag, const void *data, uint32_t len) { return 0; }
 
 void RegisterRtProfileCallback()
 {
@@ -82,6 +83,7 @@ void RegisterRtProfileCallback()
         {PROFILE_REPORT_GET_HASH_ID_C_CALLBACK, reinterpret_cast<void *>(GetHashIdCallBackImply)},
         {PROFILE_REPORT_COMPACT_CALLBACK, reinterpret_cast<void *>(CompactInfoReporterCallbackImpl)},
         {PROFILE_REPORT_API_C_CALLBACK, reinterpret_cast<void *>(ApiReporterCallbackImpl)},
+        {PROFILE_REPORT_ADDITIONAL_CALLBACK, reinterpret_cast<void *>(AdditionalInfoCallbackImpl)},
     };
 
     using RegisterFunc = int32_t (*)(int32_t, void *, uint32_t);
