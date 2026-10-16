@@ -1,14 +1,12 @@
-<!-- md-trans-meta sourceCommit=a2aca8c3ac20e718c319455802fdec0753d15b04 translatedAt=2026-08-10T02:08:22.150Z pushedAt=2026-08-10T02:11:41.914Z -->
-
 <h1 align="center">MindStudio MemScope</h1>
 
 <div align="center">
 <p><b><span style="font-size:24px;">Ascend AI Memory Debugging and Tuning Tool</span></b></p>
 
  [![Quick Start](https://badgen.net/badge/Quick%20Start/QuickStart/blue)](./docs/en/quick_start/quick_start.md)
- [![AI Q&A (DeepWiki)](https://badgen.net/badge/AI%20Q&A/DeepWiki/blue)](https://deepwiki.com/mindstudio-docs/master)
- [![AI Q&A (ZRead)](https://badgen.net/badge/AI%20Q&A/ZRead/blue)](https://zread.ai/mindstudio-docs/master)
- [![Exact Search](https://badgen.net/badge/Exact%20Search/ReadTheDocs/blue)](https://mindstudio-docs-master.readthedocs.io)
+ [![AI Q&A (DeepWiki)](https://badgen.net/badge/AI%20Q&A/DeepWiki/blue)](https://deepwiki.com/mindstudio-docs/26.2.0)
+ [![AI Q&A (ZRead)](https://badgen.net/badge/AI%20Q&A/ZRead/blue)](https://zread.ai/mindstudio-docs/26.2.0)
+ [![Exact Search](https://badgen.net/badge/Exact%20Search/ReadTheDocs/blue)](https://mindstudio-docs-26.2.0.readthedocs.io)
  [![Ascend Community](https://badgen.net/badge/Ascend%20Community/Community/blue)](https://www.hiascend.com/cn/developer/software/mindstudio)
  [![Report Issues](https://badgen.net/badge/Report%20Issues/Issues/blue)](https://gitcode.com/Ascend/msmemscope/issues/new)
 
@@ -50,10 +48,10 @@ msMemScope provides two major features: memory collection and memory analysis.
   <tbody>
     <!-- Memory collection -->
     <tr>
-      <td rowspan="2">        
+      <td rowspan="2">
         <a href="./docs/en/user_guide/memory_profile.md">Memory collection</a>
       </td>
-      <td rowspan="2">        
+      <td rowspan="2">
       msMemScope supports memory event collection capabilities, allowing users to customize the memory collection scope and collection items, thereby supplying raw data for subsequent analysis.
       </td>
       <td>Collection via Python APIs</td>
@@ -63,12 +61,12 @@ msMemScope provides two major features: memory collection and memory analysis.
       <td>Collection via CLI</td>
       <td>This mode supports information collection via command line, facilitating memory event collection and memory analysis in non-Python scenarios.</td>
     </tr>
-     <!-- Memory analysis -->   
+     <!-- Memory analysis -->
     <tr>
-      <td rowspan="5">        
+      <td rowspan="5">
       <a href="./docs/en/user_guide/memory_analysis.md">Memory analysis</a>
       </td>
-      <td rowspan="5">        
+      <td rowspan="5">
         Based on the collected memory data, msMemScope provides five analysis capabilities: leak detection, comparison, monitoring, decomposition, and identification of inefficient memory, helping developers quickly diagnose and optimize memory issues.
       </td>
       <td>Memory leak analysis</td>
@@ -95,11 +93,11 @@ msMemScope provides two major features: memory collection and memory analysis.
 
 ## 🚀 Getting Started
 
-*[msMemScope Quick Start](./docs/en/quick_start/quick_start.md)* is designed to help users quickly become familiar with how to use msMemScope.
+*[msMemScope Quick Start](./docs/en/quick_start/quick_start.md)* is designed to help users quickly become familiar with how to use msMemScope via a simple PyTorch script.
 
 ## 📦 Installation Guide
 
-msMemScope can be installed using a package or from source. Choose the appropriate installation method based on your actual needs. For details, see *[msMemScope Installation Guide](./docs/en/install_guide/install_guide.md)*.
+msMemScope can be installed online, offline, or from source. Choose the appropriate installation method based on your actual needs. For details, see *[msMemScope Installation Guide](./docs/en/install_guide/install_guide.md)*.
 
 msMemScope currently supports memory collection for CANN, Ascend for PyTorch, MindSpore, and Aten operator. The supported versions are listed in the following table.
 
@@ -131,14 +129,14 @@ Welcome to contribute to this project. Please read *[Contribution Guide](./docs/
 To improve document search efficiency, we provide:
 
 - **[Exact Search (ReadTheDocs)](https://mindstudio-operator-tools-docs.readthedocs.io/zh-cn/latest/)**: Millisecond-level structured search across all the documents, enabling precise access to underlying configurations and API details
-- **[AI Q&A (DeepWiki)](https://deepwiki.com/mindstudio-docs/master)**: A context-based AI assistant that delivers responses in seconds through natural language queries
+- **[AI Q&A (DeepWiki)](https://deepwiki.com/mindstudio-docs/26.2.0)**: A context-based AI assistant that delivers responses in seconds through natural language queries
 
 ## ⚖️ Related Notes
 
-🔹 *[Release Notes](https://gitcode.com/Ascend/msmemscope/releases)*
-🔹 *[License Notice](./docs/en/legal/license_notice.md)*
-🔹 *[Security Statement](./docs/en/legal/security_statement.md)*
-🔹 *[Disclaimer](./docs/en/legal/disclaimer.md)*
+🔹 *[Release Notes](https://gitcode.com/Ascend/msmemscope/releases)*<br>
+🔹 *[License Notice](./docs/en/legal/license_notice.md)*<br>
+🔹 *[Security Statement](./docs/en/legal/security_statement.md)*<br>
+🔹 *[Disclaimer](./docs/en/legal/disclaimer.md)*<br>
 
 ## 🤝 Suggestions and Communication
 

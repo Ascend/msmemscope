@@ -1,7 +1,5 @@
 # Basic Cases
 
-<!-- md-trans-meta sourceCommit=00da2ad13c99c17f86963b267badaba231ff7b0a translatedAt=2026-08-10T03:17:42.534Z pushedAt=2026-08-10T03:19:04.535Z -->
-
 <br>
 
 ## 1. Memory Leak
@@ -20,7 +18,7 @@
         events="alloc,free,launch",
         level="op",
         analysis="leaks",
-        output="./output"
+        output_path="./output"
     )
 
     msmemscope.start()
@@ -71,19 +69,19 @@
 2. Collect data from the first step (using `Step 2` as an example).
 
     ```shell
-    msmemscope --events=alloc,free --level=kernel --steps=2 --output=./output/step2 python train.py
+    msmemscope --events=alloc,free --level=kernel --steps=2 --output-path=./output/step2 python train.py
     ```
 
 3. Collect data from the second step (using `Step 5` as an example).
 
     ```shell
-    msmemscope --events=alloc,free --level=kernel --steps=5 --output=./output/step5 python train.py
+    msmemscope --events=alloc,free --level=kernel --steps=5 --output-path=./output/step5 python train.py
     ```
 
-4. Execute the `comparison` command to compare the memory usage differences between the two steps.
+4. Run the `comparison` command to compare the memory usage differences between the two steps.
 
     ```shell
-    msmemscope --compare --input=./output/step2,./output/step5 --level=kernel
+    msmemscope --compare --input-path=./output/step2,./output/step5 --level=kernel
     ```
 
 5. The comparison results are output to the `memscopeDumpResults/compare/` directory, with `memory_compare_{timestamp}.csv` generated. Refer to the "Memory Comparison" in [*msMemScope User Guide*](../user_guide/memory_analysis.md) to analyze the differences.
@@ -152,8 +150,8 @@
     msmemscope.config(
         events="alloc,free",
         analysis="decompose",
-        data_format="csv",
-        output="./output"
+        format="csv",
+        output_path="./output"
     )
 
     msmemscope.start()
@@ -234,7 +232,7 @@
 
 ### 5.2 Example Description
 
-- The above script constructs two types of inefficient memory scenarios:
+- The preceding script constructs two types of inefficient memory scenarios:
     - **Early allocation**: After `early_tensor` is allocated, `temp1` and `temp2` are allocated and freed in between before `early_tensor` is used for the first time. The tool identifies this as "early allocation."
     - **Delayed release**: After `used_tensor` is last used, `temp3` is allocated and freed in between before `used_tensor` is released. The tool identifies this as "delayed release."
 - The tool report indicates the type, address, and size of inefficient memory, helping you optimize their memory usage strategy.
@@ -252,15 +250,15 @@
 
     msmemscope.config(
         events="alloc,free",
-        data_format="csv",
-        output="./output"
+        format="csv",
+        output_path="./output"
     )
 
     msmemscope.start()
 
     device = torch.device("npu:0")
     try:
-        # Simulate a large memory allocation that may trigger OOM.
+        # Simulate a large memory allocation, which may trigger OOM.
         tensors = []
         for i in range(100):
             tensors.append(torch.randn(1024, 1024, 128).to(device))

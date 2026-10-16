@@ -2,11 +2,8 @@
 
 ## Contents
 
-- [Issue Submission and Handling Guide](#issue-submission-and-handling-guide)
-  - [Contents](#contents)
   - [Community Guide](#community-guide)
   - [New Issue Process](#new-issue-process)
-    - [Issue Configuration Items](#issue-configuration-items)
   - [Label Description](#label-description)
     - [Content Labels](#content-labels)
     - [Priority Labels](#priority-labels)

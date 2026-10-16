@@ -10,16 +10,16 @@ Submitting [Issues](https://gitcode.com/Ascend/msmemscope/issues) in the GitCode
 
 If your issue is complicated or you want to keep it confidential, send an email to:
 
-**`memscope@outlook.com`**
+**<memscope@outlook.com>**
 
 Describe your question or suggestion in detail in the email. We will reply as soon as possible.
 
-## 3. Open-source assistant
+## 3. Open-Source Assistant
 
 Scan the QR code to add the Ascend open-source assistant, obtain the group link, and join the MindStudio community technical exchange group to obtain help and support.
 
 <img src="./figures/ascend_assistant.jpg" alt="Ascend open-source assistant QR code" width="200" height="200">
 
-## 4. Code contribution
+## 4. Code Contribution
 
 If you want to contribute code to this project, see [Contribution Guide](../development_guide/contributing_guide.md).

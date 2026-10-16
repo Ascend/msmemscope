@@ -4,7 +4,7 @@ Thanks for taking time to contribute!
 
 ## Submitting an Error Report
 
-If you discover a vulnerability that does not pose a security risk within msMemScope, first search the msMemScope repository for existing issues to avoid creating duplicates. If the issue is not yet listed, then create a new one. If you discover a security-related problem, do not disclose it publicly. Please refer to the security handling guidelines for details. All error reports must include complete information about the issue.
+If you discover a vulnerability that does not pose a security risk within msMemScope, first search the msMemScope repository for existing issues to avoid creating duplicates. If the issue is not yet listed, then create a new one. If you discover a security-related problem, do not disclose it publicly. Please refer to the "[Handling Security Issues](#handling-security-issues)" section. All error reports must include complete information about the issue.
 
 ## Handling Security Issues
 
