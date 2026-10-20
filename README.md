@@ -4,9 +4,9 @@
 <p><b><span style="font-size:24px;">昇腾 AI 内存调试调优利器</span></b></p>
 
  [![快速入门](https://badgen.net/badge/快速入门/QuickStart/blue)](./docs/zh/quick_start/quick_start.md)
- [![AI问答(DeepWiki)](https://badgen.net/badge/AI问答/DeepWiki/blue)](https://deepwiki.com/mindstudio-docs/master)
- [![AI问答(ZRead)](https://badgen.net/badge/AI问答/ZRead/blue)](https://zread.ai/mindstudio-docs/master)
- [![精确搜索](https://badgen.net/badge/精确搜索/ReadTheDocs/blue)](https://mindstudio-docs-master.readthedocs.io)
+ [![AI问答(DeepWiki)](https://badgen.net/badge/AI问答/DeepWiki/blue)](https://deepwiki.com/mindstudio-docs/26.2.0)
+ [![AI问答(ZRead)](https://badgen.net/badge/AI问答/ZRead/blue)](https://zread.ai/mindstudio-docs/26.2.0)
+ [![精确搜索](https://badgen.net/badge/精确搜索/ReadTheDocs/blue)](https://mindstudio-docs-26.2.0.readthedocs.io)
  [![昇腾社区](https://badgen.net/badge/昇腾社区/Community/blue)](https://www.hiascend.com/cn/developer/software/mindstudio)
  [![报告问题](https://badgen.net/badge/报告问题/Issues/blue)](https://gitcode.com/Ascend/msmemscope/issues/new)
 
@@ -129,7 +129,7 @@ msMemScope 工具提供 API 接口，便于快速分析内存情况，请参见 
 为提升文档查阅效率，我们提供多种高效检索方式：
 
 - **[精确搜索（ReadTheDocs）](https://mindstudio-operator-tools-docs.readthedocs.io/zh-cn/latest/)**：全量文档毫秒级结构化检索，精准触达底层配置与 API 细节
-- **[AI 智能问答（DeepWiki）](https://deepwiki.com/mindstudio-docs/master)**：基于上下文的 AI 研发助手，自然语言提问，秒级获取答复
+- **[AI 智能问答（DeepWiki）](https://deepwiki.com/mindstudio-docs/26.2.0)**：基于上下文的 AI 研发助手，自然语言提问，秒级获取答复
 
 ## ⚖️ 相关说明
 
