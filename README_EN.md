@@ -20,7 +20,7 @@ English | [简体中文](./README.md)
 
 🔹 **[2026.04.29]**: MindStudio MemScope 26.0.0 is released! It supports collecting memory snapshots in OOM scenarios.
 
-🔹 **[2026.04.08]**: MindStudio MemScope 26.0.beta.1 is released! The one-click memory decomposition feature now supports vLLM and MindSpeed scenarios.
+🔹 **[2026.04.08]**: MindStudio MemScope 26.0.beta.1 is released! The one-click memory decomposition feature now supports VLLM and MindSpeed scenarios.
 
 🔹 **[2026.02.01]**: MindStudio MemScope 26.0.0-alpha.1 is released! It can collect memory snapshots under the Ascend for PyTorch framework via Python APIs, identifying memory page table attributes and writing them to disk, and obtaining the newly added memory allocation interfaces from the driver.
 
@@ -70,7 +70,7 @@ msMemScope provides two major features: memory collection and memory analysis.
         Based on the collected memory data, msMemScope provides five analysis capabilities: leak detection, comparison, monitoring, decomposition, and identification of inefficient memory, helping developers quickly diagnose and optimize memory issues.
       </td>
       <td>Memory leak analysis</td>
-      <td>For issues such as long-term unreleased memory and memory leaks, msMemScope provides memory leak analysis and kernelLaunch-granularity memory change analysis to locate and analyze alarms.</td>
+      <td>For issues such as long-term unreleased memory and memory leaks, msMemScope provides memory leak analysis and Kernel Launch-granularity memory change analysis to locate and analyze alarms.</td>
     </tr>
     <tr>
       <td>Memory comparison</td>
@@ -148,4 +148,5 @@ Contributions to the community are welcome. If you have any questions or suggest
 
 ## 🙏 Acknowledgments
 
-This tool is contributed by the Huawei MindStudio full-process development toolchain team, dedicated to providing end-to-end Ascend AI application development solutions and enabling developers to efficiently complete training development, inference development, and operator development. Thank you for every PR from the community. Contributions to msMemScope are welcome.
+This tool is jointly contributed by Huawei Technologies Co., Ltd. and developers. <br>
+Thanks for every PR from the community, and contributions are welcome.

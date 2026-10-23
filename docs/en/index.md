@@ -56,7 +56,7 @@ msMemScope provides memory collection and analysis functions.
     </tr>
     <tr>
       <td>Memory comparison</td>
-      <td>If the memory usage differs between two steps, it may lead to excessive memory usage or even out of memory (OOM) errors. In this case, use the memory comparison analysis function of msMemScope to locate and analyze the problem.</td>
+      <td>If the memory usage differs between two steps, it may lead to excessive memory usage or even Out of Memory (OOM) errors. In this case, use the memory comparison analysis function of msMemScope to locate and analyze the problem.</td>
     </tr>
     <tr>
       <td>Memory block monitoring</td>
