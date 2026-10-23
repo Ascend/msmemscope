@@ -141,6 +141,7 @@ void ConfigManager::SetConfig(const Config &config)
     // EventTraceManager的构造函数中会调用InitTraceStatus，会调用GetConfig，如果在InitConfig函数中调用SetConfig，可能
     // 会造成Instance()间接调用自身，导致单例的自引用，初始化死锁现象。
     EventTraceManager::Instance().HandleWithATenCollect();
+    EventTraceManager::Instance().HandleWithTritonCollect();
     EventTraceManager::Instance().HandleWithDecompose();
     EventTraceManager::Instance().HandleWithCpuTensorCollect();
 }
@@ -195,6 +196,7 @@ bool ConfigManager::SetConfig(const std::unordered_map<std::string, std::string>
     Utility::SetLogLevel(static_cast<LogLv>(config_.logLevel));
     Utility::JsonConfig::GetInstance().SaveConfigToJson(config_);
     EventTraceManager::Instance().HandleWithATenCollect();
+    EventTraceManager::Instance().HandleWithTritonCollect();
     EventTraceManager::Instance().HandleWithDecompose();
     EventTraceManager::Instance().HandleWithCpuTensorCollect();
     EventTraceManager::Instance().InitJudgeFuncTable();
@@ -341,6 +343,7 @@ void EventTraceManager::SetTraceStatus(const EventTraceStatus status)
     status_ = status;
 
     HandleWithATenCollect();
+    HandleWithTritonCollect();
     HandleWithDecompose();
     HandleWithCpuTensorCollect();
     return;
@@ -355,6 +358,28 @@ void EventTraceManager::HandleWithATenCollect()
     }
 
     Utility::MemScopePythonCall("msmemscope.aten_collection", "disable_aten_collector");
+
+    return;
+}
+
+bool EventTraceManager::ShouldEnableTritonCollect() const
+{
+    // Op-level + (launch or access). Keeps default alloc,free,launch OP_LAUNCH /
+    // --watch ac path; still skips empty wrap for --events=alloc,free --level=op.
+    return (status_ == EventTraceStatus::IN_TRACING) && IsNeedTraceOp() &&
+           (IsNeedTraceOpLaunch() || IsNeedTraceAccess()) && aclInit_.load();
+}
+
+void EventTraceManager::HandleWithTritonCollect()
+{
+    // Soft-import inside triton_collection.py no-ops when triton is absent.
+    if (ShouldEnableTritonCollect())
+    {
+        Utility::MemScopePythonCall("msmemscope.triton_collection", "enable_triton_collector");
+        return;
+    }
+
+    Utility::MemScopePythonCall("msmemscope.triton_collection", "disable_triton_collector");
 
     return;
 }
@@ -393,6 +418,7 @@ void EventTraceManager::SetAclInitStatus(bool isInit)
     aclInit_ = isInit;
 
     HandleWithATenCollect();
+    HandleWithTritonCollect();
     HandleWithDecompose();
     HandleWithCpuTensorCollect();
 }

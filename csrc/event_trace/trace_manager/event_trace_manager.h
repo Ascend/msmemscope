@@ -133,6 +133,9 @@ class EventTraceManager
     void SetDeviceReadyStatus(bool isReady);
     bool IsDeviceReady();
     void HandleWithATenCollect();
+    void HandleWithTritonCollect();
+    /** Gate used by HandleWithTritonCollect (exposed for UT). */
+    bool ShouldEnableTritonCollect() const;
     void HandleWithDecompose();
     void HandleWithCpuTensorCollect();
     void CleanUpEventTraceManager();

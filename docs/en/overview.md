@@ -15,7 +15,7 @@ msMemScope provides memory collection and analysis functions.
 
 ## Compatibility Information
 
-msMemScope supports memory collection of CANN, Ascend for PyTorch, MindSpore, and Aten operators. The following table lists the supported versions.
+msMemScope supports operator-execution and memory-access collection for CANN, Ascend for PyTorch, and MindSpore (including Aten, ATB, and triton-ascend paths). The following table lists the supported versions.
 
 |Product|Compatibility Description|
 |--------|--------|
@@ -23,3 +23,4 @@ msMemScope supports memory collection of CANN, Ascend for PyTorch, MindSpore, an
 |Ascend for PyTorch|Ascend for PyTorch 7.0.0 and later versions|
 |MindSpore|MindSpore 2.7.0 and later versions|
 |Aten operators|To collect Aten operator dispatch and access events, use PyTorch 2.3.1 or later.|
+|triton-ascend|Detail of the triton-ascend path under operator/memory-access collection: install triton-ascend and run under TorchNPU. Operator names are prefixed with `triton.`.|
