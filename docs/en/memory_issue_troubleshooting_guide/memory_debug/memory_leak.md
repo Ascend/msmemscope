@@ -58,7 +58,7 @@ Try clearing the cache at appropriate points to eliminate leak-like symptoms cau
 
 At these points, memory usage may fluctuate. Clearing the cache can effectively prevent continuous memory usage increase caused by cache accumulation.
 
-```shell
+```python
 # Clear unreachable Python objects.
 gc.collect()
 # Clear the torch_npu cache.
