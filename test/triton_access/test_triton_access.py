@@ -85,17 +85,17 @@ def _dump_has_kernel_access(out_dir: Path, expect: dict) -> bool:
         try:
             with path.open(encoding="utf-8", errors="ignore", newline="") as fh:
                 for row in csv.DictReader(fh):
-                    ev = (row.get("Event") or row.get("Event Type") or "").upper()
-                    if "ACCESS" not in ev:
+                    # Dump schema: Event=ACCESS, Event Type=READ|WRITE, Ptr, Name
+                    if (row.get("Event") or "").strip() != "ACCESS":
                         continue
                     name = row.get("Name") or ""
                     if _KERNEL_TAG not in name:
                         continue
-                    ptr = _norm_ptr(row.get("Ptr") or row.get("Address") or "")
-                    typ = (row.get("Type") or row.get("Access") or "").upper()
-                    if "READ" in typ:
+                    ptr = _norm_ptr(row.get("Ptr") or "")
+                    typ = (row.get("Event Type") or "").strip().upper()
+                    if typ == "READ":
                         found.add((ptr, "READ"))
-                    if "WRITE" in typ:
+                    elif typ == "WRITE":
                         found.add((ptr, "WRITE"))
         except OSError:
             continue

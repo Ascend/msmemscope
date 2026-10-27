@@ -85,12 +85,11 @@ def _find_dumps(root: Path) -> List[Path]:
 
 
 def _latest_dump(*roots: Path) -> Path:
+    """Pick newest dump only under the given roots (no cwd fallback)."""
     dumps: List[Path] = []
     for r in roots:
         if r.exists():
             dumps.extend(_find_dumps(r))
-    dumps.extend(_find_dumps(Path("memscopeDumpResults")))
-    dumps.extend(_find_dumps(Path(".")))
     if not dumps:
         raise FileNotFoundError(f"no dump under {[str(r) for r in roots]}")
     return max(dumps, key=lambda p: p.stat().st_mtime)
