@@ -95,7 +95,7 @@ TEST_F(TritonCollectGateTest, MissingOpLevel_Disables)
     ApplyAllTrue();
     Config config = MakeBaseConfig();
     BitField<decltype(config.levelType)> levelBit;
-    // LEVEL_KERNEL only — no LEVEL_OP
+    // LEVEL_KERNEL only - no LEVEL_OP
     levelBit.setBit(static_cast<size_t>(LevelType::LEVEL_KERNEL));
     config.levelType = levelBit.getValue();
     ConfigManager::Instance().SetConfig(config);
@@ -119,7 +119,7 @@ TEST_F(TritonCollectGateTest, MissingAccessButHasLaunch_Enables)
 
 TEST_F(TritonCollectGateTest, MissingAccessAndLaunch_Disables)
 {
-    // --events=alloc,free --level=op: no launch/access → do not wrap.
+    // --events=alloc,free --level=op: no launch/access -> do not wrap.
     ApplyAllTrue();
     Config config = MakeBaseConfig();
     BitField<decltype(config.eventType)> eventBit;

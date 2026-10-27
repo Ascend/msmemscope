@@ -14,6 +14,7 @@
 # MERCHANTABILITY OR FIT FOR A PARTICULAR PURPOSE.
 # See the Mulan PSL v2 for more details.
 # -------------------------------------------------------------------------
+
 """C++ gate E2E: event/level matrix x multi-kernel, no manual enable.
 
 Requires rebuilt msmemscope with HandleWithTritonCollect (not Aten bridge).
@@ -60,7 +61,7 @@ def _assert_no_aten_bridge() -> None:
 
     src = Path(aten.__file__).read_text(encoding="utf-8", errors="replace")
     if "msmemscope Triton bridge for #129" in src:
-        raise RuntimeError("Aten bridge still installed — E2E must use rebuilt HandleWithTritonCollect")
+        raise RuntimeError("Aten bridge still installed - E2E must use rebuilt HandleWithTritonCollect")
 
 
 def _norm_ptr(p) -> str:
@@ -355,7 +356,7 @@ def run_state(
     if expect_enable:
         if enable_delta < 1:
             raise AssertionError(
-                f"{label}: enable_calls did not increase — C++ HandleWithTritonCollect "
+                f"{label}: enable_calls did not increase - C++ HandleWithTritonCollect "
                 f"likely not invoked (before={meta['before']} after={meta['after']})"
             )
     else:
