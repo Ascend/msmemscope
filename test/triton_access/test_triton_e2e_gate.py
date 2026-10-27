@@ -39,20 +39,20 @@ from typing import Dict, List, Tuple
 
 
 E2E_KERNELS = (
-    "e2e_add_kernel",
-    "e2e_mul_kernel",
-    "e2e_relu_kernel",
-    "e2e_fill_kernel",
-    "e2e_scale_inplace_kernel",
+    "msm_e2e_pair_sum",
+    "msm_e2e_pair_prod",
+    "msm_e2e_clamp_pos",
+    "msm_e2e_const_write",
+    "msm_e2e_inplace_gain",
 )
 
 # Hardcoded per-kernel ACCESS (Ptr order = launch NPU arg order).
 EXPECTED_RW = {
-    "e2e_add_kernel": ("READ", "READ", "WRITE"),
-    "e2e_mul_kernel": ("READ", "READ", "WRITE"),
-    "e2e_relu_kernel": ("READ", "WRITE"),
-    "e2e_fill_kernel": ("WRITE",),
-    "e2e_scale_inplace_kernel": ("WRITE",),
+    "msm_e2e_pair_sum": ("READ", "READ", "WRITE"),
+    "msm_e2e_pair_prod": ("READ", "READ", "WRITE"),
+    "msm_e2e_clamp_pos": ("READ", "WRITE"),
+    "msm_e2e_const_write": ("WRITE",),
+    "msm_e2e_inplace_gain": ("WRITE",),
 }
 
 
@@ -151,45 +151,45 @@ import msmemscope
 from msmemscope import triton_collection as tc
 
 @triton.jit
-def e2e_add_kernel(x_ptr, y_ptr, out_ptr, n_elements, BLOCK_SIZE: tl.constexpr):
-    pid = tl.program_id(0)
-    offsets = pid * BLOCK_SIZE + tl.arange(0, BLOCK_SIZE)
-    mask = offsets < n_elements
-    x = tl.load(x_ptr + offsets, mask=mask)
-    y = tl.load(y_ptr + offsets, mask=mask)
-    tl.store(out_ptr + offsets, x + y, mask=mask)
+def msm_e2e_pair_sum(a_ptr, b_ptr, c_ptr, n_elems, BLOCK: tl.constexpr):
+    i = tl.program_id(0)
+    offs = i * BLOCK + tl.arange(0, BLOCK)
+    m = offs < n_elems
+    ta = tl.load(a_ptr + offs, mask=m)
+    tb = tl.load(b_ptr + offs, mask=m)
+    tl.store(c_ptr + offs, ta + tb, mask=m)
 
 @triton.jit
-def e2e_mul_kernel(x_ptr, y_ptr, out_ptr, n_elements, BLOCK_SIZE: tl.constexpr):
-    pid = tl.program_id(0)
-    offsets = pid * BLOCK_SIZE + tl.arange(0, BLOCK_SIZE)
-    mask = offsets < n_elements
-    x = tl.load(x_ptr + offsets, mask=mask)
-    y = tl.load(y_ptr + offsets, mask=mask)
-    tl.store(out_ptr + offsets, x * y, mask=mask)
+def msm_e2e_pair_prod(a_ptr, b_ptr, c_ptr, n_elems, BLOCK: tl.constexpr):
+    i = tl.program_id(0)
+    offs = i * BLOCK + tl.arange(0, BLOCK)
+    m = offs < n_elems
+    ta = tl.load(a_ptr + offs, mask=m)
+    tb = tl.load(b_ptr + offs, mask=m)
+    tl.store(c_ptr + offs, ta * tb, mask=m)
 
 @triton.jit
-def e2e_relu_kernel(x_ptr, out_ptr, n_elements, BLOCK_SIZE: tl.constexpr):
-    pid = tl.program_id(0)
-    offsets = pid * BLOCK_SIZE + tl.arange(0, BLOCK_SIZE)
-    mask = offsets < n_elements
-    x = tl.load(x_ptr + offsets, mask=mask)
-    tl.store(out_ptr + offsets, tl.where(x > 0, x, 0.0), mask=mask)
+def msm_e2e_clamp_pos(src_ptr, dst_ptr, n_elems, BLOCK: tl.constexpr):
+    i = tl.program_id(0)
+    offs = i * BLOCK + tl.arange(0, BLOCK)
+    m = offs < n_elems
+    v = tl.load(src_ptr + offs, mask=m)
+    tl.store(dst_ptr + offs, tl.maximum(v, 0.0), mask=m)
 
 @triton.jit
-def e2e_fill_kernel(out_ptr, n_elements, value, BLOCK_SIZE: tl.constexpr):
-    pid = tl.program_id(0)
-    offsets = pid * BLOCK_SIZE + tl.arange(0, BLOCK_SIZE)
-    mask = offsets < n_elements
-    tl.store(out_ptr + offsets, value, mask=mask)
+def msm_e2e_const_write(dst_ptr, n_elems, fill_v, BLOCK: tl.constexpr):
+    i = tl.program_id(0)
+    offs = i * BLOCK + tl.arange(0, BLOCK)
+    m = offs < n_elems
+    tl.store(dst_ptr + offs, fill_v, mask=m)
 
 @triton.jit
-def e2e_scale_inplace_kernel(x_ptr, n_elements, scale, BLOCK_SIZE: tl.constexpr):
-    pid = tl.program_id(0)
-    offsets = pid * BLOCK_SIZE + tl.arange(0, BLOCK_SIZE)
-    mask = offsets < n_elements
-    x = tl.load(x_ptr + offsets, mask=mask)
-    tl.store(x_ptr + offsets, x * scale, mask=mask)
+def msm_e2e_inplace_gain(buf_ptr, n_elems, gain, BLOCK: tl.constexpr):
+    i = tl.program_id(0)
+    offs = i * BLOCK + tl.arange(0, BLOCK)
+    m = offs < n_elems
+    v = tl.load(buf_ptr + offs, mask=m)
+    tl.store(buf_ptr + offs, v * gain, mask=m)
 
 cfg = json.loads(sys.argv[1])
 out_dir = Path(cfg["out_dir"])
@@ -211,35 +211,30 @@ n, block = 1024, 256
 grid = (triton.cdiv(n, block),)
 ptrs = {}
 
-# add
 xa = torch.randn(n, device=device)
 ya = torch.randn(n, device=device)
 oa = torch.empty_like(xa)
-ptrs["e2e_add_kernel"] = [int(xa.data_ptr()), int(ya.data_ptr()), int(oa.data_ptr())]
-e2e_add_kernel[grid](xa, ya, oa, n, BLOCK_SIZE=block)
+ptrs["msm_e2e_pair_sum"] = [int(xa.data_ptr()), int(ya.data_ptr()), int(oa.data_ptr())]
+msm_e2e_pair_sum[grid](xa, ya, oa, n, BLOCK=block)
 
-# mul
 xm = torch.randn(n, device=device)
 ym = torch.randn(n, device=device)
 om = torch.empty_like(xm)
-ptrs["e2e_mul_kernel"] = [int(xm.data_ptr()), int(ym.data_ptr()), int(om.data_ptr())]
-e2e_mul_kernel[grid](xm, ym, om, n, BLOCK_SIZE=block)
+ptrs["msm_e2e_pair_prod"] = [int(xm.data_ptr()), int(ym.data_ptr()), int(om.data_ptr())]
+msm_e2e_pair_prod[grid](xm, ym, om, n, BLOCK=block)
 
-# relu
 xr = torch.randn(n, device=device)
 or_ = torch.empty_like(xr)
-ptrs["e2e_relu_kernel"] = [int(xr.data_ptr()), int(or_.data_ptr())]
-e2e_relu_kernel[grid](xr, or_, n, BLOCK_SIZE=block)
+ptrs["msm_e2e_clamp_pos"] = [int(xr.data_ptr()), int(or_.data_ptr())]
+msm_e2e_clamp_pos[grid](xr, or_, n, BLOCK=block)
 
-# fill
 of = torch.empty(n, device=device)
-ptrs["e2e_fill_kernel"] = [int(of.data_ptr())]
-e2e_fill_kernel[grid](of, n, 1.5, BLOCK_SIZE=block)
+ptrs["msm_e2e_const_write"] = [int(of.data_ptr())]
+msm_e2e_const_write[grid](of, n, 1.5, BLOCK=block)
 
-# inplace scale
 xi = torch.randn(n, device=device)
-ptrs["e2e_scale_inplace_kernel"] = [int(xi.data_ptr())]
-e2e_scale_inplace_kernel[grid](xi, n, 2.0, BLOCK_SIZE=block)
+ptrs["msm_e2e_inplace_gain"] = [int(xi.data_ptr())]
+msm_e2e_inplace_gain[grid](xi, n, 2.0, BLOCK=block)
 
 torch.npu.synchronize()
 assert torch.allclose(oa, xa + ya)
@@ -249,7 +244,7 @@ assert torch.allclose(of, torch.full_like(of, 1.5))
 
 msmemscope.stop()
 emitted_before = tc.get_triton_collector_stats().get("access_emitted", 0)
-e2e_add_kernel[grid](xa, ya, oa, n, BLOCK_SIZE=block)
+msm_e2e_pair_sum[grid](xa, ya, oa, n, BLOCK=block)
 torch.npu.synchronize()
 emitted_after = tc.get_triton_collector_stats().get("access_emitted", 0)
 print(json.dumps({
@@ -262,6 +257,8 @@ print(json.dumps({
     "post_stop_emitted_after": emitted_after,
 }))
 '''
+
+
 
 
 def _run_worker(events: str, out_dir: Path, *, level: str = "kernel,op") -> dict:

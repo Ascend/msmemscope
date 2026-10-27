@@ -14,7 +14,7 @@
 # See the Mulan PSL v2 for more details.
 # -------------------------------------------------------------------------
 
-"""NPU smoke: Triton vector-add + ACCESS dump check (fails hard on regression)."""
+"""NPU smoke for msMemScope Triton ACCESS path (assert + dump)."""
 
 from __future__ import annotations
 
@@ -29,31 +29,41 @@ import msmemscope
 
 _OUT = Path("./output")
 _TOL = 1e-5
+_KERNEL_TAG = "msm_access_smoke_axpy"
 
 
 @triton.jit
-def add_kernel(x_ptr, y_ptr, out_ptr, n_elements, BLOCK_SIZE: tl.constexpr):
-    pid = tl.program_id(0)
-    num_core = tl.num_programs(0)
-    num_blocks = tl.cdiv(n_elements, BLOCK_SIZE)
-    for block_idx in range(pid, num_blocks, num_core):
-        offsets = block_idx * BLOCK_SIZE + tl.arange(0, BLOCK_SIZE)
-        mask = offsets < n_elements
-        x = tl.load(x_ptr + offsets, mask=mask)
-        y = tl.load(y_ptr + offsets, mask=mask)
-        tl.store(out_ptr + offsets, x + y, mask=mask)
+def msm_access_smoke_axpy(
+    src_a_ptr,
+    src_b_ptr,
+    dst_ptr,
+    n_elems,
+    BLOCK: tl.constexpr,
+):
+    """msMemScope ACCESS smoke: dst = src_a + src_b (grid-stride)."""
+    lane = tl.program_id(0)
+    stride = tl.num_programs(0)
+    tiles = tl.cdiv(n_elems, BLOCK)
+    tile = lane
+    while tile < tiles:
+        idx = tile * BLOCK + tl.arange(0, BLOCK)
+        alive = idx < n_elems
+        va = tl.load(src_a_ptr + idx, mask=alive)
+        vb = tl.load(src_b_ptr + idx, mask=alive)
+        tl.store(dst_ptr + idx, va + vb, mask=alive)
+        tile += stride
 
 
-def triton_add(x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
-    out = torch.empty_like(x)
-    n_elements = x.numel()
-    BLOCK_SIZE = 1024
-    grid = (min(65535, triton.cdiv(n_elements, BLOCK_SIZE)),)
-    add_kernel[grid](x, y, out, n_elements, BLOCK_SIZE=BLOCK_SIZE)
-    return out
+def _launch_axpy(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
+    dst = torch.empty_like(a)
+    n = int(a.numel())
+    block = 1024
+    grid = (min(65535, triton.cdiv(n, block)),)
+    msm_access_smoke_axpy[grid](a, b, dst, n, BLOCK=block)
+    return dst
 
 
-def _dump_has_triton_access(out_dir: Path) -> bool:
+def _dump_has_access(out_dir: Path) -> bool:
     if not out_dir.is_dir():
         return False
     for path in out_dir.rglob("*"):
@@ -63,11 +73,9 @@ def _dump_has_triton_access(out_dir: Path) -> bool:
             text = path.read_text(encoding="utf-8", errors="ignore")
         except OSError:
             continue
-        if "triton.add_kernel" in text or "triton." in text and "ACCESS" in text.upper():
-            if "add_kernel" in text or "memscope-aten-ac" in text or ",WRITE" in text or "WRITE" in text:
-                return True
-        # CSV dumps often contain kernel name + access type columns
-        if "add_kernel" in text and ("WRITE" in text or "READ" in text):
+        if _KERNEL_TAG in text and ("WRITE" in text or "READ" in text or "ACCESS" in text.upper()):
+            return True
+        if "msm_access_smoke" in text and ("WRITE" in text or "READ" in text):
             return True
     return False
 
@@ -82,25 +90,22 @@ def main() -> int:
     device = torch.device("npu:0")
     torch.npu.set_device(device)
 
-    x = torch.randn(4096, device=device, dtype=torch.float32)
-    y = torch.randn(4096, device=device, dtype=torch.float32)
+    a = torch.randn(4096, device=device, dtype=torch.float32)
+    b = torch.randn(4096, device=device, dtype=torch.float32)
 
     msmemscope.start()
-    out = triton_add(x, y)
+    out = _launch_axpy(a, b)
     torch.npu.synchronize()
     msmemscope.stop()
 
-    ref = x + y
+    ref = a + b
     max_diff = (out - ref).abs().max().item()
     print(f"max diff vs torch add: {max_diff}")
     if max_diff > _TOL:
         print(f"FAIL: numerical mismatch max_diff={max_diff} > {_TOL}", file=sys.stderr)
         return 1
-    if not _dump_has_triton_access(_OUT):
-        print(
-            f"FAIL: no Triton ACCESS evidence under {_OUT.resolve()}",
-            file=sys.stderr,
-        )
+    if not _dump_has_access(_OUT):
+        print(f"FAIL: no Triton ACCESS evidence under {_OUT.resolve()}", file=sys.stderr)
         return 1
     print("PASS: numerical OK + ACCESS dump present.")
     return 0
