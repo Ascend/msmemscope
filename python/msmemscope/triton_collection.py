@@ -56,9 +56,7 @@ _SKIP_ACCESS_WARNED: Set[str] = set()
 _NPU_LAUNCHER_MODULE = "triton.backends.ascend.driver"
 _NPU_LAUNCHER_CLS = "NPULauncher"
 _NPU_LAUNCHER_FUNC = "__call__"
-_NPU_LAUNCHER_TARGETS = (
-    (_NPU_LAUNCHER_MODULE, _NPU_LAUNCHER_CLS),
-)
+_NPU_LAUNCHER_TARGETS = ((_NPU_LAUNCHER_MODULE, _NPU_LAUNCHER_CLS),)
 
 try:
     import mstx
@@ -383,8 +381,7 @@ def emit_triton_access_events(
         else:
             detail = f"unknown tensor_kinds value(s){meta_hint}: {list(tensor_kinds)}"
         _diag(
-            f"Triton {detail} for {kernel_name}; "
-            "skipping ACCESS marks (R/W correctness requires aligned tensor_kinds)."
+            f"Triton {detail} for {kernel_name}; skipping ACCESS marks (R/W correctness requires aligned tensor_kinds)."
         )
         return marks
 
@@ -677,11 +674,9 @@ class TritonCollector:
             else:
                 self._bump_stat("access_emitted")
         except Exception:
-            _diag(
-                "Triton ACCESS collection failed in PRE_HOOK; "
-                "continuing kernel launch without ACCESS marks."
-            )
-            self._tls.need_end = False
+            _diag("Triton ACCESS collection failed in PRE_HOOK; continuing kernel launch without ACCESS marks.")
+            # If begin was already emitted (need_end True), keep it so POST_HOOK
+            # still pairs end; do not leave a dangling begin for AtenManager.
         return args, kws
 
     def _post_npu_launcher(self, ret, *args, **kws):
