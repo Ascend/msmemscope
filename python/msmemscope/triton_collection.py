@@ -72,7 +72,9 @@ except Exception:  # pragma: no cover
 TENSOR_KIND_INPUT = 0
 TENSOR_KIND_OUTPUT = 1
 TENSOR_KIND_INOUT = 2
-_KNOWN_TENSOR_KINDS = frozenset((TENSOR_KIND_INPUT, TENSOR_KIND_OUTPUT, TENSOR_KIND_INOUT))
+_KNOWN_TENSOR_KINDS = frozenset(
+    (TENSOR_KIND_INPUT, TENSOR_KIND_OUTPUT, TENSOR_KIND_INOUT)
+)
 
 # CompiledKernel.run / NPULauncher.__call__ positional layout before kernel args
 # grid0,grid1,grid2,stream,function,packed_metadata,launch_metadata,enter,exit,*args
@@ -85,6 +87,7 @@ _SCAN_ARG_LIMIT = 20
 # Lazily resolved once: FakeTensor / FunctionalTensor classes to exclude.
 _EXCLUDED_TENSOR_SUBCLASSES: Optional[Tuple[type, ...]] = None
 _EXCLUDED_TENSOR_SUBCLASSES_RESOLVED = False
+
 
 def _diag(msg: str) -> None:
     """Non-fatal diagnostic — never use warnings.warn (breaks under -W error)."""
@@ -174,7 +177,11 @@ def extract_tensor_kinds(packed_metadata: Any) -> Optional[Sequence[int]]:
         kinds = packed_metadata.get("tensor_kinds")
     else:
         kinds = getattr(packed_metadata, "tensor_kinds", None)
-        if kinds is None and hasattr(packed_metadata, "get") and callable(packed_metadata.get):
+        if (
+            kinds is None
+            and hasattr(packed_metadata, "get")
+            and callable(packed_metadata.get)
+        ):
             try:
                 kinds = packed_metadata.get("tensor_kinds")
             except TypeError:
@@ -189,7 +196,9 @@ def extract_tensor_kinds(packed_metadata: Any) -> Optional[Sequence[int]]:
         return None
 
 
-def extract_kernel_name(launch_metadata: Any, packed_metadata: Any = None, fallback: str = "unknown") -> str:
+def extract_kernel_name(
+    launch_metadata: Any, packed_metadata: Any = None, fallback: str = "unknown"
+) -> str:
     name = None
     if isinstance(launch_metadata, dict):
         name = launch_metadata.get("name")
@@ -201,7 +210,11 @@ def extract_kernel_name(launch_metadata: Any, packed_metadata: Any = None, fallb
             raw_data = None
         if isinstance(raw_data, dict):
             name = raw_data.get("name")
-        if name is None and hasattr(launch_metadata, "get") and callable(launch_metadata.get):
+        if (
+            name is None
+            and hasattr(launch_metadata, "get")
+            and callable(launch_metadata.get)
+        ):
             try:
                 meta = launch_metadata.get()
                 if isinstance(meta, dict):
@@ -219,7 +232,9 @@ def extract_kernel_name(launch_metadata: Any, packed_metadata: Any = None, fallb
         if isinstance(packed_metadata, dict):
             name = packed_metadata.get("name") or packed_metadata.get("kernel_name")
         else:
-            name = getattr(packed_metadata, "name", None) or getattr(packed_metadata, "kernel_name", None)
+            name = getattr(packed_metadata, "name", None) or getattr(
+                packed_metadata, "kernel_name", None
+            )
     if not name:
         name = fallback
     name = str(name)
@@ -267,7 +282,10 @@ def _is_packed_metadata(obj: Any) -> bool:
     kinds = getattr(obj, "tensor_kinds", None)
     if isinstance(kinds, (list, tuple)):
         return True
-    if getattr(obj, "kernel_name", None) is not None or getattr(obj, "hash", None) is not None:
+    if (
+        getattr(obj, "kernel_name", None) is not None
+        or getattr(obj, "hash", None) is not None
+    ):
         return True
     return False
 
@@ -285,7 +303,11 @@ def _is_launch_metadata(obj: Any) -> bool:
         raw_data = None
     if isinstance(raw_data, dict) and ("name" in raw_data or "grid" in raw_data):
         return True
-    if hasattr(obj, "get") and callable(obj.get) and not isinstance(obj, (str, bytes, list, tuple, dict)):
+    if (
+        hasattr(obj, "get")
+        and callable(obj.get)
+        and not isinstance(obj, (str, bytes, list, tuple, dict))
+    ):
         return True
     return False
 
@@ -317,7 +339,9 @@ def iter_tensor_args_with_kinds(
         yield arg, kind, kind_missing
 
 
-def _kinds_usable(npu_count: int, tensor_kinds: Optional[Sequence[int]]) -> Tuple[bool, str]:
+def _kinds_usable(
+    npu_count: int, tensor_kinds: Optional[Sequence[int]]
+) -> Tuple[bool, str]:
     if tensor_kinds is None:
         return False, "missing"
     if len(tensor_kinds) != npu_count:
@@ -385,7 +409,9 @@ def emit_triton_access_events(
             _diag(f"Triton {detail} for {kernel_name}; skipping ACCESS marks.")
         return marks
 
-    for tensor, kind, kind_missing in iter_tensor_args_with_kinds(kernel_args, tensor_kinds):
+    for tensor, kind, kind_missing in iter_tensor_args_with_kinds(
+        kernel_args, tensor_kinds
+    ):
         flags = None if kind_missing else kind_to_access_flags(kind)
         if flags is None:
             continue
@@ -431,7 +457,9 @@ def _default_mark(msg: str) -> None:
     mstx.mark(msg, None)
 
 
-def _parse_launch_args(args: tuple, kwargs: Optional[dict] = None) -> Optional[Tuple[Any, Any, tuple, bool]]:
+def _parse_launch_args(
+    args: tuple, kwargs: Optional[dict] = None
+) -> Optional[Tuple[Any, Any, tuple, bool]]:
     """Return (packed, launch, kernel_args, kwargs_has_npu) if layout is recognizable.
 
     Anchored on ``packed_metadata`` (fixed index 5 on the standard Ascend launch ABI).
@@ -444,7 +472,9 @@ def _parse_launch_args(args: tuple, kwargs: Optional[dict] = None) -> Optional[T
     launch_metadata = None
     kernel_args: Optional[list] = None
 
-    if len(args) >= _KERNEL_ARGS_START and _is_packed_metadata(args[_PACKED_META_INDEX]):
+    if len(args) >= _KERNEL_ARGS_START and _is_packed_metadata(
+        args[_PACKED_META_INDEX]
+    ):
         packed_metadata = args[_PACKED_META_INDEX]
         # May be None / LazyDict / dict; name extraction tolerates all of these.
         launch_metadata = args[_LAUNCH_META_INDEX]
@@ -654,7 +684,9 @@ class TritonCollector:
             tensor_kinds = extract_tensor_kinds(packed_metadata)
             if kwargs_has_npu:
                 skip_access = True
-                skip_reason = "NPU tensor(s) passed via kwargs; order vs tensor_kinds untrusted"
+                skip_reason = (
+                    "NPU tensor(s) passed via kwargs; order vs tensor_kinds untrusted"
+                )
             else:
                 skip_access = False
                 skip_reason = ""
@@ -674,7 +706,9 @@ class TritonCollector:
             else:
                 self._bump_stat("access_emitted")
         except Exception:
-            _diag("Triton ACCESS collection failed in PRE_HOOK; continuing kernel launch without ACCESS marks.")
+            _diag(
+                "Triton ACCESS collection failed in PRE_HOOK; continuing kernel launch without ACCESS marks."
+            )
             # If begin was already emitted (need_end True), keep it so POST_HOOK
             # still pairs end; do not leave a dangling begin for AtenManager.
         return args, kws
@@ -683,7 +717,9 @@ class TritonCollector:
         """POST_HOOK: emit end after Python launch returns. Must never raise."""
         try:
             if self.enabled and getattr(self._tls, "need_end", False):
-                emit_triton_end_event(getattr(self._tls, "kernel_name", "triton.unknown"))
+                emit_triton_end_event(
+                    getattr(self._tls, "kernel_name", "triton.unknown")
+                )
         except Exception:
             pass  # nosec B110
         finally:

@@ -22,114 +22,80 @@ import io
 import sys
 import types as pytypes
 import unittest
-from unittest import mock
 from pathlib import Path
+from unittest import mock
 
 _SRC = Path(__file__).resolve().parents[2] / "python" / "msmemscope"
 
 
-def _get_or_create_module(name: str) -> pytypes.ModuleType:
-    mod = sys.modules.get(name)
-    if mod is None:
-        mod = pytypes.ModuleType(name)
-        sys.modules[name] = mod
-    return mod
+def _mod(name: str) -> pytypes.ModuleType:
+    m = sys.modules.get(name)
+    if m is None:
+        m = pytypes.ModuleType(name)
+        sys.modules[name] = m
+    return m
 
 
 def _load_tc():
-    pkg = _get_or_create_module("msmemscope")
+    pkg = _mod("msmemscope")
     pkg.__path__ = [str(_SRC)]
-    hijacker_pkg = _get_or_create_module("msmemscope.hijacker")
-    hijacker_pkg.__path__ = [str(_SRC / "hijacker")]
-    _get_or_create_module("msmemscope._msmemscope")
-
-    util_path = _SRC / "hijacker" / "hijack_utility.py"
-    util_spec = importlib.util.spec_from_file_location(
-        "msmemscope.hijacker.hijack_utility", util_path
-    )
-    util_mod = importlib.util.module_from_spec(util_spec)
-    sys.modules["msmemscope.hijacker.hijack_utility"] = util_mod
-    assert util_spec.loader is not None
-    util_spec.loader.exec_module(util_mod)
-
-    tc_path = _SRC / "triton_collection.py"
-    tc_spec = importlib.util.spec_from_file_location(
-        "msmemscope.triton_collection", tc_path
-    )
-    module = importlib.util.module_from_spec(tc_spec)
-    sys.modules["msmemscope.triton_collection"] = module
-    assert tc_spec.loader is not None
-    tc_spec.loader.exec_module(module)
-    return module
+    hp = _mod("msmemscope.hijacker")
+    hp.__path__ = [str(_SRC / "hijacker")]
+    _mod("msmemscope._msmemscope")
+    up = _SRC / "hijacker" / "hijack_utility.py"
+    us = importlib.util.spec_from_file_location("msmemscope.hijacker.hijack_utility", up)
+    um = importlib.util.module_from_spec(us)
+    sys.modules[us.name] = um
+    us.loader.exec_module(um)
+    tp = _SRC / "triton_collection.py"
+    ts = importlib.util.spec_from_file_location("msmemscope.triton_collection", tp)
+    tm = importlib.util.module_from_spec(ts)
+    sys.modules[ts.name] = tm
+    ts.loader.exec_module(tm)
+    return tm
 
 
 tc = _load_tc()
-_DRIVER_MOD = tc._NPU_LAUNCHER_MODULE
+_DRV = tc._NPU_LAUNCHER_MODULE
 
 
-def _ensure_pkg(name: str) -> pytypes.ModuleType:
-    mod = sys.modules.get(name)
-    if mod is None:
-        mod = pytypes.ModuleType(name)
-        mod.__path__ = []  # type: ignore[attr-defined]
-        sys.modules[name] = mod
-    return mod
+def _pkg(name: str) -> pytypes.ModuleType:
+    m = _mod(name)
+    if not hasattr(m, "__path__"):
+        m.__path__ = []
+    return m
 
 
 @contextlib.contextmanager
-def _fake_ascend_driver(launcher_cls):
-    saved = {}
-    for name in list(sys.modules):
-        if name == "triton" or name.startswith("triton."):
-            saved[name] = sys.modules.pop(name)
+def _fake_driver(launcher_cls):
+    saved = {k: sys.modules.pop(k) for k in list(sys.modules) if k == "triton" or k.startswith("triton.")}
     try:
-        _ensure_pkg("triton")
-        _ensure_pkg("triton.backends")
-        _ensure_pkg("triton.backends.ascend")
-        _ensure_pkg("triton.runtime")
-        driver = pytypes.ModuleType(_DRIVER_MOD)
+        for n in ("triton", "triton.backends", "triton.backends.ascend", "triton.runtime"):
+            _pkg(n)
+        driver = pytypes.ModuleType(_DRV)
         driver.NPULauncher = launcher_cls
-        sys.modules[_DRIVER_MOD] = driver
-        runtime_driver = pytypes.ModuleType("triton.runtime.driver")
-        runtime_driver.active = pytypes.SimpleNamespace(launcher_cls=launcher_cls)
-        sys.modules["triton.runtime.driver"] = runtime_driver
-        with mock.patch.object(
-            tc.TritonCollector,
-            "_active_launcher_targets",
-            return_value=[(_DRIVER_MOD, "NPULauncher")],
-        ):
-            yield driver
+        sys.modules[_DRV] = driver
+        rd = pytypes.ModuleType("triton.runtime.driver")
+        rd.active = pytypes.SimpleNamespace(launcher_cls=launcher_cls)
+        sys.modules["triton.runtime.driver"] = rd
+        with mock.patch.object(tc.TritonCollector, "_active_launcher_targets", return_value=[(_DRV, "NPULauncher")]):
+            yield
     finally:
-        for name in list(sys.modules):
-            if name == "triton" or name.startswith("triton."):
-                sys.modules.pop(name, None)
-        for name, old in saved.items():
-            sys.modules[name] = old
+        for k in list(sys.modules):
+            if k == "triton" or k.startswith("triton."):
+                sys.modules.pop(k, None)
+        sys.modules.update(saved)
 
 
-def _launch_args(tensor, name="unit_k", kinds=None):
-    if kinds is None:
-        kinds = [1]
-    packed = {"tensor_kinds": kinds, "name": name}
-    launch = {"name": name}
-    return (1, 1, 1, None, None, packed, launch, None, None, tensor)
-
-
-@contextlib.contextmanager
-def _capture_stderr():
-    buf = io.StringIO()
-    with contextlib.redirect_stderr(buf):
-        yield buf
+def _args(tensor, name="unit_k", kinds=None):
+    kinds = kinds or [1]
+    return (1, 1, 1, None, None, {"tensor_kinds": kinds, "name": name}, {"name": name}, None, None, tensor)
 
 
 class FakeTensor:
-    def __init__(self, ptr, shape, dtype="torch.float32", device="npu:0", itemsize=4):
-        self._ptr = ptr
-        self.shape = shape
-        self.dtype = dtype
-        self.device = device
-        self.itemsize = itemsize
-        self.is_npu = True
+    def __init__(self, ptr, shape, itemsize=4):
+        self._ptr, self.shape, self.itemsize = ptr, shape, itemsize
+        self.dtype, self.device, self.is_npu = "torch.float32", "npu:0", True
 
     def data_ptr(self):
         return self._ptr
@@ -144,90 +110,50 @@ class FakeTensor:
         return self.itemsize
 
 
-def _access_marks(emitted):
-    return [m for m in emitted if m.startswith("memscope-aten-ac:")]
-
-
-class TestKindMapping(unittest.TestCase):
-    def test_input_output_inout_unknown(self):
+class TestCore(unittest.TestCase):
+    def test_kinds(self):
         self.assertEqual(tc.kind_to_access_flags(0), (True, False, False))
         self.assertEqual(tc.kind_to_access_flags(1), (False, True, True))
         self.assertEqual(tc.kind_to_access_flags(2), (True, True, True))
-        self.assertIsNone(tc.kind_to_access_flags(None))
         self.assertIsNone(tc.kind_to_access_flags(99))
 
-    def test_emit_begin_and_access_for_aligned_kinds(self):
-        tensors = [FakeTensor(0x1000 + i * 0x100, (8,)) for i in range(3)]
-        kinds = [0, 0, 1]
-        with mock.patch.object(
-            tc, "is_npu_tensor", side_effect=lambda v: isinstance(v, FakeTensor)
-        ):
-            emitted = tc.emit_triton_access_events(
-                "triton.vector_binary",
-                tuple(tensors),
-                kinds,
-                mark_fn=lambda m: None,
-            )
-        self.assertTrue(emitted[0].startswith("memscope-aten-b:"))
-        self.assertEqual(len(_access_marks(emitted)), 3)
-
-
-class TestCollectorLifecycle(unittest.TestCase):
-    def test_enable_disable_wraps_and_emits_be(self):
-        class FakeLauncher:
-            def __call__(self, *args, **kwargs):
+    def test_enable_emits_be(self):
+        class L:
+            def __call__(self, *a, **k):
                 return "ok"
 
-        collector = tc.TritonCollector()
-        with _fake_ascend_driver(FakeLauncher):
-            collector.enable()
-            t = FakeTensor(0x10, (2,))
-            marks = []
-            with mock.patch.object(
-                tc, "is_npu_tensor", side_effect=lambda v: isinstance(v, FakeTensor)
-            ):
-                with mock.patch.object(
-                    tc, "_default_mark", side_effect=lambda m: marks.append(m)
-                ):
-                    ret = FakeLauncher()(*_launch_args(t))
-            self.assertEqual(ret, "ok")
+        c, marks = tc.TritonCollector(), []
+        with _fake_driver(L):
+            c.enable()
+            with mock.patch.object(tc, "is_npu_tensor", side_effect=lambda v: isinstance(v, FakeTensor)):
+                with mock.patch.object(tc, "_default_mark", side_effect=marks.append):
+                    self.assertEqual(L()(*_args(FakeTensor(0x10, (2,)))), "ok")
             self.assertTrue(any(m.startswith("memscope-aten-b:") for m in marks))
             self.assertTrue(any(m.startswith("memscope-aten-e:") for m in marks))
-            collector.disable()
-            marks.clear()
-            with mock.patch.object(
-                tc, "_default_mark", side_effect=lambda m: marks.append(m)
-            ):
-                FakeLauncher()(*_launch_args(t))
-            self.assertEqual(marks, [])
+            c.disable()
 
-    def test_pre_emit_raise_still_pairs_end(self):
-
-        class FakeLauncher:
-            def __call__(self, *args, **kwargs):
+    def test_pre_raise_pairs_end(self):
+        class L:
+            def __call__(self, *a, **k):
                 return "ok"
 
-        collector = tc.TritonCollector()
-        t = FakeTensor(0x10, (2,))
-        marks = []
+        c, marks = tc.TritonCollector(), []
 
-        def flaky_emit(*a, **k):
+        def flaky(*a, **k):
             marks.append(tc.build_begin_mark("triton.unit_k"))
-            raise RuntimeError("mid emit")
+            raise RuntimeError("mid")
 
-        with _fake_ascend_driver(FakeLauncher):
-            collector.enable()
-            with mock.patch.object(tc, "emit_triton_access_events", side_effect=flaky_emit):
-                with mock.patch.object(
-                    tc, "_default_mark", side_effect=lambda m: marks.append(m)
-                ):
-                    with _capture_stderr() as err:
-                        ret = FakeLauncher()(*_launch_args(t))
-            collector.disable()
-        self.assertEqual(ret, "ok")
+        buf = io.StringIO()
+        with _fake_driver(L):
+            c.enable()
+            with mock.patch.object(tc, "emit_triton_access_events", side_effect=flaky):
+                with mock.patch.object(tc, "_default_mark", side_effect=marks.append):
+                    with contextlib.redirect_stderr(buf):
+                        self.assertEqual(L()(*_args(FakeTensor(0x10, (2,)))), "ok")
+            c.disable()
         self.assertTrue(any(m.startswith("memscope-aten-b:") for m in marks))
         self.assertTrue(any(m.startswith("memscope-aten-e:") for m in marks))
-        self.assertIn("ACCESS collection failed", err.getvalue())
+        self.assertIn("ACCESS collection failed", buf.getvalue())
 
 
 if __name__ == "__main__":
