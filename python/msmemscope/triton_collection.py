@@ -543,7 +543,7 @@ class TritonCollector:
                 if obj is not None:
                     seen_cls.add(id(obj))
             except Exception:
-                pass
+                pass  # nosec B110
         try:
             from triton.runtime import driver as triton_driver
 
