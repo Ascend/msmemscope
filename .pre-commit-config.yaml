@@ -85,7 +85,7 @@ repos:
           - "--style={BasedOnStyle: Google, IndentWidth: 4, ColumnLimit: 120, BreakBeforeBraces: Allman}"
           - "--verbose"
           - "-i"
-        exclude: ^(build/|tests/|tests/third_party/)
+        exclude: ^(build/|test/|tests/|tests/third_party/)
 
   # -------------------------- Gitleaks 本地离线二进制扫描 --------------------------
   - repo: local

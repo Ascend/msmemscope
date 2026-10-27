@@ -27,7 +27,8 @@
 
 using namespace MemScope;
 
-namespace {
+namespace
+{
 
 Config MakeBaseConfig()
 {
@@ -46,8 +47,9 @@ Config MakeBaseConfig()
 
 }  // namespace
 
-class TritonCollectGateTest : public ::testing::Test {
-protected:
+class TritonCollectGateTest : public ::testing::Test
+{
+   protected:
     Config savedConfig_{};
     EventTraceStatus savedStatus_{EventTraceStatus::NOT_IN_TRACING};
     bool savedAcl_{false};
