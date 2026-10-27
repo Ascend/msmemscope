@@ -1,7 +1,19 @@
 #!/bin/bash
-# Internal NPU smoke for Triton ACCESS path (not a user sample).
-# Usage (from repo root): bash test/triton_access/test_triton_access.sh
-# Set TOOL_PATH to the msMemScope install prefix that contains lib64/*.so
+# -------------------------------------------------------------------------
+# This file is part of the MindStudio project.
+# Copyright (c) 2025 Huawei Technologies Co.,Ltd.
+#
+# MindStudio is licensed under Mulan PSL v2.
+# You can use this software according to the terms and conditions of the Mulan PSL v2.
+# You may obtain a copy of Mulan PSL v2 at:
+#
+#          http://license.coscl.org.cn/MulanPSL2
+#
+# THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND,
+# EITHER EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT,
+# MERCHANTABILITY OR FIT FOR A PARTICULAR PURPOSE.
+# See the Mulan PSL v2 for more details.
+# -------------------------------------------------------------------------
 
 set -euo pipefail
 cd "$(dirname "$0")" || exit 1

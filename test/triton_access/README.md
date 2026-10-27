@@ -1,4 +1,4 @@
-# Triton ACCESS â€?internal NPU tests
+# Triton ACCESS - internal NPU tests
 
 Developer tests for triton-ascend under operator execution + memory access
 collection. **Not** a user-facing sample.
