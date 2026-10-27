@@ -86,7 +86,6 @@ _SCAN_ARG_LIMIT = 20
 _EXCLUDED_TENSOR_SUBCLASSES: Optional[Tuple[type, ...]] = None
 _EXCLUDED_TENSOR_SUBCLASSES_RESOLVED = False
 
-
 def _diag(msg: str) -> None:
     """Non-fatal diagnostic — never use warnings.warn (breaks under -W error)."""
     print(f"[msmemscope] {msg}", file=sys.stderr)
@@ -380,9 +379,10 @@ def emit_triton_access_events(
             )
         else:
             detail = f"unknown tensor_kinds value(s){meta_hint}: {list(tensor_kinds)}"
-        _diag(
-            f"Triton {detail} for {kernel_name}; skipping ACCESS marks (R/W correctness requires aligned tensor_kinds)."
-        )
+        key = f"{kernel_name}|{detail}"
+        if key not in _SKIP_ACCESS_WARNED:
+            _SKIP_ACCESS_WARNED.add(key)
+            _diag(f"Triton {detail} for {kernel_name}; skipping ACCESS marks.")
         return marks
 
     for tensor, kind, kind_missing in iter_tensor_args_with_kinds(kernel_args, tensor_kinds):
