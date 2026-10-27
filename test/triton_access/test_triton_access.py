@@ -18,6 +18,8 @@
 
 from __future__ import annotations
 
+import csv
+import shutil
 import sys
 from pathlib import Path
 
@@ -63,24 +65,47 @@ def _launch_axpy(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
     return dst
 
 
-def _dump_has_access(out_dir: Path) -> bool:
+def _norm_ptr(v: str) -> str:
+    s = (v or "").strip().lower()
+    if s.startswith("0x"):
+        return hex(int(s, 16))
+    try:
+        return hex(int(s))
+    except ValueError:
+        return s
+
+
+def _dump_has_kernel_access(out_dir: Path, expect: dict) -> bool:
+    """Require ACCESS rows for this kernel with expected Ptr+Type pairs."""
     if not out_dir.is_dir():
         return False
-    for path in out_dir.rglob("*"):
-        if not path.is_file():
-            continue
+    need = {(expect["a"], "READ"), (expect["b"], "READ"), (expect["dst"], "WRITE")}
+    found = set()
+    for path in out_dir.rglob("memscope_dump_*.csv"):
         try:
-            text = path.read_text(encoding="utf-8", errors="ignore")
+            with path.open(encoding="utf-8", errors="ignore", newline="") as fh:
+                for row in csv.DictReader(fh):
+                    ev = (row.get("Event") or row.get("Event Type") or "").upper()
+                    if "ACCESS" not in ev:
+                        continue
+                    name = row.get("Name") or ""
+                    if _KERNEL_TAG not in name:
+                        continue
+                    ptr = _norm_ptr(row.get("Ptr") or row.get("Address") or "")
+                    typ = (row.get("Type") or row.get("Access") or "").upper()
+                    if "READ" in typ:
+                        found.add((ptr, "READ"))
+                    if "WRITE" in typ:
+                        found.add((ptr, "WRITE"))
         except OSError:
             continue
-        if _KERNEL_TAG in text and ("WRITE" in text or "READ" in text or "ACCESS" in text.upper()):
-            return True
-        if "msm_access_smoke" in text and ("WRITE" in text or "READ" in text):
-            return True
-    return False
+    return need.issubset(found)
 
 
 def main() -> int:
+    shutil.rmtree(_OUT, ignore_errors=True)
+    _OUT.mkdir(parents=True, exist_ok=True)
+
     msmemscope.config(
         events="alloc,free,access,launch",
         level="kernel,op",
@@ -95,6 +120,11 @@ def main() -> int:
 
     msmemscope.start()
     out = _launch_axpy(a, b)
+    expect = {
+        "a": hex(int(a.data_ptr())),
+        "b": hex(int(b.data_ptr())),
+        "dst": hex(int(out.data_ptr())),
+    }
     torch.npu.synchronize()
     msmemscope.stop()
 
@@ -104,8 +134,12 @@ def main() -> int:
     if max_diff > _TOL:
         print(f"FAIL: numerical mismatch max_diff={max_diff} > {_TOL}", file=sys.stderr)
         return 1
-    if not _dump_has_access(_OUT):
-        print(f"FAIL: no Triton ACCESS evidence under {_OUT.resolve()}", file=sys.stderr)
+    if not _dump_has_kernel_access(_OUT, expect):
+        print(
+            f"FAIL: missing Triton ACCESS Ptr/Type for {_KERNEL_TAG} under {_OUT.resolve()} "
+            f"(expect {expect})",
+            file=sys.stderr,
+        )
         return 1
     print("PASS: numerical OK + ACCESS dump present.")
     return 0

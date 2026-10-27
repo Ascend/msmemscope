@@ -56,6 +56,12 @@ EXPECTED_RW = {
 }
 
 
+def _write_report(path: Path, text: str) -> None:
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
+
+
 def _assert_no_aten_bridge() -> None:
     import msmemscope.aten_collection as aten
 
@@ -487,14 +493,20 @@ def main() -> int:
         n_states = 6
         report.append(f"TOTAL: E2E gate {n_states}/{n_states} PASS ({len(E2E_KERNELS)} kernels x states + post-stop)")
         text = "\n".join(report) + "\n"
-        args.out.write_text(text, encoding="utf-8")
+        try:
+            _write_report(args.out, text)
+        except OSError as exc:
+            print(f"WARN: failed to write report {args.out}: {exc}", file=sys.stderr)
         print(text)
         return 0
     except Exception as exc:
         report.append(f"FAIL: {exc}")
         report.append(traceback.format_exc())
         text = "\n".join(report) + "\n"
-        args.out.write_text(text, encoding="utf-8")
+        try:
+            _write_report(args.out, text)
+        except OSError as write_exc:
+            print(f"WARN: failed to write report {args.out}: {write_exc}", file=sys.stderr)
         print(text)
         return 1
 

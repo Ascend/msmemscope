@@ -30,6 +30,8 @@ for so in libleaks_ascend_hal_hook.so libascend_mstx_hook.so libascend_kernel_ho
   fi
 done
 
+REPO_ROOT="$(cd ../.. && pwd)"
+export PYTHONPATH="${REPO_ROOT}/python:${PYTHONPATH:-}"
 export LD_PRELOAD="${TOOL_PATH}/lib64/libleaks_ascend_hal_hook.so:${TOOL_PATH}/lib64/libascend_mstx_hook.so:${TOOL_PATH}/lib64/libascend_kernel_hook.so"
 export LD_LIBRARY_PATH="${TOOL_PATH}/lib64/:${LD_LIBRARY_PATH:-}"
 
