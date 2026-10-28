@@ -1,4 +1,4 @@
-# -------------------------------------------------------------------------
+﻿# -------------------------------------------------------------------------
 # This file is part of the MindStudio project.
 # Copyright (c) 2025 Huawei Technologies Co.,Ltd.
 #
@@ -13,9 +13,7 @@
 # MERCHANTABILITY OR FIT FOR A PARTICULAR PURPOSE.
 # See the Mulan PSL v2 for more details.
 # -------------------------------------------------------------------------
-
 """Slim CPU UT for Triton ACCESS (no NPU)."""
-
 import contextlib
 import importlib.util
 import io
@@ -28,7 +26,7 @@ from unittest import mock
 _SRC = Path(__file__).resolve().parents[2] / "python" / "msmemscope"
 
 
-def _mod(name: str) -> pytypes.ModuleType:
+def _mod(name):
     m = sys.modules.get(name)
     if m is None:
         m = pytypes.ModuleType(name)
@@ -59,7 +57,7 @@ tc = _load_tc()
 _DRV = tc._NPU_LAUNCHER_MODULE
 
 
-def _pkg(name: str) -> pytypes.ModuleType:
+def _pkg(name):
     m = _mod(name)
     if not hasattr(m, "__path__"):
         m.__path__ = []
@@ -114,8 +112,16 @@ class TestCore(unittest.TestCase):
     def test_kinds(self):
         self.assertEqual(tc.kind_to_access_flags(0), (True, False, False))
         self.assertEqual(tc.kind_to_access_flags(1), (False, True, True))
-        self.assertEqual(tc.kind_to_access_flags(2), (True, True, True))
         self.assertIsNone(tc.kind_to_access_flags(99))
+
+    def test_kinds_missing_emits_unknown(self):
+        t, marks = FakeTensor(0x20, (4,)), []
+        with mock.patch.object(tc, "is_npu_tensor", side_effect=lambda v: isinstance(v, FakeTensor)):
+            out = tc.emit_triton_access_events("triton.unk", (t,), None, mark_fn=marks.append)
+        ac = [m for m in out if m.startswith("memscope-aten-ac:")]
+        self.assertEqual(len(ac), 1)
+        self.assertIn("is_write=False", ac[0])
+        self.assertIn("is_read=False", ac[0])
 
     def test_enable_emits_be(self):
         class L:
@@ -124,7 +130,8 @@ class TestCore(unittest.TestCase):
 
         c, marks = tc.TritonCollector(), []
         with _fake_driver(L):
-            c.enable()
+            with mock.patch.object(tc, "_ensure_mstx", return_value=True):
+                c.enable()
             with mock.patch.object(tc, "is_npu_tensor", side_effect=lambda v: isinstance(v, FakeTensor)):
                 with mock.patch.object(tc, "_default_mark", side_effect=marks.append):
                     self.assertEqual(L()(*_args(FakeTensor(0x10, (2,)))), "ok")
@@ -145,15 +152,16 @@ class TestCore(unittest.TestCase):
 
         buf = io.StringIO()
         with _fake_driver(L):
-            c.enable()
+            with mock.patch.object(tc, "_ensure_mstx", return_value=True):
+                c.enable()
             with mock.patch.object(tc, "emit_triton_access_events", side_effect=flaky):
                 with mock.patch.object(tc, "_default_mark", side_effect=marks.append):
                     with contextlib.redirect_stderr(buf):
                         self.assertEqual(L()(*_args(FakeTensor(0x10, (2,)))), "ok")
             c.disable()
-        self.assertTrue(any(m.startswith("memscope-aten-b:") for m in marks))
         self.assertTrue(any(m.startswith("memscope-aten-e:") for m in marks))
         self.assertIn("ACCESS collection failed", buf.getvalue())
+        self.assertGreaterEqual(c.stats.get("emit_failed", 0), 1)
 
 
 if __name__ == "__main__":

@@ -134,8 +134,6 @@ class EventTraceManager
     bool IsDeviceReady();
     void HandleWithATenCollect();
     void HandleWithTritonCollect();
-    /** Gate used by HandleWithTritonCollect (exposed for UT). */
-    bool ShouldEnableTritonCollect() const;
     void HandleWithDecompose();
     void HandleWithCpuTensorCollect();
     void CleanUpEventTraceManager();
@@ -148,6 +146,8 @@ class EventTraceManager
     }
     ~EventTraceManager() { destroyed_.store(true); }
 
+    /** Gate for HandleWithTritonCollect (UT accesses via #define private public). */
+    bool ShouldEnableTritonCollect() const;
     void InitTraceStatus();  // 命令行拉起时有一个初始化状态
 
     std::mutex mutex_;

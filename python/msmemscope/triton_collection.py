@@ -14,45 +14,25 @@
 # See the Mulan PSL v2 for more details.
 # -------------------------------------------------------------------------
 
-"""Collect Triton kernel memory access events for msMemScope.
+"""Triton ACCESS via hijacker + memscope-aten-* MSTX.
 
-Triton kernels bypass ``__torch_dispatch__``, so AtenCollector cannot see their
-device-memory touches. This module intercepts the Ascend Triton launch path via
-the repo ``hijacker`` (PRE_HOOK for begin/ACCESS, POST_HOOK for end), infers R/W
-from compile-time ``tensor_kinds``, and emits the same ``memscope-aten-*`` MSTX
-protocol consumed by AtenManager.
-
-R/W correctness: ACCESS marks are emitted only when ``tensor_kinds`` aligns with
-positional NPU tensor arguments and every kind is a known value (0/1/2). Missing,
-mismatched, unknown kinds, or NPU tensors passed via kwargs skip ACCESS
-(begin/end still emitted). Never invent R/W when kinds are untrusted.
-
-ABI: launch args are anchored on ``packed_metadata`` at fixed index 5
-(``args[9:]`` = non-constexpr kernel args). ``launch_metadata`` (index 6) is
-optional — triton-ascend 3.2.2 often passes ``None`` when no enter hook is set.
-
-Diagnostic messages use stderr prints (not ``warnings.warn``) so ``-W error``
-cannot abort kernel launch.
+Known tensor_kinds → precise R/W; missing/mismatch/unknown → UNKNOWN ACCESS
+(is_read=False;is_write=False). Kwargs NPU tensors skip ACCESS. Lazy triton
+hijack via module POST_HOOK (no force-import). Diagnostics use stderr.
 """
 
 from __future__ import annotations
 
 import sys
 import threading
+import types as _types
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 from .hijacker.hijack_utility import PRE_HOOK, POST_HOOK, hijacker, release
 
-# Dedup skip-ACCESS diagnostics: (kernel_name, reason) → already reported
 _SKIP_ACCESS_WARNED: Set[str] = set()
+_MSTX_UNAVAILABLE_WARNED = False
 
-# Canonical Ascend Triton launcher (hijacker target). Deferred import is handled
-# by HiJackerPathFinder — no builtins.__import__ patching.
-#
-# Runtime note: triton-ascend often exposes the live class as builtin
-# ``ascend.NPULauncher`` (via ``driver.active.launcher_cls``), which is a
-# *different* object from ``triton.backends.ascend.driver.NPULauncher``.
-# We register both the canonical Python path and the active class host module.
 _NPU_LAUNCHER_MODULE = "triton.backends.ascend.driver"
 _NPU_LAUNCHER_CLS = "NPULauncher"
 _NPU_LAUNCHER_FUNC = "__call__"
@@ -60,7 +40,7 @@ _NPU_LAUNCHER_TARGETS = ((_NPU_LAUNCHER_MODULE, _NPU_LAUNCHER_CLS),)
 
 try:
     import mstx
-except Exception:  # pragma: no cover - mstx always present in tool runtime
+except Exception:  # pragma: no cover
     mstx = None
 
 try:
@@ -68,36 +48,26 @@ try:
 except Exception:  # pragma: no cover
     torch = None
 
-# Ascend IR / launcher conventions (see triton-ascend driver.cpp TENSOR_KIND_*)
 TENSOR_KIND_INPUT = 0
 TENSOR_KIND_OUTPUT = 1
 TENSOR_KIND_INOUT = 2
 _KNOWN_TENSOR_KINDS = frozenset((TENSOR_KIND_INPUT, TENSOR_KIND_OUTPUT, TENSOR_KIND_INOUT))
 
-# CompiledKernel.run / NPULauncher.__call__ positional layout before kernel args
-# grid0,grid1,grid2,stream,function,packed_metadata,launch_metadata,enter,exit,*args
 _LAUNCH_META_INDEX = 6
 _PACKED_META_INDEX = 5
 _KERNEL_ARGS_START = 9
-_PACKED_TO_KERNEL_ARGS = 4  # packed, launch, enter, exit
+_PACKED_TO_KERNEL_ARGS = 4
 _SCAN_ARG_LIMIT = 20
 
-# Lazily resolved once: FakeTensor / FunctionalTensor classes to exclude.
 _EXCLUDED_TENSOR_SUBCLASSES: Optional[Tuple[type, ...]] = None
 _EXCLUDED_TENSOR_SUBCLASSES_RESOLVED = False
 
 
 def _diag(msg: str) -> None:
-    """Non-fatal diagnostic — never use warnings.warn (breaks under -W error)."""
     print(f"[msmemscope] {msg}", file=sys.stderr)
 
 
 def _excluded_tensor_subclasses() -> Tuple[type, ...]:
-    """Resolve FakeTensor/FunctionalTensor once (hot path avoids per-call import).
-
-    Only caches permanently when at least one class was found; empty failure
-    leaves unresolved so a later torch import can retry (review P2-e).
-    """
     global _EXCLUDED_TENSOR_SUBCLASSES, _EXCLUDED_TENSOR_SUBCLASSES_RESOLVED
     if _EXCLUDED_TENSOR_SUBCLASSES_RESOLVED:
         return _EXCLUDED_TENSOR_SUBCLASSES or ()
@@ -122,7 +92,6 @@ def _excluded_tensor_subclasses() -> Tuple[type, ...]:
 
 
 def calculate_tensor_size(tensor: Any) -> int:
-    """Logical element count * element size (matches aten_collection)."""
     numel_fn = getattr(tensor, "numel", None)
     elem_fn = getattr(tensor, "element_size", None)
     if callable(numel_fn) and callable(elem_fn):
@@ -138,7 +107,6 @@ def calculate_tensor_size(tensor: Any) -> int:
 
 def is_npu_tensor(value: Any) -> bool:
     if torch is not None and isinstance(value, torch.Tensor):
-        # Align with aten_collection: ignore FakeTensor / FunctionalTensor subclasses.
         excluded = _excluded_tensor_subclasses()
         if excluded and isinstance(value, excluded):
             return False
@@ -153,11 +121,6 @@ def is_known_tensor_kind(kind: Optional[int]) -> bool:
 
 
 def kind_to_access_flags(kind: Optional[int]) -> Optional[Tuple[bool, bool, bool]]:
-    """Map known tensor_kind to (is_read, is_write, is_output). None if unknown.
-
-    INOUT sets ``is_output=True`` intentionally so ``--watch`` includes the tensor
-    (Aten in-place inputs use ``is_output=False``; dumped Event Type is still WRITE).
-    """
     if kind == TENSOR_KIND_INPUT:
         return True, False, False
     if kind == TENSOR_KIND_OUTPUT:
@@ -178,8 +141,6 @@ def extract_tensor_kinds(packed_metadata: Any) -> Optional[Sequence[int]]:
         if kinds is None and hasattr(packed_metadata, "get") and callable(packed_metadata.get):
             try:
                 kinds = packed_metadata.get("tensor_kinds")
-            except TypeError:
-                kinds = None
             except Exception:
                 kinds = None
     if kinds is None:
@@ -257,7 +218,6 @@ def build_end_mark(name: str) -> str:
 
 
 def _is_packed_metadata(obj: Any) -> bool:
-    """True if obj looks like Ascend ``pack_metadata`` (tensor_kinds and/or kernel_name/hash)."""
     if obj is None:
         return False
     if isinstance(obj, dict):
@@ -274,7 +234,6 @@ def _is_packed_metadata(obj: Any) -> bool:
 
 
 def _is_launch_metadata(obj: Any) -> bool:
-    """Optional enrichment only — ``None`` is common on triton-ascend 3.2.2."""
     if obj is None:
         return False
     if isinstance(obj, dict):
@@ -299,11 +258,6 @@ def iter_tensor_args_with_kinds(
     kernel_args: Sequence[Any],
     tensor_kinds: Optional[Sequence[int]],
 ) -> Iterable[Tuple[Any, Optional[int], bool]]:
-    """Yield (tensor, kind, kind_missing) for NPU tensor kernel arguments.
-
-    ``tensor_kinds`` indexes only NPU/pointer args (scalars skipped), matching
-    triton-ascend packed_metadata convention.
-    """
     kind_idx = 0
     kinds_len = len(tensor_kinds) if tensor_kinds is not None else 0
     for arg in kernel_args:
@@ -335,6 +289,38 @@ def _metadata_summary(packed_metadata: Any) -> str:
     return f"type={type(packed_metadata).__name__}"
 
 
+def _append_access_mark(
+    marks: List[str],
+    mark_fn,
+    tensor: Any,
+    kernel_name: str,
+    *,
+    is_read: bool,
+    is_write: bool,
+    is_output: bool,
+) -> None:
+    try:
+        data_ptr = int(tensor.data_ptr())
+        tensor_size = calculate_tensor_size(tensor)
+    except Exception:
+        return  # nosec B110
+    if data_ptr == 0:
+        return
+    msg = build_access_mark(
+        data_ptr=data_ptr,
+        is_write=is_write,
+        is_read=is_read,
+        is_output=is_output,
+        name=kernel_name,
+        shape=tensor.shape,
+        dtype=tensor.dtype,
+        tensor_size=tensor_size,
+        device=tensor.device,
+    )
+    mark_fn(msg)
+    marks.append(msg)
+
+
 def emit_triton_access_events(
     kernel_name: str,
     kernel_args: Sequence[Any],
@@ -345,7 +331,6 @@ def emit_triton_access_events(
     skip_access: bool = False,
     skip_access_reason: str = "",
 ) -> List[str]:
-    """Emit begin + access MSTX marks. Returns the mark strings (for UT)."""
     if mark_fn is None:
         mark_fn = _default_mark
 
@@ -363,13 +348,12 @@ def emit_triton_access_events(
                 "emitting begin/end only (R/W order not trusted)."
             )
         return marks
+
     npu_tensors = _collect_npu_tensors(kernel_args)
     usable, reason = _kinds_usable(len(npu_tensors), tensor_kinds)
 
     if not usable:
-        meta_hint = ""
-        if packed_metadata is not None:
-            meta_hint = f" ({_metadata_summary(packed_metadata)})"
+        meta_hint = f" ({_metadata_summary(packed_metadata)})" if packed_metadata is not None else ""
         if reason == "missing":
             detail = f"tensor_kinds missing{meta_hint}"
         elif reason == "length_mismatch":
@@ -380,37 +364,30 @@ def emit_triton_access_events(
             )
         else:
             detail = f"unknown tensor_kinds value(s){meta_hint}: {list(tensor_kinds)}"
-        key = f"{kernel_name}|{detail}"
+        key = f"{kernel_name}|{detail}|unknown"
         if key not in _SKIP_ACCESS_WARNED:
             _SKIP_ACCESS_WARNED.add(key)
-            _diag(f"Triton {detail} for {kernel_name}; skipping ACCESS marks.")
+            _diag(
+                f"Triton {detail} for {kernel_name}; "
+                "emitting ACCESS with UNKNOWN direction (is_read=False;is_write=False)."
+            )
+        for tensor in npu_tensors:
+            _append_access_mark(
+                marks, mark_fn, tensor, kernel_name, is_read=False, is_write=False, is_output=False
+            )
         return marks
 
     for tensor, kind, kind_missing in iter_tensor_args_with_kinds(kernel_args, tensor_kinds):
         flags = None if kind_missing else kind_to_access_flags(kind)
         if flags is None:
+            _append_access_mark(
+                marks, mark_fn, tensor, kernel_name, is_read=False, is_write=False, is_output=False
+            )
             continue
         is_read, is_write, is_output = flags
-        try:
-            data_ptr = int(tensor.data_ptr())
-            tensor_size = calculate_tensor_size(tensor)
-        except Exception:
-            continue  # nosec B112
-        if data_ptr == 0:
-            continue
-        msg = build_access_mark(
-            data_ptr=data_ptr,
-            is_write=is_write,
-            is_read=is_read,
-            is_output=is_output,
-            name=kernel_name,
-            shape=tensor.shape,
-            dtype=tensor.dtype,
-            tensor_size=tensor_size,
-            device=tensor.device,
+        _append_access_mark(
+            marks, mark_fn, tensor, kernel_name, is_read=is_read, is_write=is_write, is_output=is_output
         )
-        mark_fn(msg)
-        marks.append(msg)
     return marks
 
 
@@ -424,30 +401,36 @@ def emit_triton_end_event(kernel_name: str, *, mark_fn=None) -> str:
 
 def _default_mark(msg: str) -> None:
     if mstx is None:
-        _diag(
-            "mstx is unavailable; Triton ACCESS mark dropped "
-            f"(msg prefix={msg[:48]!r}). Install/ensure mstx for collection."
-        )
         return
     mstx.mark(msg, None)
 
 
+def _ensure_mstx() -> bool:
+    global mstx, _MSTX_UNAVAILABLE_WARNED
+    if mstx is not None:
+        return True
+    try:
+        import mstx as _mstx  # type: ignore
+
+        mstx = _mstx
+    except Exception:
+        mstx = None
+    if mstx is None and not _MSTX_UNAVAILABLE_WARNED:
+        _MSTX_UNAVAILABLE_WARNED = True
+        _diag(
+            "mstx is unavailable; Triton collector will not install launch hooks. "
+            "Install/ensure mstx for collection."
+        )
+    return mstx is not None
+
+
 def _parse_launch_args(args: tuple, kwargs: Optional[dict] = None) -> Optional[Tuple[Any, Any, tuple, bool]]:
-    """Return (packed, launch, kernel_args, kwargs_has_npu) if layout is recognizable.
-
-    Anchored on ``packed_metadata`` (fixed index 5 on the standard Ascend launch ABI).
-    ``launch_metadata`` may be ``None`` (triton-ascend 3.2.2 without enter hook).
-
-    ``kwargs_has_npu`` means keyword NPU tensors were present; ACCESS must be skipped
-    because append-order would not match ``tensor_kinds``.
-    """
     packed_metadata = None
     launch_metadata = None
     kernel_args: Optional[list] = None
 
     if len(args) >= _KERNEL_ARGS_START and _is_packed_metadata(args[_PACKED_META_INDEX]):
         packed_metadata = args[_PACKED_META_INDEX]
-        # May be None / LazyDict / dict; name extraction tolerates all of these.
         launch_metadata = args[_LAUNCH_META_INDEX]
         kernel_args = list(args[_KERNEL_ARGS_START:])
 
@@ -457,12 +440,10 @@ def _parse_launch_args(args: tuple, kwargs: Optional[dict] = None) -> Optional[T
             if not _is_packed_metadata(args[i]):
                 continue
             packed_metadata = args[i]
-            # Standard relative layout: packed, launch, enter, exit, *kernel_args
             if i + _PACKED_TO_KERNEL_ARGS <= len(args):
                 launch_metadata = args[i + 1] if i + 1 < len(args) else None
                 kernel_args = list(args[i + _PACKED_TO_KERNEL_ARGS :])
             else:
-                # Degenerate short tuple (UT): packed, optional launch, then tensors
                 rest = list(args[i + 1 :])
                 if rest and _is_launch_metadata(rest[0]):
                     launch_metadata = rest.pop(0)
@@ -482,7 +463,6 @@ def _parse_launch_args(args: tuple, kwargs: Optional[dict] = None) -> Optional[T
             if is_npu_tensor(value):
                 kwargs_has_npu = True
                 break
-
     return packed_metadata, launch_metadata, tuple(kernel_args), kwargs_has_npu
 
 
@@ -491,15 +471,24 @@ class TritonCollector:
 
     def __init__(self) -> None:
         self.enabled = False
+        self.collect_launch = True
+        self.collect_access = True
         self._hooked = False
         self._handlers: List[Any] = []
+        self._import_hooks: List[Any] = []
         self._lock = threading.RLock()
         self._tls = threading.local()
         self.stats = {
             "kernels_seen": 0,
+            "launch_with_access": 0,
+            "launch_with_unknown_access": 0,
+            "skip_kwargs": 0,
+            "no_tensor": 0,
+            "access_gated": 0,
+            "emit_failed": 0,
             "access_emitted": 0,
             "access_skipped": 0,
-            "enable_calls": 0,  # bumped only by enable_triton_collector (C++ or Python)
+            "enable_calls": 0,
         }
 
     def __del__(self):
@@ -510,30 +499,62 @@ class TritonCollector:
             except Exception:
                 pass  # nosec B110
 
-    def enable(self) -> None:
+    def enable(self, collect_launch: bool = True, collect_access: bool = True) -> None:
         with self._lock:
+            self.collect_launch = bool(collect_launch)
+            self.collect_access = bool(collect_access)
             self.enabled = True
             self.stats["enable_calls"] = self.stats.get("enable_calls", 0) + 1
-            self._install_hijacks()
+            if not _ensure_mstx():
+                self._uninstall_hijacks()
+                return
+            self._ensure_import_hooks()
+            self._try_install_hijacks()
 
     def disable(self) -> None:
+        global _MSTX_UNAVAILABLE_WARNED
         with self._lock:
             self._uninstall_hijacks()
+            self._uninstall_import_hooks()
             self.enabled = False
+            self.collect_launch = True
+            self.collect_access = True
             _SKIP_ACCESS_WARNED.clear()
+            _MSTX_UNAVAILABLE_WARNED = False
 
     def _bump_stat(self, key: str) -> None:
         with self._lock:
             self.stats[key] = self.stats.get(key, 0) + 1
 
-    def _active_launcher_targets(self) -> List[Tuple[str, str]]:
-        """Return (module, class_name) pairs to hijack, including live launcher_cls.
+    def _on_driver_imported(self, module) -> None:  # pylint: disable=unused-argument
+        with self._lock:
+            if self.enabled and mstx is not None:
+                self._try_install_hijacks()
 
-        Dedupes by class *identity*: the live ``ascend.NPULauncher`` must be
-        registered when it is a different object from the canonical Python
-        ``triton.backends.ascend.driver.NPULauncher``, but the same class must
-        not be hooked twice via two module paths (breaks the hijacker chain).
-        """
+    def _ensure_import_hooks(self) -> None:
+        if self._import_hooks:
+            return
+        try:
+            self._import_hooks.append(
+                hijacker(
+                    stub=self._on_driver_imported,
+                    module=_NPU_LAUNCHER_MODULE,
+                    action=POST_HOOK,
+                    priority=50,
+                )
+            )
+        except Exception as exc:
+            _diag(f"failed to register Triton driver import hook: {exc}")
+
+    def _uninstall_import_hooks(self) -> None:
+        for handler in self._import_hooks:
+            try:
+                release(handler)
+            except Exception:
+                pass  # nosec B110
+        self._import_hooks = []
+
+    def _active_launcher_targets(self) -> List[Tuple[str, str]]:
         targets: List[Tuple[str, str]] = list(_NPU_LAUNCHER_TARGETS)
         seen_keys = set(targets)
         seen_cls: Set[int] = set()
@@ -545,24 +566,20 @@ class TritonCollector:
                     seen_cls.add(id(obj))
             except Exception:
                 pass  # nosec B110
-        try:
-            from triton.runtime import driver as triton_driver
 
-            active = getattr(triton_driver, "active", None)
-            cls = getattr(active, "launcher_cls", None) if active is not None else None
-        except Exception:
-            cls = None
-        if cls is None:
-            return targets
-        if id(cls) in seen_cls:
+        cls = None
+        driver_mod = sys.modules.get("triton.runtime.driver")
+        if driver_mod is not None:
+            try:
+                active = getattr(driver_mod, "active", None)
+                cls = getattr(active, "launcher_cls", None) if active is not None else None
+            except Exception:
+                cls = None
+        if cls is None or id(cls) in seen_cls:
             return targets
 
         mod_name = getattr(cls, "__module__", None) or "ascend"
         cls_name = getattr(cls, "__name__", None) or _NPU_LAUNCHER_CLS
-        # Builtin / extension classes may not live in sys.modules; host them so
-        # hijacker can resolve module→class→__call__ the same way as Python paths.
-        import types as _types
-
         host = sys.modules.get(mod_name)
         if host is None:
             host = _types.ModuleType(mod_name)
@@ -576,15 +593,19 @@ class TritonCollector:
         key = (mod_name, cls_name)
         if key not in seen_keys:
             targets.append(key)
-            seen_keys.add(key)
         return targets
 
-    def _install_hijacks(self) -> None:
+    def _try_install_hijacks(self) -> None:
         if self._hooked:
+            return
+        if _NPU_LAUNCHER_MODULE not in sys.modules and "triton.runtime.driver" not in sys.modules:
             return
         handlers: List[Any] = []
         try:
             for module, cls_name in self._active_launcher_targets():
+                if module not in sys.modules and module != "ascend":
+                    if module == _NPU_LAUNCHER_MODULE:
+                        continue
                 handlers.append(
                     hijacker(
                         stub=self._pre_npu_launcher,
@@ -607,8 +628,6 @@ class TritonCollector:
                 )
             self._handlers = handlers
             self._hooked = bool(handlers)
-            if not handlers:
-                _diag("no Triton NPULauncher hijack targets registered")
         except Exception as exc:
             _diag(f"failed to register Triton NPULauncher hijack: {exc}")
             for handler in handlers:
@@ -635,56 +654,81 @@ class TritonCollector:
                 delattr(self._tls, attr)
 
     def _pre_npu_launcher(self, *args, **kws):
-        """PRE_HOOK: emit begin + ACCESS. Must never raise into hijacker wrapper."""
         self._tls.need_end = False
         self._tls.kernel_name = "triton.unknown"
         if not self.enabled:
             return args, kws
         try:
-            # Method hijack: args[0] is launcher instance; ABI starts at args[1:].
             launch_args = args[1:] if args else ()
             parsed = _parse_launch_args(launch_args, kws)
             if parsed is None:
                 return args, kws
             packed_metadata, launch_metadata, kernel_args, kwargs_has_npu = parsed
-            kernel_name = extract_kernel_name(
-                launch_metadata,
-                packed_metadata,
-                fallback="unknown",
-            )
-            tensor_kinds = extract_tensor_kinds(packed_metadata)
-            if kwargs_has_npu:
-                skip_access = True
-                skip_reason = "NPU tensor(s) passed via kwargs; order vs tensor_kinds untrusted"
-            else:
-                skip_access = False
-                skip_reason = ""
+            kernel_name = extract_kernel_name(launch_metadata, packed_metadata, fallback="unknown")
             self._bump_stat("kernels_seen")
             self._tls.kernel_name = kernel_name
-            self._tls.need_end = True
+            want_launch = self.collect_launch or self.collect_access
+            want_access = self.collect_access
+            if not want_launch and not want_access:
+                return args, kws
+            if want_launch or want_access:
+                self._tls.need_end = True
+
+            if not want_access:
+                _default_mark(build_begin_mark(kernel_name))
+                self._bump_stat("access_gated")
+                self._bump_stat("access_skipped")
+                return args, kws
+
+            if kwargs_has_npu:
+                emit_triton_access_events(
+                    kernel_name,
+                    kernel_args,
+                    None,
+                    packed_metadata=packed_metadata,
+                    skip_access=True,
+                    skip_access_reason="NPU tensor(s) passed via kwargs; order vs tensor_kinds untrusted",
+                )
+                self._bump_stat("skip_kwargs")
+                self._bump_stat("access_skipped")
+                return args, kws
+
+            tensor_kinds = extract_tensor_kinds(packed_metadata)
+            npu_count = len(_collect_npu_tensors(kernel_args))
+            usable, _reason = _kinds_usable(npu_count, tensor_kinds)
             emitted = emit_triton_access_events(
                 kernel_name,
                 kernel_args,
                 tensor_kinds,
                 packed_metadata=packed_metadata,
-                skip_access=skip_access,
-                skip_access_reason=skip_reason,
+                skip_access=False,
             )
-            if len(emitted) <= 1:
+            if npu_count == 0 or len(emitted) <= 1:
+                self._bump_stat("no_tensor")
                 self._bump_stat("access_skipped")
-            else:
+            elif not usable:
+                self._bump_stat("launch_with_unknown_access")
                 self._bump_stat("access_emitted")
-        except Exception:
-            _diag("Triton ACCESS collection failed in PRE_HOOK; continuing kernel launch without ACCESS marks.")
-            # If begin was already emitted (need_end True), keep it so POST_HOOK
-            # still pairs end; do not leave a dangling begin for AtenManager.
+            else:
+                self._bump_stat("launch_with_access")
+                self._bump_stat("access_emitted")
+        except Exception as exc:
+            kname = getattr(self._tls, "kernel_name", "triton.unknown")
+            key = f"{kname}|emit_failed|{type(exc).__name__}"
+            if key not in _SKIP_ACCESS_WARNED:
+                _SKIP_ACCESS_WARNED.add(key)
+                _diag(
+                    f"Triton ACCESS collection failed in PRE_HOOK for {kname} "
+                    f"({type(exc).__name__}); continuing kernel launch without ACCESS marks."
+                )
+            self._bump_stat("emit_failed")
         return args, kws
 
     def _post_npu_launcher(self, ret, *args, **kws):
-        """POST_HOOK: emit end after Python launch returns. Must never raise."""
         try:
             if self.enabled and getattr(self._tls, "need_end", False):
-                emit_triton_end_event(getattr(self._tls, "kernel_name", "triton.unknown"))
+                if self.collect_launch or self.collect_access:
+                    emit_triton_end_event(getattr(self._tls, "kernel_name", "triton.unknown"))
         except Exception:
             pass  # nosec B110
         finally:
@@ -695,17 +739,22 @@ class TritonCollector:
 triton_collector = TritonCollector()
 
 
-def enable_triton_collector() -> None:
-    """Enabled from C++ EventTraceManager when tracing starts (v1 kwargs-skip path)."""
-    triton_collector.enable()
+def enable_triton_collector(collect_launch: bool = True, collect_access: bool = True) -> None:
+    triton_collector.enable(collect_launch=collect_launch, collect_access=collect_access)
+
+
+def enable_triton_collector_with_access() -> None:
+    triton_collector.enable(collect_launch=True, collect_access=True)
+
+
+def enable_triton_collector_launch_only() -> None:
+    triton_collector.enable(collect_launch=True, collect_access=False)
 
 
 def disable_triton_collector() -> None:
-    """Disabled from C++ EventTraceManager when tracing stops."""
     triton_collector.disable()
 
 
 def get_triton_collector_stats() -> Dict[str, int]:
-    """Return a shallow copy of collector counters (for debugging / UT)."""
     with triton_collector._lock:
         return dict(triton_collector.stats)

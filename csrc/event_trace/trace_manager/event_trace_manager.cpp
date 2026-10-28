@@ -372,10 +372,18 @@ bool EventTraceManager::ShouldEnableTritonCollect() const
 
 void EventTraceManager::HandleWithTritonCollect()
 {
-    // Soft-import inside triton_collection.py no-ops when triton is absent.
+    // Soft-import / lazy hijack inside triton_collection.py — no force-import of triton.
+    // Pass event need via entrypoint selection (MemScopePythonCall has no args).
     if (ShouldEnableTritonCollect())
     {
-        Utility::MemScopePythonCall("msmemscope.triton_collection", "enable_triton_collector");
+        if (IsNeedTraceAccess())
+        {
+            Utility::MemScopePythonCall("msmemscope.triton_collection", "enable_triton_collector_with_access");
+        }
+        else
+        {
+            Utility::MemScopePythonCall("msmemscope.triton_collection", "enable_triton_collector_launch_only");
+        }
         return;
     }
 
