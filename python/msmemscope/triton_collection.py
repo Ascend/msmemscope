@@ -474,6 +474,7 @@ class TritonCollector:
         self.collect_launch = True
         self.collect_access = True
         self._hooked = False
+        self._hooked_targets: Set[Tuple[str, str]] = set()
         self._handlers: List[Any] = []
         self._import_hooks: List[Any] = []
         self._lock = threading.RLock()
@@ -555,6 +556,12 @@ class TritonCollector:
         self._import_hooks = []
 
     def _active_launcher_targets(self) -> List[Tuple[str, str]]:
+        """Resolve hijack targets without force-importing triton when absent.
+
+        When triton is already loaded, resolve ``driver.active.launcher_cls`` via
+        a normal import (lazy proxy needs this) — the live class is often
+        ``ascend.NPULauncher``, distinct from ``triton.backends.ascend.driver.NPULauncher``.
+        """
         targets: List[Tuple[str, str]] = list(_NPU_LAUNCHER_TARGETS)
         seen_keys = set(targets)
         seen_cls: Set[int] = set()
@@ -568,10 +575,11 @@ class TritonCollector:
                 pass  # nosec B110
 
         cls = None
-        driver_mod = sys.modules.get("triton.runtime.driver")
-        if driver_mod is not None:
+        if "triton" in sys.modules or "triton.runtime.driver" in sys.modules:
             try:
-                active = getattr(driver_mod, "active", None)
+                from triton.runtime import driver as triton_driver
+
+                active = getattr(triton_driver, "active", None)
                 cls = getattr(active, "launcher_cls", None) if active is not None else None
             except Exception:
                 cls = None
@@ -596,13 +604,21 @@ class TritonCollector:
         return targets
 
     def _try_install_hijacks(self) -> None:
+        if _NPU_LAUNCHER_MODULE not in sys.modules and "triton" not in sys.modules:
+            return
+        targets = self._active_launcher_targets()
+        if not targets:
+            return
+        # Refresh if live launcher (e.g. ascend.NPULauncher) appeared after first hook.
         if self._hooked:
-            return
-        if _NPU_LAUNCHER_MODULE not in sys.modules and "triton.runtime.driver" not in sys.modules:
-            return
+            want = set(targets)
+            if getattr(self, "_hooked_targets", None) == want:
+                return
+            self._uninstall_hijacks()
+
         handlers: List[Any] = []
         try:
-            for module, cls_name in self._active_launcher_targets():
+            for module, cls_name in targets:
                 if module not in sys.modules and module != "ascend":
                     if module == _NPU_LAUNCHER_MODULE:
                         continue
@@ -628,6 +644,7 @@ class TritonCollector:
                 )
             self._handlers = handlers
             self._hooked = bool(handlers)
+            self._hooked_targets = set(targets) if handlers else set()
         except Exception as exc:
             _diag(f"failed to register Triton NPULauncher hijack: {exc}")
             for handler in handlers:
@@ -637,6 +654,7 @@ class TritonCollector:
                     pass  # nosec B110
             self._handlers = []
             self._hooked = False
+            self._hooked_targets = set()
 
     def _uninstall_hijacks(self) -> None:
         for handler in self._handlers:
@@ -646,6 +664,7 @@ class TritonCollector:
                 _diag(f"failed to release Triton NPULauncher hijack: {exc}")
         self._handlers = []
         self._hooked = False
+        self._hooked_targets = set()
         self._tls_clear()
 
     def _tls_clear(self) -> None:
