@@ -372,17 +372,13 @@ def emit_triton_access_events(
                 "emitting ACCESS with UNKNOWN direction (is_read=False;is_write=False)."
             )
         for tensor in npu_tensors:
-            _append_access_mark(
-                marks, mark_fn, tensor, kernel_name, is_read=False, is_write=False, is_output=False
-            )
+            _append_access_mark(marks, mark_fn, tensor, kernel_name, is_read=False, is_write=False, is_output=False)
         return marks
 
     for tensor, kind, kind_missing in iter_tensor_args_with_kinds(kernel_args, tensor_kinds):
         flags = None if kind_missing else kind_to_access_flags(kind)
         if flags is None:
-            _append_access_mark(
-                marks, mark_fn, tensor, kernel_name, is_read=False, is_write=False, is_output=False
-            )
+            _append_access_mark(marks, mark_fn, tensor, kernel_name, is_read=False, is_write=False, is_output=False)
             continue
         is_read, is_write, is_output = flags
         _append_access_mark(
@@ -418,8 +414,7 @@ def _ensure_mstx() -> bool:
     if mstx is None and not _MSTX_UNAVAILABLE_WARNED:
         _MSTX_UNAVAILABLE_WARNED = True
         _diag(
-            "mstx is unavailable; Triton collector will not install launch hooks. "
-            "Install/ensure mstx for collection."
+            "mstx is unavailable; Triton collector will not install launch hooks. Install/ensure mstx for collection."
         )
     return mstx is not None
 
@@ -556,12 +551,7 @@ class TritonCollector:
         self._import_hooks = []
 
     def _active_launcher_targets(self) -> List[Tuple[str, str]]:
-        """Resolve hijack targets without force-importing triton when absent.
-
-        When triton is already loaded, resolve ``driver.active.launcher_cls`` via
-        a normal import (lazy proxy needs this) — the live class is often
-        ``ascend.NPULauncher``, distinct from ``triton.backends.ascend.driver.NPULauncher``.
-        """
+        """Canonical driver target + live ``driver.active.launcher_cls`` (often ascend.NPULauncher)."""
         targets: List[Tuple[str, str]] = list(_NPU_LAUNCHER_TARGETS)
         seen_keys = set(targets)
         seen_cls: Set[int] = set()
@@ -609,10 +599,8 @@ class TritonCollector:
         targets = self._active_launcher_targets()
         if not targets:
             return
-        # Refresh if live launcher (e.g. ascend.NPULauncher) appeared after first hook.
         if self._hooked:
-            want = set(targets)
-            if getattr(self, "_hooked_targets", None) == want:
+            if getattr(self, "_hooked_targets", None) == set(targets):
                 return
             self._uninstall_hijacks()
 
@@ -622,26 +610,20 @@ class TritonCollector:
                 if module not in sys.modules and module != "ascend":
                     if module == _NPU_LAUNCHER_MODULE:
                         continue
-                handlers.append(
-                    hijacker(
-                        stub=self._pre_npu_launcher,
-                        module=module,
-                        cls=cls_name,
-                        function=_NPU_LAUNCHER_FUNC,
-                        action=PRE_HOOK,
-                        priority=50,
+                for stub, action in (
+                    (self._pre_npu_launcher, PRE_HOOK),
+                    (self._post_npu_launcher, POST_HOOK),
+                ):
+                    handlers.append(
+                        hijacker(
+                            stub=stub,
+                            module=module,
+                            cls=cls_name,
+                            function=_NPU_LAUNCHER_FUNC,
+                            action=action,
+                            priority=50,
+                        )
                     )
-                )
-                handlers.append(
-                    hijacker(
-                        stub=self._post_npu_launcher,
-                        module=module,
-                        cls=cls_name,
-                        function=_NPU_LAUNCHER_FUNC,
-                        action=POST_HOOK,
-                        priority=50,
-                    )
-                )
             self._handlers = handlers
             self._hooked = bool(handlers)
             self._hooked_targets = set(targets) if handlers else set()

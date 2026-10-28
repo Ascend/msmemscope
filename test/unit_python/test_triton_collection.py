@@ -164,32 +164,27 @@ class TestCore(unittest.TestCase):
         self.assertGreaterEqual(c.stats.get("emit_failed", 0), 1)
 
     def test_active_targets_resolve_live_ascend_cls(self):
-        """triton-ascend live class is often ascend.NPULauncher, not driver.NPULauncher."""
-
-        class DriverLauncher:
+        class DriverL:
             pass
 
-        class LiveLauncher:
+        class LiveL:
             pass
 
-        LiveLauncher.__module__ = "ascend"
-        LiveLauncher.__name__ = "NPULauncher"
+        LiveL.__module__, LiveL.__name__ = "ascend", "NPULauncher"
         saved = {k: sys.modules.pop(k) for k in list(sys.modules) if k == "triton" or k.startswith("triton.")}
         try:
             for n in ("triton", "triton.backends", "triton.backends.ascend", "triton.runtime"):
                 _pkg(n)
-            driver = pytypes.ModuleType(_DRV)
-            driver.NPULauncher = DriverLauncher
-            sys.modules[_DRV] = driver
+            sys.modules[_DRV] = pytypes.ModuleType(_DRV)
+            sys.modules[_DRV].NPULauncher = DriverL
             rd = pytypes.ModuleType("triton.runtime.driver")
-            rd.active = pytypes.SimpleNamespace(launcher_cls=LiveLauncher)
+            rd.active = pytypes.SimpleNamespace(launcher_cls=LiveL)
             sys.modules["triton.runtime.driver"] = rd
             sys.modules["triton.runtime"].driver = rd
-            c = tc.TritonCollector()
-            targets = c._active_launcher_targets()
-            self.assertIn((_DRV, "NPULauncher"), targets)
-            self.assertIn(("ascend", "NPULauncher"), targets)
-            self.assertIs(sys.modules["ascend"].NPULauncher, LiveLauncher)
+            got = tc.TritonCollector()._active_launcher_targets()
+            self.assertIn((_DRV, "NPULauncher"), got)
+            self.assertIn(("ascend", "NPULauncher"), got)
+            self.assertIs(sys.modules["ascend"].NPULauncher, LiveL)
         finally:
             for k in list(sys.modules):
                 if k == "triton" or k.startswith("triton.") or k == "ascend":
