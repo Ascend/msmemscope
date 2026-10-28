@@ -14,12 +14,7 @@
 # See the Mulan PSL v2 for more details.
 # -------------------------------------------------------------------------
 
-"""Triton ACCESS via hijacker + memscope-aten-* MSTX.
-
-Known tensor_kinds → precise R/W; missing/mismatch/unknown → UNKNOWN ACCESS
-(is_read=False;is_write=False). Kwargs NPU tensors skip ACCESS. Lazy triton
-hijack via module POST_HOOK (no force-import). Diagnostics use stderr.
-"""
+"""Triton ACCESS via hijacker + memscope-aten-* MSTX (lazy POST_HOOK; UNKNOWN on bad kinds)."""
 
 from __future__ import annotations
 

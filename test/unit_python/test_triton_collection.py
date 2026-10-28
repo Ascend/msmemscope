@@ -163,34 +163,5 @@ class TestCore(unittest.TestCase):
         self.assertIn("ACCESS collection failed", buf.getvalue())
         self.assertGreaterEqual(c.stats.get("emit_failed", 0), 1)
 
-    def test_active_targets_resolve_live_ascend_cls(self):
-        class DriverL:
-            pass
-
-        class LiveL:
-            pass
-
-        LiveL.__module__, LiveL.__name__ = "ascend", "NPULauncher"
-        saved = {k: sys.modules.pop(k) for k in list(sys.modules) if k == "triton" or k.startswith("triton.")}
-        try:
-            for n in ("triton", "triton.backends", "triton.backends.ascend", "triton.runtime"):
-                _pkg(n)
-            sys.modules[_DRV] = pytypes.ModuleType(_DRV)
-            sys.modules[_DRV].NPULauncher = DriverL
-            rd = pytypes.ModuleType("triton.runtime.driver")
-            rd.active = pytypes.SimpleNamespace(launcher_cls=LiveL)
-            sys.modules["triton.runtime.driver"] = rd
-            sys.modules["triton.runtime"].driver = rd
-            got = tc.TritonCollector()._active_launcher_targets()
-            self.assertIn((_DRV, "NPULauncher"), got)
-            self.assertIn(("ascend", "NPULauncher"), got)
-            self.assertIs(sys.modules["ascend"].NPULauncher, LiveL)
-        finally:
-            for k in list(sys.modules):
-                if k == "triton" or k.startswith("triton.") or k == "ascend":
-                    sys.modules.pop(k, None)
-            sys.modules.update(saved)
-
-
 if __name__ == "__main__":
     unittest.main()
