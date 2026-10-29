@@ -1,4 +1,4 @@
-# Welcome to the MindStudio MemScope Analysis Tool Tutorial ✨
+# Welcome to the MindStudio MemScope Tutorial ✨
 
 ## 🌟 What's New
 
@@ -10,7 +10,7 @@
 
 **MindStudio MemScope** (msMemScope) is a memory analysis tool developed based on the Ascend hardware to locate memory problems during model training and inference. It provides functions such as memory leak detection, memory comparison, memory block monitoring, memory decomposition, and identification of inefficient memory, helping you locate and handle problems.
 
-## 🚀 Core functions
+## 🚀 Core Functions
 
 msMemScope provides memory collection and analysis functions.
 
@@ -41,18 +41,22 @@ msMemScope provides memory collection and analysis functions.
     </tr>
     <!--Memory analysis-->
     <tr>
-      <td rowspan="5">
+      <td rowspan="6">
         Memory analysis
       </td>
-      <td rowspan="5">
+      <td rowspan="6">
         msMemScope provides analysis capabilities such as leak detection, comparison, monitoring, decomposition, and identification of inefficient memory based on the collected memory data, helping you quickly diagnose and optimize memory problems.
       </td>
       <td>Memory leak analysis</td>
       <td>If the memory is not deallocated for a long time or a memory leak occurs, msMemScope provides memory leak analysis and change analysis at the kernel launch level to locate and analyze alarms.</td>
     </tr>
     <tr>
+      <td>Host heap memory leak detection</td>
+      <td>To address the memory growth problem caused by host-side process heap memory not being released for extended periods during training and inference, msMemScope aggregates and analyzes host heap memory blocks that were allocated but not freed within the detection interval, grouped by call stack, and outputs a leak overview report along with per-block details, enabling the localization and analysis of host heap memory leaks.</td>
+    </tr>
+    <tr>
       <td>Memory comparison</td>
-      <td>If the memory usage differs between two steps, it may lead to excessive memory usage or even out of memory (OOM) errors. In this case, use the memory comparison analysis function of msMemScope to locate and analyze the problem.</td>
+      <td>If the memory usage differs between two steps, it may lead to excessive memory usage or even Out of Memory (OOM) errors. In this case, use the memory comparison analysis function of msMemScope to locate and analyze the problem.</td>
     </tr>
     <tr>
       <td>Memory block monitoring</td>
@@ -88,8 +92,8 @@ The Huawei MindStudio full-pipeline development toolchain team is dedicated to p
         <img src="https://camo.githubusercontent.com/dd0b7ef70793ab93ce46688c049386e0755a18faab780e519df5d7f61153655e/68747470733a2f2f696d672e736869656c64732e696f2f62616467652f576562736974652d2532333165333766663f7374796c653d666f722d7468652d6261646765266c6f676f3d6279746564616e6365266c6f676f436f6c6f723d7768697465" data-canonical-src="https://img.shields.io/badge/Website-%231e37ff?style=for-the-badge&amp;logo=bytedance&amp;logoColor=white" style="max-width: 100%;">
     </a>
     <span style="margin-left: 20px;">Ascend Assistant: </span>
-    <a href="https://gitcode.com/Ascend/msmemscope/blob/master/docs/zh/communication_guide/figures/ascend_assistant.jpg">
-        <img src="https://camo.githubusercontent.com/22bbaa8aaa1bd0d664b5374d133c565213636ae50831af284ef901724e420f8f/68747470733a2f2f696d672e736869656c64732e696f2f62616467652f5765436861742d3037433136303f7374796c653d666f722d7468652d6261646765266c6f676f3d776563686174266c6f676f436f6c6f723d7768697465" data-canonical-src="./docs/zh/communication_guide/figures/ascend_assistant.jpg" style="max-width: 100%;">
+    <a href="https://gitcode.com/Ascend/msmemscope/blob/master/docs/en/communication_guide/figures/ascend_assistant.jpg">
+        <img src="https://camo.githubusercontent.com/22bbaa8aaa1bd0d664b5374d133c565213636ae50831af284ef901724e420f8f/68747470733a2f2f696d672e736869656c64732e696f2f62616467652f5765436861742d3037433136303f7374796c653d666f722d7468652d6261646765266c6f676f3d776563686174266c6f676f436f6c6f723d7768697465" data-canonical-src="./docs/en/communication_guide/figures/ascend_assistant.jpg" style="max-width: 100%;">
     </a>
 </div>
 

@@ -45,7 +45,7 @@ A common symptom of the on-chip memory leak is an unexpected, continuous increas
 
 ### Cache Clearing
 
-Symptom 1: During the training of a foundation model, the on-chip memory usage keeps increasing after each step ends, eventually leading to an OOM error. 
+Symptom 1: During the training of a foundation model, the on-chip memory usage keeps increasing after each step ends, eventually leading to an OOM error.
 This is likely caused by the cache mechanism of PyTorch. Temporary tensors are generated during each forward and backward propagation, and these tensors are cached but not released in a timely manner.
 
 Try clearing the cache at appropriate points to eliminate leak-like symptoms caused by cache accumulation:
@@ -58,7 +58,7 @@ Try clearing the cache at appropriate points to eliminate leak-like symptoms cau
 
 At these points, memory usage may fluctuate. Clearing the cache can effectively prevent continuous memory usage increase caused by cache accumulation.
 
-```shell
+```python
 # Clear unreachable Python objects.
 gc.collect()
 # Clear the torch_npu cache.
@@ -129,7 +129,7 @@ During training, the global on-chip memory usage continuously increases.
 
     ```python
     import msmemscope
-    msmemscope.config(analysis="leaks, decompose", call_stack="python")  # Enable leak detection, on-chip memory decomposition, and call stack collection.
+    msmemscope.config(analysis="leaks,decompose", call_stack="python")  # Enable leak detection, on-chip memory decomposition, and call stack collection.
     ```
 
 2. Configure environment variables and execute the collection script to collect data.
@@ -259,14 +259,14 @@ def train():
     if self.step == n:
         # Take the first memory snapshot, preferably after step 3 has been completed.
         self.snapshot1 = tracemalloc.take_snapshot()
-    
+
     if self.step == n + 1:
         # Take the second memory snapshot.
         self.snapshot2 = tracemalloc.take_snapshot()
-        
+
         # Compare the two snapshots to identify memory allocation differences.
         top_stats = self.snapshot2.compare_to(self.snapshot1, 'lineno')
-        
+
         # Print the memory allocation differences.
         for stat in top_stats[:10]:
             print(stat)
@@ -315,7 +315,7 @@ The reference topology can clearly show the reference links of objects and help 
 
 #### Advanced Debugging: Tracing the Container Creation Stack
 
-If an object is not released in time due to improper references, you can locate the reference points of the residual object by following the steps described above. If the reference points are objects such as `frame`, `code`, and `func` (the residual object is a local variable), the attributes of these objects contain relevant code information. If the reference point is a common object, such as a list container, and the code corresponding to the reference point cannot be directly identified, you can add debugging information by attaching a hook to `gc`. Assume that the result of `gc.get\_referrers` shows that the residual object is referenced by a tuple, but the code location associated with that tuple is unknown.
+If an object is not released in time due to improper references, you can locate the reference points of the residual object by following the steps described above. If the reference points are objects such as `frame`, `code`, and `func` (the residual object is a local variable), the attributes of these objects contain relevant code information. If the reference point is a common object, such as a list container, and the code corresponding to the reference point cannot be directly identified, you can add debugging information by attaching a hook to `gc`. Assume that the result of `gc.get_referrers` shows that the residual object is referenced by a tuple, but the code location associated with that tuple is unknown.
 
 ```python
 import gc

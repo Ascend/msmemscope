@@ -1,22 +1,22 @@
-# memscope Component Implementation Design Specifications
+# MemScope Implementation Design Specifications
 
-![image](./figures/1a451d58-83b5-4f4d-a09a-0c033012bb18.png)    
+![image](./figures/1a451d58-83b5-4f4d-a09a-0c033012bb18.png)
 
 Plan and design the following functional features and matching DFX capabilities:
 
-| Type             | Function List                           | Function Description                                                                                                                    | Supported system functions      |
+| Type             | Function List                           | Function Description                                                                                                                    | Supported System Functions      |
 | ---------------- | --------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------- |
-| Service function | Data Collection                         | Collects video memory usage data of the AI framework, CANN, and driver layers.                                                          | Data Collection                 |
-| Service function | Custom Data Collection                  | Users can customize the collection scope and collection items.                                                                          | Data Collection                 |
-| Service function | Leakage analysis                        | Supports memory pool leakage analysis in the PyTorch and MindSpore framework and video memory leakage analysis in the CANN component.    | Video buffer debugging          |
-| Service function | Video buffer comparison                 | Compare the memory data collected by different software versions to find the differences.                                               | Video buffer debugging          |
-| Service function | Video buffer block monitoring           | The operator is used as the monitoring event, and the specified video buffer is flushed before and after the event is executed.         | Video buffer debugging          |
-| Service function | Video Memory Disassembly                | Decomposes the video memory usage and displays the video memory usage of each module in a visualized manner.                            | Video Memory Tuning             |
-| Service function | Inefficient video memory identification | Identifies low-efficiency modes, including premature application, delayed release, and temporary idle.                                  | Video Memory Tuning             |
-| DFX Function     | Log system                              | The C++ and Python modules share the same log system and support hierarchical control.                                                  | System maintainability          |
-| DFX Function     | DT system                               | The overall functions of the white box care program through UT and FUZZ engineering                                                     | Program Function White Box Care |
-| DFX Function     | Data collection plug-in                 | The hook component is isolated to facilitate expansion because collection items are easy to change and increase.                        | System Scalability              |
-| DFX Function     | Smoked framework                            | Cover all functions in the main path of the tool and run the tool before the version is released and the code is stored in the library. | System reliability              |
+| Service | Data collection                         | Collects video memory usage data of the AI framework, CANN, and driver layers.                                                          | Data collection                 |
+| Service | Custom Data Collection                  | Users can customize the collection scope and collection items.                                                                          | Data collection                 |
+| Service | Leakage analysis                        | Supports memory pool leakage analysis in the PyTorch and MindSpore framework and video memory leakage analysis in the CANN component.    | Memory debugging          |
+| Service | Memory comparison                 | Compare the memory data collected by different software versions to find the differences.                                               | Memory debugging          |
+| Service | Memory block monitoring           | The operator is used as the monitoring event, and the specified video buffer is flushed before and after the event is executed.         | Memory debugging          |
+| Service | Memory disassembly                | Decomposes the video memory usage and displays the video memory usage of each module in a visualized manner.                            | Memory tuning             |
+| Service | Inefficient video memory identification | Identifies low-efficiency modes, including premature application, delayed release, and temporary idle.                                  | Memory tuning             |
+| DFX     | Log system                              | The C++ and Python modules share the same log system and support hierarchical control.                                                  | System maintainability          |
+| DFX     | DT system                               | The overall functions of the white box care program through UT and FUZZ engineering                                                     | Program white box care |
+| DFX     | Data collection plug-in                 | The hook component is isolated to facilitate expansion because collection items are easy to change and increase.                        | System scalability              |
+| DFX     | Smoked framework                            | Cover all functions in the main path of the tool and run the tool before the version is released and the code is stored in the library. | System reliability              |
 
 ## 3. Software implementation design objective analysis and key element design
 
@@ -55,31 +55,31 @@ The tool depends on AI frameworks, CANN, and driver layers, and uses Insight to 
  * CANN: Under the AI framework, operator execution has a significant impact on the display memory. Therefore, the tool needs to detect the kernel launch and ACL status in the runtime.
  * Driver: The driver is at the bottom layer of the software stack. This layer can obtain the video memory allocation of all upper-layer applications and the actual execution status of the kernel.
  * Insight: The data collected by the tool is displayed by the visualization tool. You can view the video memory change trend and video memory usage details.
-    
-    ![image](./figures/ce97d227-4c20-47bc-b40d-0ca124cc5e7d.png)    
+
+    ![image](./figures/ce97d227-4c20-47bc-b40d-0ca124cc5e7d.png)
 
 #### 4.1.3 Logical View
 
-![image](./figures/3c7e7422-39ee-430c-a732-b973454702ed.png)    
+![image](./figures/3c7e7422-39ee-430c-a732-b973454702ed.png)
 
 Similar to most memory analysis tools, it consists of three modules: data collection module, data analysis module, and framework module. Considering the efficient parallelism of data collection and data processing, the two modules run in different processes, data collection and data analysis are decoupled, and are connected in series through framework modules. The data collection module has hooks corresponding to each collection item and transfers data to the framework module through the report interface. The framework module parses the received data and forwards it to the concerned analyzer. The analysis module contains a series of analyzers. Each analyzer registers callback functions with the framework module. The reverse registration mode is weakly coupled and highly scalable. When new data is sent to the framework, the framework forwards the data based on the registered analyzer. The software unit list is as follows:
 
 | Software unit           | Description                                                                                                                 | External interface       | Internal interface      | Relationship Description                                                                                                                                                                   |
 | ----------------------- | --------------------------------------------------------------------------------------------------------------------------- | ------------------------ | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Data sending module     | Collects memory-related data via hooks or other methods and send data to the framework module. | Process::SendEvent |Report_xx_hooks   | The entire module collects data through hooks, callback registration, and other methods. After processing, the data is sent to the framework side.         |
-| Data analysis module     | Registers callbacks with the framework module to receive and analyze data sent by the collection module. | EventDispatcher::Subscribe  | xx_analyze  | Registers callback functions to analyze collected data, covering functions such as memory leak detection, comparison, and monitoring. |
-| Framework module            | As the system entry, it parses command lines and connects data collection and analysis modules and instrumentation modules. | CommandParser, MsgHandle | DoLaunch, SetPreloadEnv | Parses the customer's CLI configuration, completes the configuration of the data collection and analysis module, and transmits the data from the collection module to the analysis module. |
+| Data sending module     | Collects memory-related data via hooks or other methods and send data to the framework module. | Process::SendEvent (internally delegates to EventRouter::Route) |Report_xx_hooks   | The entire module collects data through hooks, callback registration, and other methods. After processing, the data is sent to the framework side.         |
+| Data analysis module     | Registers callbacks with the framework module to receive and analyze data sent by the collection module. | EventDispatcher::Subscribe  | EventHandle  | All analyzers register callbacks in a unified manner through the EventDispatcher subscription mode, including HalAnalyzer, StepInnerAnalyzer, DecomposeAnalyzer, InefficientAnalyzer, and Dump. |
+| Framework module            | As the system entry, it parses command lines and connects data collection and analysis modules and instrumentation modules. | CommandParser, EventRouter | DoLaunch, SetPreloadEnv | Parses the customer's CLI configuration; EventRouter::Route routes events uniformly to EventHandler for three-stage processing (UpdateMemoryState → DispatchToAnalyzers → CleanupMemoryState). |
 
 #### 4.1.4 Software Implementation Unit Design
 
 **UML class diagram**
 
-![image](./figures/96abcebd-f98d-4594-9856-17ea7aac212c.png)    
+![image](./figures/96abcebd-f98d-4594-9856-17ea7aac212c.png)
 The class diagram is divided into three parts: data collection (green part), data analysis (red part), and framework (yellow part).
 
- * Data collection: Data collection includes LD_PRELOAD hijacking (hooks), MSTX dotting (MstxManager), runtime, and driver (kernel data in Hooks) reporting. The EventTraceManager class is used to determine whether data needs to be collected. If data needs to be reported, the EventReport interface is invoked to report the data to the framework. You can use the msmemscope_python module to set the collection scope and collection items.
- * Data analysis: Currently, the analysis module includes LeakAnalyzer, StepInterAnalyzer, OpExecuteWatch, DecomposeAnalyzer, and low efficiency. InefficientAnalyzer.
- * Framework module: Parses the Linux common command line (ClientParser), connects the data collection module and analysis module (Process and EventDispatcher), and communication module (server and client).
+ * Data collection: Data collection currently includes LD_PRELOAD hijacking (hooks), MSTX dotting (MstxManager), and reporting from runtime and driver (kernel data in hooks). The EventTraceManager class is used to determine whether data needs to be collected (including the shadow collection mode). If data needs to be reported, the EventReport interface is invoked to report the data to the framework (Process::SendEvent → EventRouter::Route). You can use the msmemscope_python module to set the collection scope and collection items.
+ * Data analysis: Currently, the analysis module mainly includes leak analysis (HalAnalyzer), memory pool analysis (StepInnerAnalyzer), memory block monitoring (OpExecuteWatch), memory decomposition (DecomposeAnalyzer), inefficient pattern identification (InefficientAnalyzer), and data dump (Dump). All analyzers receive events in a unified manner through the EventDispatcher subscription mode, replacing the original hard-coded switch-case dispatch in Process::SendEvent and the self-built subscription mechanisms of MstxAnalyzer/PyStepManager.
+ * Framework module: Parses the Linux common command line (ClientParser), connects the data collection module and analysis module (Process, EventRouter, EventDispatcher), and communication module (server and client). EventRouter is a stateless event routing singleton, and EventHandler is split into three stages: UpdateMemoryState → DispatchToAnalyzers → CleanupMemoryState.
  * Tool modules: Not shown in the figure, mainly log modules, character string processing, numerical calculation, and file reading and writing.
 
 ### 4.2 Interfaces
@@ -112,7 +112,7 @@ The following describes the main interfaces based on the framework module, data 
 ##### 4.2.5.1 Framework module
 
 1. Interface Description
-    
+
     ```text
     The framework module provides the following functions (interfaces):
     * Parses Linux commands and generates data collection and analysis configurations.
@@ -122,7 +122,7 @@ The following describes the main interfaces based on the framework module, data 
     ```
 
 2. Interface List
-    
+
     ```text
     Interface name: UserCommand Parse(int32_t argc, char **argv)
     Interface function: Parses the command line and generates configurations.
@@ -174,8 +174,31 @@ The following describes the main interfaces based on the framework module, data 
     ```
 
     ```text
+    Interface name: bool EventRouter::Route(std::shared_ptr<EventBase> event)
+    Interface function: Stateless event routing entry point, shared by the CLI and Python API modes. Internally delegates to EventHandler for three-stage processing.
+    Direction: internal of the framework module
+    Input parameter: event
+    Output parameter: N/A
+    Return value: N/A
+    Precautions: Events reported by all data collection modules enter the framework layer uniformly through this interface, replacing the original hard-coded switch-case dispatch in Process::SendEvent.
+    ```
+
+    ```text
+    Interface name: void EventHandler(std::shared_ptr<EventBase> event)
+    Interface function: Event processing orchestration function, executed internally in three stages in sequence:
+            UpdateMemoryState (updates memory block state tracking, including shadow event processing)
+            → DispatchToAnalyzers (dispatches to all registered analyzers through EventDispatcher)
+            → CleanupMemoryState (cleans up memory block states whose lifecycle has completed).
+    Direction: internal of the framework module (invoked by EventRouter::Route)
+    Input parameter: event
+    Output parameter: N/A
+    Return value: N/A
+    Precautions: After a shadow event is processed in the UpdateMemoryState stage, the subsequent dispatch and cleanup are skipped.
+    ```
+
+    ```text
     Interface name: void EventDispatcher::DispatchEvent(std::shared_ptr<EventBase>& event, MemoryState* state)
-    Interface function: This interface is used to distribute the data packets sent from the client to the server at the second layer and process the data record events.
+    Interface function: This interface is used to uniformly distribute the data events received by the framework module. All analyzers (Dump, DecomposeAnalyzer, InefficientAnalyzer, HalAnalyzer, and StepInnerAnalyzer) receive events through this interface.
     Direction: from the framework module to the analysis module
     Input parameter: data record event and memory block buffer.
     Output parameter: N/A
@@ -206,7 +229,7 @@ The following describes the main interfaces based on the framework module, data 
 ##### 4.2.5.2 Data acquisition module
 
 1. Interface Description
-    
+
     ```text
     The data collection module provides the following functions (interfaces):
     * Hook interface for each data collection item
@@ -215,7 +238,7 @@ The following describes the main interfaces based on the framework module, data 
     ```
 
 2. Interface List
-    
+
     ```text
     Interface name: drvError_t halMemAlloc(void **pp, unsigned long long size, unsigned long long flag);
     drvError_t halMemFree(void *pp);
@@ -246,7 +269,7 @@ The following describes the main interfaces based on the framework module, data 
     Return value: N/A
     Precautions: N/A
     ```
-    
+
     ```text
     API name: aclError aclInit(const char *configPath)
     aclError aclFinalize()
@@ -257,7 +280,7 @@ The following describes the main interfaces based on the framework module, data 
     Return value: N/A
     Precautions: N/A
     ```
-    
+
     ```text
     API name: rtError_t rtKernelLaunch(const void *stubFunc, uint32_t blockDim, void *args, uint32_t argsSize, rtSmDesc_t *smDesc, rtStream_t stm)
     API function: Hijacks the kernellaunch-related APIs. (There are several similar APIs, which are not described here.)
@@ -267,7 +290,7 @@ The following describes the main interfaces based on the framework module, data 
     Return value: N/A.
     Precautions: N/A.
     ```
-    
+
     ```text
     Interface name: bool EventTraceManager::IsNeedTrace(EventBaseType type)
     Interface function: Determines whether a collection item needs to be collected.
@@ -277,7 +300,7 @@ The following describes the main interfaces based on the framework module, data 
     Return value: Boolean value.
     Precautions: N/A.
     ```
-    
+
     ```text
     Interface name: bool EventReport::SendEvent(std::shared_ptr<EventBase> event)
     Interface function: Sends a collection item from the data collection module to the framework module.
@@ -288,18 +311,51 @@ The following describes the main interfaces based on the framework module, data 
     Precautions: N/A.
     ```
 
+    ```text
+    Interface name: bool EventTraceManager::ShouldCollectShadowEvents()
+    Interface function: Determines whether the shadow collection mode should currently be entered. It depends only on:
+            the state being NOT_IN_TRACING, and alloc or free events having been configured.
+    Direction: internal of the collection module
+    Input parameter: N/A
+    Output parameter: N/A
+    Return value: Boolean value; true indicates that shadow events should be collected.
+    Precautions: In shadow mode, hooks report only addr, size, poolType, and device, and do not collect call stacks.
+    ```
+
+    ```text
+    Interface name: TraceMode DetermineTraceMode()
+    Interface function: Uniformly determines the current tracing mode (NORMAL = normal collection including call stacks, SHADOW = shadow collection with a minimal data set, SKIP = no collection).
+            It is called by all hook entry points in a unified manner, eliminating the repeated three-branch judgment logic.
+    Direction: internal of the collection module
+    Input parameter: N/A
+    Output parameter: N/A
+    Return value: TraceMode enumerated value.
+    Precautions: In NORMAL mode, complete information such as call stacks continues to be collected. In SHADOW mode, only the minimal data set is reported.
+    ```
+
+    ```text
+    Interface name: void EventTraceManager::PromoteHistoricalStates()
+    Interface function: When msmemscope.start() is called, traverses all MemoryState objects with shadow markers:
+            for blocks with isShadowCreated, synthesizes MALLOC events and writes them to disk; for blocks with isShadowFreed, synthesizes FREE events, writes them to disk, and cleans up the state.
+    Direction: internal of the collection module (triggered by SetTraceStatus(IN_TRACING))
+    Input parameter: N/A
+    Output parameter: N/A
+    Return value: N/A.
+    Precautions: It must be called before status_ switches to IN_TRACING. Historical promotion events are only written to disk and do not trigger analyzers.
+    ```
+
 ##### 4.2.5.3 Data Analysis Module
 
 1. Interface Description
-    
+
     ```text
     The data analysis module provides the following functions (interfaces):
     * Entry of the analysis module (abstract interface)
     * Entry of each analyzer (specific interface)
     ```
-    
+
 2. Interface List
-    
+
     ```text
     Interface name: void AnalyzerBase::EventHandle(std::shared_ptr<EventBase>& event, MemoryState* state) = 0;
     Interface description: External abstract interface of the analysis module
@@ -329,7 +385,7 @@ The following describes the main interfaces based on the framework module, data 
     Return value: N/A
     Precautions: N/A
     ```
-    
+
     ```text
     Interface name: void DecomposeAnalyzer::EventHandle(std::shared_ptr<EventBase>& event, MemoryState* state)
     Interface description: Main interface for memory decomposition
@@ -362,7 +418,7 @@ Considering that the data between versions is very similar and only a few kernel
 
 **Memory comparison flowchart**
 
-![image](./figures/71dcaade-e055-40e4-901c-ad2e4d5766a3.png)    
+![image](./figures/71dcaade-e055-40e4-901c-ad2e4d5766a3.png)
 
 1. Parse the command line parameters and the corresponding data in the CSV file, and obtain the kernel launch data for comparison.
 2. Myers algorithm is used to compare the names of KernelLaunch of two files. The core of this algorithm is to transform the text sequence comparison problem into the path search problem of editing graph. After the optimal graph path of the two sequences is constructed, the path is a backtracking path from the end point. The path contains the same position and different kernel names. When the backtracking is performed at each point, the memory change data is searched and calculated based on the KernelLaunch ID.
@@ -370,7 +426,7 @@ Considering that the data between versions is very similar and only a few kernel
 
 **Myers algorithm graph construction path flowchart**
 
-![image](./figures/cbdaa896-d55d-45d3-9b4a-f3b0ec895e52.png)    
+![image](./figures/cbdaa896-d55d-45d3-9b4a-f3b0ec895e52.png)
 
 First, the algorithm combines two text A`[a, b, c, d]`(length: m), B`[e, f, g, h]`The length is n, which is constructed as an m\*n grid. The horizontal axis indicates the position of text A, and the vertical axis indicates the position of text B. Each point in the grid is`(x, y)`Indicates that the first x elements of text A and the first y elements of B have been compared, and from the start point`(0, 0)`To the end`(m, n)`Path of. Each step corresponds to an editing operation.
 
@@ -378,7 +434,7 @@ First, the algorithm combines two text A`[a, b, c, d]`(length: m), B`[e, f, g, h
  * Moving one step down indicates that the element in B is inserted, that is, the name of the element in B is different.
  * A step along the diagonal indicates that A and B have the same element name.
 
-At the same time, the algorithm introduces the concept of k-line:`k=x-y`；`d` indicates the number of steps to the right or down. The ultimate goal is to find the`(0, 0)`To the`(m, n)`Shortest path for. Myers algorithm initializes the distance and path data when constructing the optimal graph path, then records the furthest x coordinate that each k line can reach, increases the distance d, and searches for a new k line. (The value ranges from -d to d, with a step of 2.) Calculate the farthest reachable coordinates on the k-line. Know until you find the end. snake is used to represent diagonal nodes, and the text at this position of the two sequences is the same; The Diff node is used to represent the difference node, and the text at the position of the two sequences is different.
+At the same time, the algorithm introduces the concept of k-line:`k=x-y`;`d` indicates the number of steps to the right or down. The ultimate goal is to find the`(0, 0)`To the`(m, n)`Shortest path for. Myers algorithm initializes the distance and path data when constructing the optimal graph path, then records the furthest x coordinate that each k line can reach, increases the distance d, and searches for a new k line. (The value ranges from -d to d, with a step of 2.) Calculate the farthest reachable coordinates on the k-line. Know until you find the end. snake is used to represent diagonal nodes, and the text at this position of the two sequences is the same; The Diff node is used to represent the difference node, and the text at the position of the two sequences is different.
 
 ### 4.4 Security Implementation Design
 
@@ -388,7 +444,7 @@ At the same time, the algorithm introduces the concept of k-line:`k=x-y`；`d` i
 
 #### 4.4.2 Security Design Context
 
-> The northbound interface of the tool mainly includes the commands entered by customers, Python interfaces, and file input and output. For the Python and command lines, parameter validity is verified at the entry, and file input and output are protected based on security requirements. 
+> The northbound interface of the tool mainly includes the commands entered by customers, Python interfaces, and file input and output. For the Python and command lines, parameter validity is verified at the entry, and file input and output are protected based on security requirements.
 > Southbound components, such as runtime, driver, PyTorch, MindSpore, and atb, trace their memory behavior, legalize obtained data, and expose it to customers.
 
 #### 4.4.3 Identification of High Risks
@@ -423,7 +479,7 @@ High-risk module security hardening
     Does not involve customer privacy data.
 
 **2. Module Dependencies and Third-Party Libraries**
-    For input to the northbound interface, unified validation is performed in ClientParser.Parse/CheckIsValidInputPath/CheckIsValidOutputPath interface, avoiding pollution of the internal running environment. Southbound interfaces are standardized in their hijacking interfaces to ensure that the data to be flushed to disks is unified and valid. 
+    For input to the northbound interface, unified validation is performed in ClientParser.Parse/CheckIsValidInputPath/CheckIsValidOutputPath interface, avoiding pollution of the internal running environment. Southbound interfaces are standardized in their hijacking interfaces to ensure that the data to be flushed to disks is unified and valid.
 
 **3. Error Handling**
     If the input parameters in the command line fail to be verified, the system prompts the user to output help information and terminates the program.<br>
@@ -463,9 +519,9 @@ Generally, the test is divided into three modules: unit test (UT), interface tes
 
 The test technical scheme is described from the white box and black box perspectives.
 
-1. Test engineering design 
+1. Test engineering design
    UT directory test and source code csrc directory are at the same level. The internal subdirectory and function code are symmetrical.
-    
+
     ```text
     memscope
     |-- build
@@ -484,9 +540,9 @@ The test technical scheme is described from the white box and black box perspect
        |-- analysis
        |-- test_main.cpp
     ```
-    
+
     The smoke project directory contains the msMemScope deliverable directory (`msmemscope`), smoke case source code directory (`src`), test script directory (`testfile`), and product and log directory (`workbench`). The subdirectories in the workbench correspond to test suites, facilitating fault locating.
-    
+
    ```tex
    smoke
    |-- msmemscope
@@ -500,10 +556,10 @@ The test technical scheme is described from the white box and black box perspect
    |-- workbench
     ```
 
-2. Physical design 
+2. Physical design
    Not involved.
-3. White-box running environment 
-   It can be a common Linux environment. The source code and test project can be compiled. The ST needs to run on the Ascend server. 
+3. White-box running environment
+   It can be a common Linux environment. The source code and test project can be compiled. The ST needs to run on the Ascend server.
    A maximum of eight NPUs are required based on the script. There is no requirement on the chip model.
 4. Test double design
    In the white-box test, functions such as dlopen and dlsym must be mocked. Otherwise, a failure message will be returned in the general Linux environment without the Ascend environment, and most test scenarios cannot be covered.
@@ -525,7 +581,7 @@ NA
 **Sequence Diagram**
 After the customer enters the corresponding command line, the framework module parses the parameters entered by the customer, forks the subprocess, and starts the tested program in the subprocess. During the running of the tested program, the hijacking module in `event_trace` hijacks and records the memory event in the tested program, and sends the data to the framework module. The framework module cleans the data and forwards the data to the corresponding analysis module. Specially, if the step-to-step comparison mode is used, the processing is offline, and the data collection process is not involved. If the watch function is used, the judgment and flushing functions are processed by the client module because the watch function does not require data aggregation. The figure below shows the overall running design.
 
-![image](./figures/a208c7b1-ef2d-4361-aa6e-f46e956f5d8e.png)    
+![image](./figures/a208c7b1-ef2d-4361-aa6e-f46e956f5d8e.png)
 
 ### 5.2 Concurrency Model
 
@@ -540,4 +596,4 @@ Currently, the size of the shared memory is designed to be 200 MB (based on hist
 #### 5.2.3 Concurrent Model Design
 
 Each NPU corresponds to a client to report data. The tool process receives data from all NPUs for the server, and summarizes and analyzes the data. \* \* Therefore, the concurrency model is designed as a multi-producer and single-consumer model. Shared memory + lockless queue is considered as the most efficient inter-process communication mode, and is also the communication mode adopted by this component. As shown in the following figure, the shared memory is divided into two segments. The first segment is the configuration request message sent from the server to the client. The global configuration is performed only once. In the other part, the client sends data to the server. Multiple processes where the NPUs are located write data to the shared memory at the same time. In this example, lock-free queues and atomic variables are used to ensure that data does not conflict when data is written to multiple NPUs. The server uses a resident thread to read data. Each time one more data is written, the tail moves one position backward. When one data is read, the head moves one position backward. When head=tail, no data is stored in the queue.
-![image](./figures/511a0c05-0460-4695-95cb-d5841afb00c2.png)    
+![image](./figures/511a0c05-0460-4695-95cb-d5841afb00c2.png)

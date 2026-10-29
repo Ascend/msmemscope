@@ -1,5 +1,3 @@
-<!-- md-trans-meta sourceCommit=a2aca8c3ac20e718c319455802fdec0753d15b04 translatedAt=2026-08-10T02:08:22.150Z pushedAt=2026-08-10T02:11:41.914Z -->
-
 <h1 align="center">MindStudio MemScope</h1>
 
 <div align="center">
@@ -22,7 +20,7 @@ English | [简体中文](./README.md)
 
 🔹 **[2026.04.29]**: MindStudio MemScope 26.0.0 is released! It supports collecting memory snapshots in OOM scenarios.
 
-🔹 **[2026.04.08]**: MindStudio MemScope 26.0.beta.1 is released! The one-click memory decomposition feature now supports vLLM and MindSpeed scenarios.
+🔹 **[2026.04.08]**: MindStudio MemScope 26.0.beta.1 is released! The one-click memory decomposition feature now supports VLLM and MindSpeed scenarios.
 
 🔹 **[2026.02.01]**: MindStudio MemScope 26.0.0-alpha.1 is released! It can collect memory snapshots under the Ascend for PyTorch framework via Python APIs, identifying memory page table attributes and writing them to disk, and obtaining the newly added memory allocation interfaces from the driver.
 
@@ -50,10 +48,10 @@ msMemScope provides two major features: memory collection and memory analysis.
   <tbody>
     <!-- Memory collection -->
     <tr>
-      <td rowspan="2">        
+      <td rowspan="2">
         <a href="./docs/en/user_guide/memory_profile.md">Memory collection</a>
       </td>
-      <td rowspan="2">        
+      <td rowspan="2">
       msMemScope supports memory event collection capabilities, allowing users to customize the memory collection scope and collection items, thereby supplying raw data for subsequent analysis.
       </td>
       <td>Collection via Python APIs</td>
@@ -63,16 +61,16 @@ msMemScope provides two major features: memory collection and memory analysis.
       <td>Collection via CLI</td>
       <td>This mode supports information collection via command line, facilitating memory event collection and memory analysis in non-Python scenarios.</td>
     </tr>
-     <!-- Memory analysis -->   
+     <!-- Memory analysis -->
     <tr>
-      <td rowspan="5">        
+      <td rowspan="5">
       <a href="./docs/en/user_guide/memory_analysis.md">Memory analysis</a>
       </td>
-      <td rowspan="5">        
+      <td rowspan="5">
         Based on the collected memory data, msMemScope provides five analysis capabilities: leak detection, comparison, monitoring, decomposition, and identification of inefficient memory, helping developers quickly diagnose and optimize memory issues.
       </td>
       <td>Memory leak analysis</td>
-      <td>For issues such as long-term unreleased memory and memory leaks, msMemScope provides memory leak analysis and kernelLaunch-granularity memory change analysis to locate and analyze alarms.</td>
+      <td>For issues such as long-term unreleased memory and memory leaks, msMemScope provides memory leak analysis and Kernel Launch-granularity memory change analysis to locate and analyze alarms.</td>
     </tr>
     <tr>
       <td>Memory comparison</td>
@@ -95,11 +93,11 @@ msMemScope provides two major features: memory collection and memory analysis.
 
 ## 🚀 Getting Started
 
-*[msMemScope Quick Start](./docs/en/quick_start/quick_start.md)* is designed to help users quickly become familiar with how to use msMemScope.
+*[msMemScope Quick Start](./docs/en/quick_start/quick_start.md)* is designed to help users quickly become familiar with how to use msMemScope via a simple PyTorch script.
 
 ## 📦 Installation Guide
 
-msMemScope can be installed using a package or from source. Choose the appropriate installation method based on your actual needs. For details, see *[msMemScope Installation Guide](./docs/en/install_guide/install_guide.md)*.
+msMemScope can be installed online, offline, or from source. Choose the appropriate installation method based on your actual needs. For details, see *[msMemScope Installation Guide](./docs/en/install_guide/install_guide.md)*.
 
 msMemScope currently supports memory collection for CANN, Ascend for PyTorch, MindSpore, and Aten operator. The supported versions are listed in the following table.
 
@@ -135,10 +133,10 @@ To improve document search efficiency, we provide:
 
 ## ⚖️ Related Notes
 
-🔹 *[Release Notes](https://gitcode.com/Ascend/msmemscope/releases)*
-🔹 *[License Notice](./docs/en/legal/license_notice.md)*
-🔹 *[Security Statement](./docs/en/legal/security_statement.md)*
-🔹 *[Disclaimer](./docs/en/legal/disclaimer.md)*
+🔹 *[Release Notes](https://gitcode.com/Ascend/msmemscope/releases)*<br>
+🔹 *[License Notice](./docs/en/legal/license_notice.md)*<br>
+🔹 *[Security Statement](./docs/en/legal/security_statement.md)*<br>
+🔹 *[Disclaimer](./docs/en/legal/disclaimer.md)*<br>
 
 ## 🤝 Suggestions and Communication
 
@@ -150,4 +148,5 @@ Contributions to the community are welcome. If you have any questions or suggest
 
 ## 🙏 Acknowledgments
 
-This tool is contributed by the Huawei MindStudio full-process development toolchain team, dedicated to providing end-to-end Ascend AI application development solutions and enabling developers to efficiently complete training development, inference development, and operator development. Thank you for every PR from the community. Contributions to msMemScope are welcome.
+This tool is contributed by the Huawei Technologies Co., Ltd. and developers.<br>
+Thank you for every PR from the community. Contributions to msMemScope are welcome.
