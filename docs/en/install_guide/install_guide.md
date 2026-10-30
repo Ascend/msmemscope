@@ -1,10 +1,12 @@
-# **msMemScope Installation Guide**
+# msMemScope Installation Guide
+
+<br>
 
 ## 1. Installation Description
 
 This tool has been integrated into CANN. If CANN has been installed and this tool does not need to be updated, you can directly use it without following the instructions in this document.
 
-If CANN has not been installed in your environment, install the Ascend NPU driver and CANN software (including the Toolkit and ops) by referring to [CANN Quick Installation](https://www.hiascend.com/en/cann/download), and configure environment variables.
+If CANN has not been installed in your environment, install the Ascend NPU driver and CANN (including the Toolkit and ops) by referring to [CANN Quick Installation](https://www.hiascend.com/en/cann/download), and configure environment variables.
 
 If you need to upgrade this tool separately or use the latest version, you can install it in any of the following ways: [Online Installation](#21-online-installation), [Offline Installation](#22-offline-installation), and [Installation from Source](#23-installation-from-source).
 
@@ -12,108 +14,92 @@ If you need to upgrade this tool separately or use the latest version, you can i
 
 ### 2.1 Online Installation
 
-If your device has Internet access, you can run a single command to automatically download and install the tool. Visit the [Ascend community](https://www.hiascend.com/en/developer/software/mindstudio/download?versionId=152&ids=45%2Cb1e62037594d4e5c9a0fd797ff490006%2C127%2C49%2C), select the target CANN version, and choose "online installation". The system will guide you through the subsequent operations.
+If your device has Internet access, you can run a single command to automatically download and install the tool. Visit the [Ascend community](https://www.hiascend.com/en/developer/software/mindstudio/download) page, select the target CANN version, and choose "online installation". The system will guide you through the subsequent operations.
 
 ### 2.2 Offline Installation
 
-For devices that are not connected to the Internet, such as those on an enterprise intranet, download the complete offline installation package on a device that has Internet access and then transfer the package to the target device for installation. Visit the [Ascend community](https://www.hiascend.com/en/developer/software/mindstudio/download?versionId=152&ids=45%2Cb1e62037594d4e5c9a0fd797ff490006%2C127%2C50%2C), select the target CANN version, and choose "offline installation". The system will guide you through the subsequent operations.
+For devices that are not connected to the Internet, such as those on an enterprise intranet, download the complete offline installation package on a device that has Internet access and then transfer the package to the target device for installation. Visit the [Ascend Community](https://www.hiascend.com/en/developer/software/mindstudio/download) page, select the target CANN version, and choose "offline installation" to obtain the corresponding installation package and operation guide.
 
 ### 2.3 Installation from Source
 
-#### 2.3.1 Installing Dependencies
+If you want to use the features of the latest code, or modify the source code to enhance functions, you can download the code of this repository, compile and package the tool by yourself, and complete the installation.
 
-Before the installation, ensure that the Git and Python environments are available. For details, see [version requirements](../development_guide/development_guide.md#1-development-environment-settings). If requirements are not met, run the following command to install dependencies.
+#### 2.3.1 Environment Preparation
 
-Debian:
+Source code compilation uniformly uses the MindStudio standard build environment.
+
+- For daily development or when using a released image, see the [MindStudio Tool Development Environment Setup Guide](https://gitcode.com/Ascend/msot/blob/master/docs/en/common/dev_env_setup.md).
+- To reproduce the environment from a base OS, or to perform source code build verification or unit test verification, you must refer to the [MindStudio Image Build Guide](https://gitcode.com/Ascend/msot/blob/master/docs/en/common/docker_image_build_guide.md) and build the environment image on site from the openEuler base image.
+
+The source code compilation and unit test commands in the rest of this document are executed in the container of the image specified above or of the on-site built environment image. The CANN package version, GCC version, and Python version are subject to the unified image production guide and are not maintained separately in this repository.
+
+After the image is built, you must use the `ctr_in.py` command provided in Chapter 7 of the *Image Build Guide* to start and enter the container in an interactive terminal. Do not use a plain `docker run` to create a container, and do not use a plain `docker exec NAME bash -c 'CMD'` instead of an interactive environment; otherwise the initialization of the Python, GCC, and CANN environments may be skipped.
+
+After entering the interactive container shell opened by `ctr_in.py`, run the following command to clone this repository:
 
 ```bash
-sudo apt-get install -y python3 git build-essential cmake
+cd <path>/memscope   # Go to the memscope code repository directory; path is the path where the code repository project resides.
+git clone https://gitcode.com/Ascend/msmemscope.git
 ```
 
-openEuler:
+#### 2.3.2 Compiling
+
+Staying in the same interactive container shell opened by `ctr_in.py`, run the following command in the repository root directory to automatically download dependencies and build:
 
 ```bash
-sudo yum install -y python3 git gcc gcc-c++ make cmake
+cd <path>/memscope   # Go to the memscope code repository directory; path is the path where the code repository project resides.
+python3 build.py
 ```
 
-#### 2.3.2 Compiling and Building a RUN Package
+After the build succeeds, the installation package is generated in the `artifacts/` directory.
 
-1. Run the following git command on the terminal to clone the msMemScope source code.
+#### 2.3.3 Running Unit Tests (Optional)
 
-   ```bash
-   git clone https://gitcode.com/Ascend/msmemscope.git -b 26.1.0
-   ```
+This step is not mandatory for installation. To verify the basic functions of the code, you can run unit tests:
 
-2. Download the Python third-party dependencies. Note that `sqlite3` is an optional choice and is used for offline functions.
+```bash
+cd ~/msmemscope
+python3 build.py test
+```
 
-   ```bash
-   cd ./msmemscope
-   pip3 install -r ./requirements.txt
-   ```
+A return code of `0` with no failed test cases indicates that the unit tests passed.
 
-3. Download and build dependencies.
+#### 2.3.4 Installation
 
-   ```bash
-   cd ./<remote-name>/build
-   python3 build.py local test
-   ```
+##### 2.3.4.1 Preparing the RUN Package
 
-   Parameters:
+Before installing the package, grant the execute permission on the RUN package. Go to the directory where the RUN package is saved and run the following command to add the execute permission.
 
-   - `local`: local building. If this parameter is added, dependencies such as gtest and json are downloaded for local building. Generally, these dependencies are downloaded only for the first building unless they are updated.
-   - `test`: test cases.
+```bash
+cd ~/msmemscope/artifacts
+chmod +x mindstudio-memscope_<version>_linux-<arch>.run
+```
 
-4. Compile the package in the `./build` directory.
+##### 2.3.4.2 Installation Procedure
 
-   ```bash
-   bash make_run.sh
-   ```
+Copy the RUN package to the running environment and run the following command to install it.
 
-   Pack all the outputs into a RUN package for installation and upgrade. If the following information is displayed, packaging is successful.
+```bash
+bash mindstudio-memscope_<version>_linux-<arch>.run --install --install-path=<path>
+```
 
-   ```bash
-   [INFO] Run file created successfully: xx/mindstudio-memscope_<version>_linux-<arch>.run
-   Usage instructions:
-     Install: bash mindstudio-memscope_<version>_linux-<arch>.run --install [--install-path=/path]
-     Upgrade: bash mindstudio-memscope_<version>_linux-<arch>.run --upgrade --install-path=/path
-     Version: bash mindstudio-memscope_<version>_linux-<arch>.run --version
-     Help:    bash mindstudio-memscope_<version>_linux-<arch>.run --help
-   ```
+Note: `path` indicates the installation directory. If `--install-path` is not specified, the tool automatically detects the `ASCEND_TOOLKIT_HOME` or `ASCEND_HOME_PATH` environment variable:
 
-   Note: `arch` indicates the CPU architecture.
-   After the compilation is complete, the package is generated in the `./build` directory.
+- If either of the above environment variables exists, you are prompted to confirm whether to install to the `$ASCEND_TOOLKIT_HOME/tools` directory (preferred) or the `$ASCEND_HOME_PATH/tools` directory. If an `msmemscope` subdirectory already exists in that directory, upgrade mode is automatically enabled.
+- If neither environment variable exists, or if the user chooses not to install to the recommended path, the tool is installed to the current directory by default.
 
-#### 2.3.3 Installing the RUN Package
+If the following information is displayed, the package is installed successfully.
 
-1. Grant the execute permission on the RUN package.
+```text
+source <path>/msmemscope/set_env.sh
+[INFO] Installation completed successfully
+```
 
-    ```shell
-    chmod +x mindstudio-memscope_<version>_linux-<arch>.run
-    ```
-
-2. Install the package.
-
-   ```bash
-   bash mindstudio-memscope_<version>_linux-<arch>.run --install --install-path=<path>
-   ```
-
-   Note: `path` indicates the installation directory. If `--install-path` is not specified, the tool automatically detects `ASCEND_TOOLKIT_HOME` or `ASCEND_HOME_PATH`.
-
-   - If any of the above environment variables exist, the user will be prompted to confirm whether to install to the `$ASCEND_TOOLKIT_HOME/tools` directory (preferred) or the `$ASCEND_HOME_PATH/tools` directory. If an `msmemscope` subdirectory already exists under that directory, upgrade mode will be automatically enabled.
-   - If none of the above environment variables exist, or if the user chooses not to install to the recommended path, the default installation location will be the current directory.
-
-   Install msMemScope in the `path` directory. After the installation is successful, the following information is displayed:
-
-   ```bash
-   source <path>/msmemscope/set_env.sh
-   [INFO] Installation completed successfully
-   ```
-
-#### 2.3.4 Verifying the Installation
+#### 2.3.5 Post-Installation Check
 
 Check whether the `set_env.sh` file is generated in the `<path>/msmemscope` directory.
 
-#### 2.3.5 Configuring Environment Variables
+#### 2.3.6 Post-Installation Configuration
 
 Before using msMemScope, run the following command to configure the `PYTHONPATH`and `PATH` environment variables.
 
@@ -123,7 +109,7 @@ source <path>/msmemscope/set_env.sh
 
 After the environment variables are configured, the following information is displayed:
 
-```tex
+```text
 Setting up msmemscope environment...
 bash: local: can only be used in a function
 ✓ Added to PYTHONPATH (forced to front):<path>/msmemscope/python
@@ -136,8 +122,8 @@ msmemscope environment setup completed
 
 After installation, run the following command to check whether the tool has been successfully installed:
 
-```shell
-  msmemscope --help
+```bash
+msmemscope --help
 ```
 
 If no error is outputted and the help information is displayed, the tool has been successfully installed.
@@ -145,7 +131,7 @@ If no error is outputted and the help information is displayed, the tool has bee
 ## 4. Uninstallation
 
 > [!NOTE]
-> 
+>
 > If you have set `LD_PRELOAD` as described in [Memory Collection](../user_guide//memory_profile.md#usage-example) when enabling memory collection, run `unset LD_PRELOAD` to reset the environment variable before uninstallation, to avoid failures.
 
 Perform the following steps to uninstall the tool:
@@ -153,32 +139,32 @@ Perform the following steps to uninstall the tool:
 1. Download the script.
 
    ```bash
-   curl -O https://inst.obs.cn-north-4.myhuaweicloud.com/26.1.0/ms_install.py
+   curl -O https://inst.obs.cn-north-4.myhuaweicloud.com/26.2.0/ms_install.py
    ```
 
    > [!NOTE]
    >
-   > - An internet connection is required for downloading. If the environment does not allow internet access or is offline, download the script on a machine with internet connectivity first, and then copy it to the target device.
+   > - An internet connection is required for downloading. If the environment does not allow internet access or is in an offline state, download the script on a device with internet connectivity first, and then copy it to the target device.
    > - If the command does not respond, or if you encounter connection failures, SSL certificate errors, or other issues, please refer to the [FAQs](https://www.hiascend.com/developer/blog/details/02176213671719317003).
 
 2. Uninstall the tool.
 
    ```bash
-   python ms_install.py uninstall {tools_name}
+   python3 ms_install.py uninstall {tools_name}
    ```
 
-   Replace `{tools_name}` with the name of the tool to be uninstalled. You can run the `python ms_install.py help` command to query the tool name, which is displayed under the `Available Tools` field in the command output.
+   Replace `{tools_name}` with the name of the tool to be uninstalled. You can run the `python3 ms_install.py help` command to query the tool name, which is displayed under the `Available Tools` field in the command output.
 
    If the uninstallation is successful, the following information is displayed:
 
-   ```ColdFusion
+   ```text
    Successfully uninstalled 1 tool ({tools_name})
    ```
 
 ## 5. Upgrade
 
 Upgrading follows a "uninstall first, then install" approach. Simply run the installation command, and the tool will automatically uninstall the old version and guide you through the overlay installation process.
-Run `msmemscope --version` to view current version information before selecting the target version for upgrade. For details about version mapping, see [Release Notes](https://gitcode.com/Ascend/release-management/blob/master/MindStudio/26.1.0/release_notes.md).
+Run `msmemscope --version` to view current version information before selecting the target version for upgrade. For details about version mapping, see [Release Notes](https://gitcode.com/Ascend/release-management/blob/master/MindStudio/26.2.0/release_notes_en.md).
 
 ## 6. Appendix
 
@@ -191,7 +177,7 @@ Installation command syntax: `./mindstudio-memscope_<version>_linux-<arch>.run [
 For details, see [Table 1](#cli-args-table).
 
   > [!NOTE]
-  > 
+  >
   > If options queried by running the `./mindstudio-memscope_<version>_linux-{arch}.run --help` command are not in the following table, they are reserved or apply to other products. You do not need to pay attention to them.
 
 **Table 1** Options

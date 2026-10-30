@@ -31,15 +31,19 @@ The following example is designed based on PyTorch and Ascend for PyTorch. Pleas
 
       Note: `path` is the msMemScope installation directory.
 
-   3. Run the following commands to set environment variables to use msMemScope's Python APIs. You are advised to add the following commands to the environment variable setting script.
+   3. Run the following commands to set environment variables to use msMemScope Python APIs.
 
       ```bash
-      msMemScope_DIR="path"    # Replace path with the actual msMemScope path.
-      export LD_LIBRARY_PATH=${msMemScope_DIR}/lib64:${LD_LIBRARY_PATH}
-      export LD_PRELOAD=${msMemScope_DIR}/lib64/libleaks_ascend_hal_hook.so:${msMemScope_DIR}/lib64/libascend_mstx_hook.so:${msMemScope_DIR}/lib64/libascend_kernel_hook.so:${msMemScope_DIR}/lib64/libatb_abi_0_hook.so:${msMemScope_DIR}/lib64/libatb_abi_1_hook.so
+      source msmemscope --load-api-env
       ```
 
-2. Access the repository and then run the following command to go to the `example` directory in the repository.
+      Note: This command sets the environment variables required for using Python APIs. After use, run the following command to clear them to avoid conflicts with other tools.
+
+      ```bash
+      source msmemscope --unload-api-env
+      ```
+
+2. Access the repository and then run the following command to go to the `example` directory.
 
    ```bash
    cd ./example
@@ -72,7 +76,7 @@ The following example is designed based on PyTorch and Ascend for PyTorch. Pleas
    - CLI: Run the following command to execute the script using msMemScope:
 
      ```bash
-     msmemscope --events=alloc,free,access,launch --level=kernel,op --call-stack=c,python --analysis=leaks,inefficient,decompose --output=./output --data-format=csv python ./example_cmd.py
+     msmemscope --events=alloc,free,access,launch --level=kernel,op --call-stack=c,python --analysis=leaks,inefficient,decompose --output-path=./output --format=csv python ./example_cmd.py
      ```
 
    For more information about tool parameters, see [Memory Collection](../user_guide/memory_profile.md).

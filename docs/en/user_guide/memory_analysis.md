@@ -2,21 +2,23 @@
 
 ## Overview
 
-msMemScope provides analysis capabilities such as leak detection, comparison, monitoring, decomposition, and identification of inefficient memory based on the collected memory data, helping you quickly diagnose and optimize memory problems.
+msMemScope provides analysis capabilities such as leak detection, comparison, monitoring, decomposition, identification of inefficient memory, and OOM analysis based on the collected memory data, helping you quickly diagnose and optimize memory problems.
 
 |Analysis Capability|Description|
 |--|--|
 |Memory leak|If memory is not released for a long time or memory leaks occur, msMemScope provides memory leak analysis and kernel-launch-based memory change analysis to locate and analyze problems.|
-|Memory comparison|If the memory usage differs between two steps, it may lead to excessive memory usage or even out of memory (OOM) errors. In this case, use the memory comparison analysis function of msMemScope to locate and analyze the problem.|
+|Memory comparison|If the memory usage differs between two steps, it may lead to excessive memory usage or even Out of Memory (OOM) errors. In this case, use the memory comparison analysis function of msMemScope to locate and analyze the problem.|
 |Memory block monitoring|In foundation model scenarios, if it is difficult to locate memory corruption, msMemScope can monitor the specified memory blocks before and after operator execution through Python APIs and CLIs. Based on changes in the memory block data, it can quickly determine the scope or exact location of memory corruption between operators.|
 |Memory decomposition|msMemScope supports memory decomposition to analyze the memory usage of the CANN layer and Ascend for PyTorch framework and outputs model weights, activations, gradients, and optimizer and other component memory usage.|
 |Identification of inefficient memory|During model training and inference, some memory blocks may not be used immediately after being allocated or may not be deallocated in a timely manner after being used. msMemScope identifies the inefficient memory usage to optimize model training and inference.|
-|One-click analysis|msMemScope supports one-click memory decomposition and memory snapshot to improve memory analysis usability, allowing core functions of vLLM, FSDP, and verl to be automatically dotted for quick analysis.|
-|NPU Sanitizer|For custom operators, msMemScope, in coordination with NPU Sanitizer, provides the custom operator instrumentation feature, allowing developers to feed memory read-write information into the Sanitizer's analysis pipeline via a reported formatted message string for detecting multi-stream synchronization errors.|
+|OOM analysis|When OOM occurs during NPU training or inference, msMemScope automatically collects the operation information that triggered the OOM, the most recently unreleased memory allocation records, and the memory allocation records with the largest usage, helping you quickly locate the root cause of the OOM.|
+|One-click analysis|msMemScope supports one-click memory decomposition and memory snapshot to improve memory analysis usability, allowing core functions of vLLM, FSDP, and verl to be automatically hooked for quick analysis.|
+|NPU Sanitizer|For custom operators, msMemScope, in coordination with NPU Sanitizer, provides the custom operator instrumentation feature, allowing developers to feed memory read-write information into the Sanitizer analysis pipeline via a reported formatted message string for detecting multi-stream synchronization errors.|
+|Host heap memory leak detection|To address the memory growth caused by host-side process heap memory that is not released for a long time during training and inference, msMemScope aggregates and analyzes the host heap memory blocks that are allocated and not released within the detection range by call stack, and outputs a leak overview report and per-block details, enabling the location and analysis of host heap memory leaks.|
 
 ## Preparations
 
-For details about how to install msMemScope, see [msMemScope Installation Guide](../install_guide/install_guide.md).
+For details about how to install msMemScope, see the [msMemScope Installation Guide](../install_guide/install_guide.md).
 
 ## Memory Leak Analysis
 
@@ -55,7 +57,7 @@ During memory analysis, use the mstx instrumentation function to locate issues. 
     - If the information shown in [Figure 2 Memory fluctuation](#fluctuation) is displayed, the memory fluctuates. The command output displays the memory fluctuation in a single step (defined by the ratio of the minimum memory pool allocation to the maximum memory pool allocation) and the minimum memory pool allocation. The minimum ratio and maximum ratio are provided as references. Users can determine whether there is a memory leak risk based on the ratio.
 
         > [!NOTE]
-        > 
+        >
         > The memory is not stable in the first step. Therefore, only the memory fluctuation from the second step can be analyzed. The memory fluctuation in the first step can be ignored.
 
         Figure 2 Memory fluctuation <a id="fluctuation"></a>
@@ -98,6 +100,187 @@ msMemScope supports offline leak analysis of memory events in a specified range.
 
     ![](../figures/offline_leakage_analysis.png)
 
+## Host Heap Memory Leak Detection
+
+### Function Description
+
+Host heap memory leak detection addresses the memory growth caused by host-side process (CPU-side) heap memory that is not released for a long time during training and inference. It aggregates the host heap memory blocks that are allocated and not released within the detection range (window) by call stack, and outputs a leak overview report and per-block details, helping you locate the leaking call stacks and the leak scale.
+
+- **Single ledger + closed-window snapshot**: The block table on the hook side is the only ledger, and no data is transferred across layers during a window. Aggregation is performed once when the window ends, keeping hot-path overhead low (full tracking by default, with no reliance on sampling).
+- **Leak location and assessment**: Outputs the call stacks of the TOP N leak sites (10 by default), the unfreed block size distribution, and per-block details (optional). Combined with the tick time series (1 second per tick), the sites are sorted by the Leak Suspicion Index (LSI) and classified into suspected leaks, growth watch, and resident baselines.
+- **Honest labeling**: Tracking decisions such as block threshold filtering, sampling, table-full degradation, and truncation are truthfully labeled in the "Data Health Analysis" chapter of the report, with no implicit record dropping at runtime.
+- **In-window inspection**: Supports querying an interim leak overview while the window is open through the out-of-process control channel (`msmemscope --pid <PID>`), without closing the window or affecting accounting.
+- **Three usage modes**: CLI mode, Python API mode, and out-of-process control channel mode.
+
+Host heap memory leak detection is independent of device-side memory leak analysis, and the two can be used separately. It is mutually exclusive with the `leaks`, `decompose`, `inefficient`, and `oom` analysis items and cannot be enabled together with them in the same configuration.
+
+### Usage Example
+
+The semantics of the detection range (window) are as follows:
+
+- **CLI mode**: The window opens as soon as the target process starts, and closes automatically when the process exits, at which point the report is output.
+- **Python API mode**: `msmemscope.start()` opens the window and `msmemscope.stop()` closes it. Each `start`/`stop` pair corresponds to one detection window and outputs one report. Including `host-leaks` in `analysis` is a prerequisite for opening the window (enabling configuration). When collection stops, the window closes automatically and the report is output.
+- **Out-of-process control channel mode**: For a running process that has loaded `libascend_leaks.so`, after attaching with `msmemscope --pid <PID>`, you can open and close the window with `start`/`stop` and query the interim overview of the window with `display host_leak summary`. For details, see [Out-of-Process Control Channel (Dynamic Attach)](./memory_profile.md#out-of-process-control-channel-dynamic-attach).
+
+**CLI mode**
+
+1. Use msMemScope to start the user program, where `Application` is the user program and its parameters.
+
+    ```shell
+    msmemscope --analysis=host-leaks [--host-leak-mode=MODE] [--block-size-threshold=N] [--sample-rate=N] ${Application}
+    ```
+
+    Example:
+
+    ```shell
+    msmemscope --analysis=host-leaks --block-size-threshold=1024 --sample-rate=1 --output-path=./output python ./train.py
+    ```
+
+    > [!NOTE]
+    >
+    > - In CLI mode, when `--analysis` contains `host-leaks`, the msMemScope launcher automatically sets up the hooks in host mode (`LD_PRELOAD` loads only `libmsmemscope_host_mem_hook.so`), with no need to set environment variables manually.
+    > - You can also set up the host hook environment manually with `source msmemscope --load-api-env=host` (required for the Python API mode), and clear it with `source msmemscope --unload-api-env` when you are done.
+
+2. After the target process exits, a leak overview report is generated in the `output` directory. For details, see [Output Description](#host-heap-memory-leak-detection-output-description).
+
+**Python API mode**
+
+1. Set environment variables to set up the host hooks.
+
+    ```shell
+    source msmemscope --load-api-env=host
+    ```
+
+2. Configure the enabling settings and start and stop the detection in the user script.
+
+    ```python
+    import msmemscope
+    # Configuration enabling: including host-leaks in analysis is a prerequisite for opening the window (parameters such as host_leak_mode must be adjusted after the window is closed)
+    msmemscope.config(analysis=["host-leaks"], host_leak_mode="summary", block_size_threshold="1024")
+    msmemscope.start()          # Open the window: start the detection range
+    # ... train for several steps ...
+    msmemscope.stop()           # Close the window: stop the detection range, aggregate and output the report
+    ```
+
+    Each `start()`/`stop()` pair corresponds to one detection window and outputs one overview report (the window index increases). While the detection window is open (after `start()` and before `stop()`), calls to `config()` do not take effect and a warning is printed. To adjust the detection parameters, call `stop()` to close the window first, adjust the parameters, and then call `start()` to open a new window.
+
+    > [!NOTE]
+    >
+    > - When `analysis` contains `host-leaks` but the host hooks are not set up in the current process (`source msmemscope --load-api-env=host` has not been executed), the API throws a `ValueError` prompting you to set up the environment first.
+    > - The report is output immediately after the window is closed. If a window is still open when the process exits, it is closed automatically.
+
+**Out-of-process control channel mode**
+
+1. The target process must have loaded `libascend_leaks.so` (a process started through msMemScope, or one that has executed `source msmemscope --load-api-env[=npu|host]`).
+
+2. Run the following command to attach to the target process, where `PID` is the process ID, and enter the interactive control session.
+
+    ```shell
+    msmemscope --pid <PID>
+    ```
+
+3. In the session, run `display host_leak summary` to query the interim leak overview of the current detection window (valid while the window is open; `no active window` is returned when the window is closed).
+
+    ```text
+    msmemscope> display host_leak summary
+    ```
+
+    The chapter structure of the interim overview is the same as that of the closed-window report. For the differences and labels, see [Interim Overview Within the Window (Inspection)](#interim-overview-within-the-window-inspection).
+
+4. For scripted inspection, use the `--command` parameter to send a single control word, after which the tool exits automatically.
+
+    ```shell
+    msmemscope --pid <PID> --command "display host_leak summary"
+    ```
+
+### Parameter Description
+
+The host heap memory leak detection parameters are listed in [**Table 1** Host heap memory leak detection CLI parameters](#host-heap-memory-leak-detection-cli-parameters).
+
+**Table 1** Host heap memory leak detection CLI parameters<a id="host-heap-memory-leak-detection-cli-parameters"></a>
+
+|Parameter|Default value|Description|
+|--|--|--|
+|`--analysis=host-leaks`|— (the default analysis item is `leaks`)|Enables host heap memory leak detection. Mutually exclusive with `leaks`, `decompose`, `inefficient`, and `oom`, and cannot be enabled together with them in the same configuration.|
+|`--host-leak-mode <MODE>`|`summary`|Reporting mode: `summary` outputs only the overview report aggregated by call stack; `event` outputs the per-block detail CSV in addition to the overview report.|
+|`--block-size-threshold <N>`|`0`|Block size threshold (bytes): only allocations with a size greater than or equal to N are recorded. The default value 0 indicates full tracking. When it is explicitly set to a value greater than 0, allocations smaller than the threshold do not enter the ledger, and their count and total size are labeled in the "Data Health Analysis" chapter of the report.|
+|`--sample-rate <N>`|`1`|Inverse sampling rate: 1 indicates no sampling; N greater than 1 indicates that only about 1/N of the allocations are recorded. A value other than 1 is rounded up to a power of 2 (for example, 3 → 4), and a value greater than 2^30 is truncated to 2^30. The report labels the sampled view. Use this only in scenarios with an extreme allocation rate.|
+
+The threshold and the sampling rate take effect as a snapshot when the window is opened. Changes made while the window is open do not take effect (they do not affect the current window but take effect from the next window).
+
+In the Python API mode, the same configuration is delivered through `msmemscope.config(**kwargs)`. The corresponding keys are listed in [**Table 2** Host heap memory leak detection Python config keys](#host-heap-memory-leak-detection-python-config-keys), and their values must be strings.
+
+**Table 2** Host heap memory leak detection Python config keys<a id="host-heap-memory-leak-detection-python-config-keys"></a>
+
+|Config Key|Default value|Description|
+|--|--|--|
+|`analysis=["host-leaks"]` (or `analysis="host-leaks"`)|—|Enables host heap memory leak detection (a prerequisite for opening the window). The mutual exclusion check is the same as that of the CLI. The actual opening and closing of the window is controlled by `start()`/`stop()`.|
+|`host_leak_mode`|`"summary"`|Reporting mode, corresponding to `--host-leak-mode`.|
+|`block_size_threshold`|`"0"`|Block size threshold, corresponding to `--block-size-threshold`.|
+|`sample_rate`|`"1"`|Inverse sampling rate, corresponding to `--sample-rate`.|
+
+### Output Description<a id="host-heap-memory-leak-detection-output-description"></a>
+
+The output files of host heap memory leak detection are saved in the `{output}/msmemscope_{*PID*}_{_timestamp_}_ascend/host_leak/` directory (`{output}` is the output directory specified by `--output-path`, which defaults to `./memscopeDumpResults`), as listed in [**Table 3** Host heap memory leak detection output files](#host-heap-memory-leak-detection-output-files).
+
+**Table 3** Host heap memory leak detection output files<a id="host-heap-memory-leak-detection-output-files"></a>
+
+|Output file|Condition|Content|
+|--|--|--|
+|`leak_overview_{*stage*}.txt`|Output by default; generated in both summary and event modes|Leak overview report: data health analysis, total unfreed, unfreed block size distribution, pre-window free size distribution, and TOP N leak sites with call stacks. `{stage}` is the window index.|
+|`block_detail_{*stage*}.csv`|Generated only when `--host-leak-mode=event` and unfreed blocks exist in the window|Per-block leak details: `addr,size,alloc_ts,Call Stack(C),Call Stack(Python)`, sorted in descending order of block size, with call stack text inlined (RFC 4180 quoted fields).|
+
+The two files correspond one-to-one to the stage index. For details about the fields and format, see [Output File Specifications](./output_file_spec.md).
+
+### Report Interpretation<a id="host-heap-memory-leak-detection-report-interpretation"></a>
+
+The leak overview report (`leak_overview_{*stage*}.txt`) contains the following chapters:
+
+|Chapter|Description|
+|--|--|
+|Data Health Analysis|Truthfully labels the tracking decisions of this window: detection window start and stop times, reporting mode, total allocation/deallocation counts, number of unique call stacks (key depth: K=20; a class is the attribution semantics for allocations whose first K frames are identical), number of unattributed blocks (migrated to the unknown bucket when the stack table is exceeded), dead stack eviction statistics, truncation labels (bit0 = full block table, migrated to the overflow channel; bit1 = full stack table full, new stacks migrated to the unknown bucket when dead stack reclamation has nothing to supply; bit2 = full overflow ledger, accounting stopped), overflow channel statistics, pre-window free statistics, sampling rate (sampled views are labeled when the value is not 1), block threshold and untracked statistics, and symbolization coverage. When the window data is incomplete, it is clearly labeled as "not usable as a leak conclusion".|
+|Total Unfreed|Total number of blocks and bytes allocated and not released in this window (including surviving blocks in the unknown bucket and the overflow channel), an exact value obtained by traversing the ledger when the window is closed.|
+|Unfreed Block Size Distribution|Number of blocks, bytes, and proportion of unfreed blocks bucketed by size (7 buckets by default: 0–256 B, 256 B–1 KB, 1 KB–4 KB, 4 KB–32 KB, 32 KB–256 KB, 256 KB–1 MB, and above 1 MB).|
+|Pre-Window Free Size Distribution|Memory allocated before the window opened and deallocated during the window, bucketed by size (a separate channel that does not participate in leak determination and is provided for cache aging scenario analysis).|
+|TOP N Leak Sites|List of leak sites sorted in descending order of the LSI (0–100, where a higher value indicates a higher probability of a real leak) (N=10 by default, up to 1024). Each row contains: status classification (`suspected_leak` = suspected leak, `growth_watch` = growth watch, with `/turnover` appended when the turnover ratio criterion is met but the tail still grows), the LSI value, five assessment factors (Growth/Release/Lifetime/Pattern/Scale), unfreed/allocated/deallocated statistics, the sequence growth slope (B/tick) and tick count, and the complete symbolized stack text. The first row of the chapter outputs the tick series metadata (top-k=256, max-stacks=1024, tick count, and window duration). Rows for unattributed blocks are unknown bucket rows, and a missing stack text is labeled as `(unresolved stack <stack id>)`. When the sequence data is unavailable, the corresponding Growth/Pattern factor displays `-` and the reason for degradation (no_series/series_evicted/insufficient_series/no_warmup_thread) is labeled.|
+|Resident Baselines|List of resident stacks with a considerable unfreed amount in the window, sorted in descending order of the unfreed amount and without occupying TOP N slots. The criterion source of each row is labeled `resident/early` (G≈0 and allocated early) or `resident/turnover` (low unfreed/allocated ratio and no growth at the tail). Closed-window reports are not truncated, while the interim overview is truncated to no more than TOP N rows. When the pre-window free size exceeds half of the total allocations within the window, the report additionally outputs a cache turnover NOTE.|
+
+### Interim Overview Within the Window (Inspection)<a id="interim-overview-within-the-window-inspection"></a>
+
+While the detection window is open, you can query the interim overview of the window with the `display host_leak summary` command of the out-of-process control channel. The interim overview is generated by the hook by taking a one-time snapshot of the ledger and aggregating it without closing the window, clearing data, or affecting accounting. Its chapter structure is the same as that of the closed-window report (Data Health Analysis/Total Unfreed/Unfreed Block Size Distribution/Pre-Window Free Size Distribution/TOP N Leak Sites/Resident Baselines). The differences and labels are as follows:
+
+|Difference|Description|
+|--|--|
+|Report header line and Window line|The header line is labeled `(interim snapshot)` (for example, `====== Host Leak Overview (interim snapshot): stage=1, pid=1234 ======`), and the Window line is labeled `(interim snapshot, window open)`. The window duration is from the time the window was opened to the time of the snapshot.|
+|Snapshot freeze|Allocations that arrive while the snapshot is being aggregated are counted in the statistics only and do not enter the block table of this snapshot. The overview truthfully labels their count and bytes (output only when there are allocations during the freeze period).|
+|Snapshot degraded|Labeled when some shard locks fail to be acquired while reading this snapshot: block table reads return prefix data, stack table reads make attribution incomplete, and series/pre-window free reads are partially missing. This affects only this snapshot, and the window continues normal accounting.|
+|Resident baselines|Truncated to no more than TOP N rows (closed-window reports are not truncated).|
+|Per-block details|The interim overview does not generate the `block_detail` CSV.|
+
+When the command is executed after the window is closed (or before it is opened), `no active window` is returned.
+
+### Precautions
+
+- The runtime environment must be a Linux OS (x86_64 or aarch64).
+- Host heap memory leak detection is independent of device-side memory leak analysis. It is mutually exclusive with the `leaks`, `decompose`, `inefficient`, and `oom` analysis items and cannot be enabled together with them in the same configuration.
+- This function covers only standard heap allocation APIs (`malloc`/`calloc`/`realloc`/`posix_memalign`/`aligned_alloc`/`memalign`/`valloc`/`pvalloc`). Non-heap allocations such as `mmap` are not accounted for.
+- Memory that was already allocated before the window opened does not enter the ledger. Pre-window memory released during the window is counted in the separate "pre-window free" channel and is not included in the total allocation/deallocation counts or in leak determination.
+- When `--block-size-threshold` or `--sample-rate` is set, the unfreed amount in the report is a view under the corresponding tracking decisions and is truthfully labeled; it does not represent the full result.
+- The `block_detail_{*stage*}.csv` per-block details cover only the block table scope. Blocks in the overflow channel (migrated there when the block table is full) have no stack attribution and do not appear in the details, but they are already counted in the total unfreed amount and the size distribution. The difference between the total unfreed amount in the overview and the sum of the details is the number of overflow channel blocks.
+- Child processes created by fork are not covered by detection (the hooks are automatically disabled in child processes). In distributed training scenarios, each process opens its own window and generates its own report.
+- Snapshots and statistics within a detection window are pulled at once when the window is closed. If the statistics are unavailable due to an extremely early exit, the report labels them as `Snapshot: unavailable` instead of outputting speculative data.
+- If a window is not closed when the process exits, msMemScope closes it automatically and outputs the report (the closing aggregation waits for up to 120s).
+- LSI assessment depends on tick series data (1 second per tick, top-k=256 per tick, and a maximum of 1024 series stacks). When the series is missing, its slots are evicted, or it is too short, or there is no warmup thread in the entire window, the Growth/Pattern factor of the corresponding leak site displays `-`, the entry is labeled `degraded`, and the reason for degradation (no_series/series_evicted/insufficient_series/no_warmup_thread) is given, with the LSI treated as neutral.
+- Allocations that arrive during the snapshot freeze period of the `display host_leak summary` interim overview are counted in the statistics but do not enter the snapshot block table. The overview truthfully labels this, and the window continues normal accounting unaffected.
+- When `msmemscope --pid` is used for attached inspection, the target process must have loaded `libascend_leaks.so` (a process started through msMemScope or one that has executed `source msmemscope --load-api-env[=npu|host]`). The attach mode is mutually exclusive with `--compare` and the direct startup command. For details, see [Out-of-Process Control Channel (Dynamic Attach)](./memory_profile.md#out-of-process-control-channel-dynamic-attach).
+
+### Restrictions
+
+- This function targets the detection of host heap memory that is not released within a range, and the report conclusions apply to the detection window only. They cannot be directly extrapolated to leaks of the process as a whole.
+- In scenarios with an extremely high allocation frequency (millions per second) and an extremely large number of long-lived blocks, once the block table capacity (20 million entries by default) is reached, allocations are migrated to the overflow channel (with no stack attribution). When the overflow ledger is also full, accounting stops, and the window data is the complete prefix before the truncation point; the report clearly states that it cannot be used as a leak conclusion. In such scenarios, explicitly set the block size threshold or the sampling rate.
+- When the stack table capacity (400 thousand entries by default) is reached, dead stacks (call stacks all of whose blocks have been released) are reclaimed to free up slots, and their historical counts are folded into the unknown bucket row. When the table is fully live, new call stacks are placed in the unknown bucket. Attribution granularity degrades but accounting continues, and the report truthfully labels this.
+- The key depth `K` is 20 frames by default: allocations whose first 20 call stack frames are identical are grouped into the same "class". `K` can be found in the report labels. The actual key depth depends on the runtime library, and the class semantics of `K`-frame consistency may differ between library versions.
+
 ## Memory Comparison
 
 ### Function Description
@@ -131,10 +314,10 @@ Before using this function, collect data of two different steps.
 4. Compare the memory usage between the two steps.
 
     ```shell
-    msmemscope --compare --input=path1,path2 --level=kernel
+    msmemscope --compare --input-path=path1,path2 --level=kernel
     ```
 
-    **--compare** and **--input** must be used together. The two file paths specified by **--input** must be separated by a comma (full-width or half-width). **--level** can also be set to **op**.
+    **--compare** and **--input-path** must be used together. The two file paths specified by **--input-path** must be separated by a comma (full-width or half-width). **--level** can also be set to **op**.
 
 5. Check the result directory generated after the comparison between steps.
 
@@ -198,7 +381,7 @@ In foundation model scenarios, the computing task of a single card is highly com
         import torch
         import torch_npu
         import msmemscope
-        
+
         torch.npu.synchronize()
         test_tensor = torch.randn(2,3).to('npu:0')        # Create or select the tensor to be monitored as required.
         msmemscope.watcher.watch(test_tensor, name="test", dump_nums=2)
@@ -258,13 +441,28 @@ msMemScope adds Python interfaces to allow users to describe code segments.
 ### Precautions
 
 - Methods 1 and 2 in the following support a maximum of three unique tags.
-- You can enable memory decomposition in automatic mode (described in the following part) or one-click mode ([One-Click Analysis](#one-click-analysis)). Memory decomposition applies to the following scenarios.
+- You can enable memory decomposition in automatic mode ([Automatic Decomposition](#automatic-decomposition)) or one-click mode ([One-Click Analysis](#one-click-analysis)). Memory decomposition applies to the following scenarios.
 
     |Scenario|Description|
     |----|-----|
-    |Training|You can enable memory decomposition for weights, gradients, and optimizers during training.|
-    |Inference|You can enable memory decomposition for the vLLM inference framework to analyze the memory usage of **load_weight**, **profile_run**, **kv_cache**, and **activate** during inference.|
-    |Reinforcement learning|Reinforcement learning (verl) involves two phases: inference and training. Currently, the one-click analysis function can be used to enable memory decomposition only during the inference phase. During training, you can enable memory decomposition in automatic mode.|
+    |Training|Memory decomposition can be enabled for the training process of Ascend for PyTorch (native Python training) and PyTorch FSDP/FSDP2, and it decomposes and analyzes memory allocations such as weights, gradients, optimizer states, and activations during training.|
+    |Inference|You can enable memory decomposition for the vLLM inference framework to analyze the memory usage of `load_weight`, `profile_run`, `kv_cache`, and `activate` during inference.|
+    |Reinforcement learning|Reinforcement learning (verl) involves two phases: inference and training. Memory decomposition is not supported for now (the memory decomposition capability for verl is being planned). To obtain memory snapshots in verl scenarios, use the one-click analysis function. For details, see [One-Click Analysis](#one-click-analysis).|
+
+### Automatic Decomposition
+
+After `analysis=decompose` is configured (through the Python API or the `--analysis=decompose` CLI option), msMemScope automatically enables the framework-level memory decomposition hooks, with no need to call APIs manually. The hooks use a lazy activation mechanism that takes effect only on frameworks that are actually imported, and hooks for unused frameworks remain silently inactive. The scenarios, frameworks, versions, and decomposition content supported by automatic decomposition are listed in the following table.
+
+|Scenario|Framework|Version|Decomposition content|
+|----|----|----|----|
+|Training|Ascend for PyTorch (native Python training)|No restriction|Memory allocations such as weights, gradients, and optimizer states.|
+|Training|PyTorch FSDP1|2.6+|Memory allocations such as activations, sharded weights, all-gather buffers, and gradients in FSDP distributed training.|
+|Training|PyTorch FSDP2|2.6-2.9, 2.10+|Memory allocations such as activations, sharded weights, all-gather buffers, and gradients in FSDP2 distributed training.|
+|Inference|vllm-ascend|11.0|Memory usage of phases such as `load_weight`, `profile_run`, `kv_cache`, and `activate` during inference.|
+
+> [!NOTE]
+>
+> In the `Version` column, "2.6+" indicates version 2.6 and later; "2.6-2.9" indicates all versions on the 2.6 to 2.9 branches (including patches but excluding 2.10); "2.10+" indicates version 2.10 and later.
 
 ### Usage Example
 
@@ -274,7 +472,7 @@ msMemScope provides Python interfaces and uses **describe** to mark a tensor, fu
 
     ```python
     import msmemscope.describe as describe
-    
+
     @describe.describer(owner="test1")
     def train1():
         pass
@@ -286,7 +484,7 @@ msMemScope provides Python interfaces and uses **describe** to mark a tensor, fu
 
     ```python
     import msmemscope.describe as describe
-    
+
     with describe.describer(owner="test2"):
         train2()
     ```
@@ -295,7 +493,7 @@ msMemScope provides Python interfaces and uses **describe** to mark a tensor, fu
 
     ```python
     import msmemscope.describe as describe
-    
+
     describe.describer(owner="test3").__enter__()
     train3()
     describe.describer(owner="test3").__exit__()
@@ -305,14 +503,14 @@ msMemScope provides Python interfaces and uses **describe** to mark a tensor, fu
 
     ```python
     import msmemscope.describe as describe
-    
+
     t = torch.randn(10,10).to('npu:0')
     describe.describer(t, owner="test4")
     ```
 
 ### Output Description
 
-The result is saved in the **memscope_dump_{_timestamp_}.csv** file. For details, see [Output File Specifications](./output_file_spec.md).
+The memory decomposition result is saved in the `memscope_dump_{_timestamp_}.csv` or `memscope_dump_{_timestamp_}.db` file. The `owner` field in the file records the device memory category and component name of each memory allocation event. For details, see [Output File Specifications](./output_file_spec.md).
 
 ## Identification of Inefficient Memory
 
@@ -338,7 +536,7 @@ msMemScope can identify only inefficient memory in ATB LLM and Ascend for PyTorc
 
 ### Usage Example
 
-Run the following command to enable identification of inefficient memory. **Application** is the user script.
+Run the following command to enable identification of inefficient memory. `Application` is the user script.
 
 ```shell
 msmemscope ${Application} --analysis=inefficient
@@ -348,40 +546,117 @@ Inefficient memory can also be identified offline via custom APIs. For details, 
 
 ### Output Description
 
-The result is saved in the **memscope_dump_{_timestamp_}.csv** file. For details, see [Output File Specifications](./output_file_spec.md).
+The result is saved in the `memscope_dump_{_timestamp_}.csv` file. For details, see [Output File Specifications](./output_file_spec.md).
+
+## OOM Analysis
+
+### Function Description
+
+During NPU training or inference, when OOM occurs, it is difficult to tell from the error code alone which memory allocations consumed the device memory. msMemScope provides the OOM analysis function, which automatically collects diagnostic information when OOM occurs, including:
+
+1. **Trigger information**: which function triggered the OOM, how much memory was requested, the return code, and the call stack.
+2. **Most recent unfreed records**: the most recent N memory allocations that were allocated but not released, sorted by time.
+3. **Largest unfreed records**: the largest N memory allocations that were allocated but not released, sorted by size.
+
+### Precautions
+
+- The OOM analysis function must be used with the `--analysis=oom` parameter. It automatically enables alloc/free event collection, with no need to configure the `--events` parameter additionally.
+- The `K` value ranges from 1 to 1000 and defaults to 10. An error is reported when the value is out of range or invalid. The larger the `K` value, the more records are collected, and the longer the dump takes at the moment of OOM.
+- OOM data is written to the existing `memscope_dump_{_timestamp_}.csv` file. No new file is created.
+
+### Usage Example
+
+Run the following command to enable the OOM analysis function, where `K` is optional and specifies the number of Top-K records to collect, and `Application` is the user script.
+
+```shell
+msmemscope ${Application} --analysis=oom:K
+```
+
+Example:
+
+```shell
+# Basic usage (K=10 by default)
+msmemscope --analysis=oom python train.py
+
+# Custom K value
+msmemscope --analysis=oom:50 python train.py
+
+# Combined with other analysis functions
+msmemscope --analysis=oom:30,leaks python train.py
+```
+
+After the command is executed, the OOM diagnostic information is written to the `memscope_dump_{_timestamp_}.csv` file. You can filter by `Event`=`OOM_DETAIL` to view OOM-related records.
+
+### Output Description
+
+The OOM analysis result is saved in the `memscope_dump_{_timestamp_}.csv` file. Filter by the `Event` field with the value `OOM_DETAIL` to view it. For details about the fields, see [Output File Specifications](./output_file_spec.md).
 
 ## One-Click Analysis
 
 ### Function Description
 
-msMemScope allows memory decomposition or memory snapshot in one-click mode in mainstream training or inference scenarios.
+msMemScope allows memory decomposition or memory snapshot to be enabled in mainstream training or inference scenarios. Memory decomposition supports automatic enabling and can be enabled by configuring `analysis=decompose`, with no need to call APIs. For details, see [Automatic Enabling Mechanism](#automatic-enabling-mechanism). Memory snapshot does not support automatic enabling yet and still needs to be enabled through APIs manually. For details, see [Manual API Description](#manual-api-description).
 
 ### Precautions
 
 The one-click analysis function can quickly enable memory decomposition or memory snapshot collection. For details, see [Memory Decomposition](#memory-decomposition) and [Memory Snapshot Collection](./memory_profile.md#collection-via-python-apis).
 
-### Syntax
+### Automatic Enabling Mechanism
 
-The one-click analysis function contains two APIs.
+Memory decomposition (`decompose`) supports automatic silent enabling: after `analysis=decompose` is configured (through the Python API or the `--analysis=decompose` CLI option), msMemScope traverses all registered framework hijack mappings and registers memory decomposition hooks for all of them. The hooks use a lazy activation mechanism — they take effect only when the target framework module is actually imported, and hooks for frameworks that are not installed remain silently inactive. You do not need to be aware of the framework and version in use, nor call APIs manually. For the frameworks supported by automatic decomposition, see [Automatic Decomposition](#automatic-decomposition).
 
-- **init_framework_hooks(framework,version,component,type)**
+In the vLLM inference framework, to enable memory decomposition using the one-click analysis function, you only need to configure `analysis=decompose`.
+
+```python
+import msmemscope
+msmemscope.config(
+events="alloc,free",
+format="db",
+analysis="decompose",
+output_path="/vllm-ascend/wlz_data_test"
+)
+msmemscope.start()
+# ... training or inference logic ...
+msmemscope.stop()
+```
+
+In CLI mode, no additional parameter is required either: `msmemscope --events=alloc,free --analysis=decompose python train.py`.
+
+### Manual API Description
+
+The one-click analysis function contains two APIs. In memory snapshot scenarios, automatic enabling is not supported yet, and the following APIs still need to be called manually.
+
+- init_framework_hooks(framework,version,component,type)
 
     This API is used to initialize the analysis patch. The following table describes its parameters.
 
     |Parameter|Description|
     |-----|-------|
-    |framework|Supported framework. Currently, only vLLM-Ascend is supported.|
-    |version|Framework version. Currently, only vLLM-Ascend 11.0 is supported.|
-    |component|Component or module to be hooked. For example, worker corresponds to vLLM-Ascend, and actor_rollout\ref\critic\reward corresponds to verl.<br> Currently, only worker is supported. |
-    |type|Hook function. Currently, **decompose** (for memory decomposition) and **snapshot** (for memory snapshot) are supported.|
+    |`framework`|Supported framework. Currently, vllm_ascend, PyTorch, verl, and MindSpeed_LLM are supported. The versions, components, and function combinations supported by each framework are listed in the following table.|
+    |`version`|Framework version. The versions supported by each framework are listed in the following table.|
+    |`component`|Component or module to be hooked. The components supported by each framework are listed in the following table.|
+    |`type`|Hook function. Currently, `decompose` (for memory decomposition) and `snapshot` (for memory snapshot) are supported. The functions available for each framework/version/component combination are listed in the following table.|
 
-- **cleanup_framework_hooks()**
+    The scenarios, frameworks, versions, components, and functions supported by one-click analysis are listed in the following table.
+
+    |Scenario|Framework|Version|Component|Function|
+    |----|----|----|----|----|
+    |Inference|vllm_ascend|11.0|worker|decompose, snapshot|
+    |Training|PyTorch|2.6+|FSDP1|decompose|
+    |Training|PyTorch|2.6-2.9, 2.10+|FSDP2|decompose|
+    |Training|MindSpeed_LLM|0.12.1|training|snapshot|
+    |Reinforcement learning|verl|0.7.0|TaskRunner|snapshot|
+
+    > The version key description is the same as that in "[Automatic Decomposition](#automatic-decomposition)" part.
+    > In memory decomposition (`decompose`) scenarios, the hooks have already been enabled automatically, so manual calls are generally not required. If you call this API manually with the type set to `decompose`, automatic enabling yields (mutually exclusive semantics) and the manual registration takes precedence.
+
+- cleanup_framework_hooks()
 
     This API is used to clear all previously applied patch functions.
 
 ### Usage Example
 
-The following describes how to enable one-click memory decomposition in the vLLM inference framework.
+The following describes how to enable one-click memory snapshot in the vLLM inference framework.
 
 1. Set the configuration file to importing msMemScope, clear historical records through `cleanup_framework_hooks`, and use `init_framework_hooks` to configure the required framework type, version, component, and feature.
 
@@ -391,15 +666,14 @@ The following describes how to enable one-click memory decomposition in the vLLM
     import msmemscope
     msmemscope.config(
     events="alloc,free",
-    data_format="db",
-    analysis="decompose",
-    output="/vllm-ascend/wlz_data_test"
+    format="db",
+    output_path="/vllm-ascend/wlz_data_test"
     )
     msmemscope.cleanup_framework_hooks()
-    msmemscope.init_framework_hooks("vllm_ascend","11.0","worker","decompose")
+    msmemscope.init_framework_hooks("vllm_ascend","11.0","worker","snapshot")
     ```
 
-2. Set `msmemscope.start()` and `msmemscope.stop()` to collect data. After the collection is complete, the flushed data contains the **owner** field for memory decomposition.
+2. Set `msmemscope.start()` and `msmemscope.stop()` to collect data. After the collection is complete, the flushed data contains the memory snapshot data.
 
 ### Output Description
 
@@ -452,7 +726,7 @@ sanitizer-op: name=my_ext.my_fused_op;read=input_a:0x7f00:1024,input_b:0x7f04:51
 
 ### Precautions
 
-- NPU Sanitizer must be enabled via msMemScope  (i.e., by calling `msmemscope.enable_npu_sanitizer()`) for messages with the `sanitizer-op:` prefix to be intercepted and trigger analysis.
+- NPU Sanitizer must be enabled via msMemScope (i.e., by calling `msmemscope.enable_npu_sanitizer()`) for messages with the `sanitizer-op:` prefix to be intercepted and trigger analysis.
 - This feature is only available in eager mode and does not support graph mode.
 - The overhead of the instrumentation interface is extremely low (mstx marks are on the order of microseconds). For lightweight custom operators that are called frequently, it is recommended to only add tracepoints for cross-stream operators.
 
