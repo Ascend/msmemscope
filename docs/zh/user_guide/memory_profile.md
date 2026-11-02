@@ -174,7 +174,7 @@ msmemscope.stop()  # 退出采集
 
 ### 注意事项
 
-- 环境变量TASK_QUEUE_ENABLE可自行配置，具体配置可参见[TASK_QUEUE_ENABLE](https://gitcode.com/Ascend/pytorch/blob/v2.7.1-7.3.0/docs/zh/environment_variable_reference/TASK_QUEUE_ENABLE.md)。当TASK_QUEUE_ENABLE配置为2时，开启task_queue算子下发队列Level 2优化，此时会采集workspace内存。
+- 环境变量TASK_QUEUE_ENABLE可自行配置，具体配置可参见[TASK_QUEUE_ENABLE](https://gitcode.com/Ascend/pytorch/blob/v2.14.0-26.2.0/docs/zh/api/environment_variable/op_execution/TASK_QUEUE_ENABLE.md)。当TASK_QUEUE_ENABLE配置为2时，开启task_queue算子下发队列Level 2优化，此时会采集workspace内存。
 - 使用root用户运行msMemScope工具时，系统会打印提示，跳过文件权限校验，存在安全风险，建议使用普通用户权限安装执行。
 - 使用msMemScope工具采集内存时，推荐使用自定义采集方式设置采集项，进行内存采集，具体可参见[Python接口采集功能介绍](#python接口采集功能介绍)。
 - 命令行采集方式不支持场景：VLLM-Ascend。
