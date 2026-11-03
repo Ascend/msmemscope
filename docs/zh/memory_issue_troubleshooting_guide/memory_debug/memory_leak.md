@@ -45,7 +45,7 @@
 
 ### 缓存清理
 
-现象一：在训练大模型时，发现每个step结束后片上内存使用量持续上涨，最终导致OOM。  
+现象一：在训练大模型时，发现每个step结束后片上内存使用量持续上涨，最终导致OOM。
 这很有可能是由于PyTorch的缓存机制导致的——每次前向传播和反向传播都会产生临时张量，这些张量会被缓存起来但未及时释放。
 
 在以下合适的地方尝试清理缓存，消除缓存堆积导致的类似泄漏的表项：
@@ -150,7 +150,7 @@ torch_npu.npu.empty_cache()
 
 步骤2：查看内存块图
 
-在内存块图（Memory Block Graph）中，可以观察到，内存峰值随每个训练epoch增长，同时可以观察到每个epoch过程中，生成了一些不会释放的内存块，合理怀疑这些内存块为泄漏片上内存块，并顶高了片上内存峰值。 
+在内存块图（Memory Block Graph）中，可以观察到，内存峰值随每个训练epoch增长，同时可以观察到每个epoch过程中，生成了一些不会释放的内存块，合理怀疑这些内存块为泄漏片上内存块，并顶高了片上内存峰值。
 
 ![alt text](./figures/insight_block.png)
 
@@ -202,7 +202,7 @@ torch_npu.npu.empty_cache()
 
 **分析结论**：
 
-通过调用栈信息，可以快速定位到泄漏代码位置：`memory_leak_demo.py` 第99行，即 `leak_tensor = torch.randn(512, 512).to\(device)`，泄漏大小为398MB。通过片上内存拆解视图信息，发现预留片上内存比模型占用片上内存多出了1125MB，具有片上内存碎片。
+通过调用栈信息，可以快速定位到泄漏代码位置：`memory_leak_demo.py` 第99行，即 `leak_tensor = torch.randn(512, 512).to(device)`，泄漏大小为398MB。通过片上内存拆解视图信息，发现预留片上内存比模型占用片上内存多出了1125MB，具有片上内存碎片。
 
 除了上述方法外，对于Python进程，我们还需要特别关注Python对象的泄漏问题。接下来，我们将介绍如何排查Python对象导致的片上内存泄漏。
 
@@ -259,14 +259,14 @@ def train():
     if self.step == n:
         # 拍摄第一个内存快照（建议在第3个step后）
         self.snapshot1 = tracemalloc.take_snapshot()
-    
+
     if self.step == n + 1:
         # 拍摄第二个内存快照
         self.snapshot2 = tracemalloc.take_snapshot()
-        
+
         # 比较两个快照，找出内存分配差异
         top_stats = self.snapshot2.compare_to(self.snapshot1, 'lineno')
-        
+
         # 打印内存分配差异
         for stat in top_stats[:10]:
             print(stat)
@@ -276,8 +276,8 @@ def train():
 结果示例：
 
 ```shell
-/home/test.py:3: size=576 B (+576 B), count=1 (+1), average=576 B
-/home/test.py:6: size=144 B (+144 B), count=1 (+1), average=144 B
+/home/test.py:3: size=576B (+576B), count=1 (+1), average=576B
+/home/test.py:6: size=144B (+144B), count=1 (+1), average=144B
 ```
 
 由此可定位内存增长点。

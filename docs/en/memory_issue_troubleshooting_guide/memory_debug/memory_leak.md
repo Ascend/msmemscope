@@ -282,7 +282,7 @@ Output example:
 
 In this way, you can locate the memory growth point.
 
-##### 3. Search for the object allocation point
+#### 3. Search for the object allocation point
 
 Check the object reference relationship based on the locating result.
 
