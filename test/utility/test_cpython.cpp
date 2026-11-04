@@ -314,3 +314,209 @@ TEST(TestCpython, GetTraceCallStackTest)
     uint64_t time = 123456;
     GetTraceCallStack(type, time);
 }
+
+namespace
+{
+struct WalkedFrame
+{
+    std::string filename;
+    std::string funcname;
+    int lineno;
+};
+
+// 作用域引用守卫: ASSERT提前返回时也不会漏掉DECREF
+class PyOwned
+{
+   public:
+    explicit PyOwned(PyObject* o) : ptr(o) {}
+    ~PyOwned()
+    {
+        Py_XDECREF(ptr);
+    }
+    operator PyObject*() const
+    {
+        return ptr;
+    }
+    bool IsBad() const
+    {
+        return ptr == nullptr;
+    }
+    PyOwned(const PyOwned&) = delete;
+    PyOwned& operator=(const PyOwned&) = delete;
+
+   private:
+    PyObject* ptr;
+};
+
+void CollectWalkedFrame(void* ctx, PyCodeObject* /*code*/, const char* filename, const char* funcname, int lineno,
+                        uint32_t /*depth*/)
+{
+    static_cast<std::vector<WalkedFrame>*>(ctx)->push_back(WalkedFrame{filename, funcname, lineno});
+}
+
+// 回调内视图仅当帧有效: 立即拷贝为(str,str,int)元组,返回python侧供断言
+PyObject* BuildWalkResult(const std::vector<WalkedFrame>& frames)
+{
+    PyObject* list = PyList_New(static_cast<Py_ssize_t>(frames.size()));
+    if (list == nullptr)
+    {
+        return nullptr;
+    }
+    for (size_t i = 0; i < frames.size(); ++i)
+    {
+        PyObject* item = Py_BuildValue("(ssi)", frames[i].filename.c_str(), frames[i].funcname.c_str(),
+                                      frames[i].lineno);
+        if (item == nullptr)
+        {
+            Py_DECREF(list);
+            return nullptr;
+        }
+        // PyList_SetItem失败时也已窃取item引用(内部XDecref),此处不可再DECREF
+        if (PyList_SetItem(list, static_cast<Py_ssize_t>(i), item) != 0)
+        {
+            Py_DECREF(list);
+            return nullptr;
+        }
+    }
+    return list;
+}
+
+// python侧回调入口: 在真实解释器帧链内走链。若WalkFrames泄漏pending error,按原样返回nullptr——
+// 解释器会把它暴露成"returned a result with an exception set"(原缺陷的外部表现)
+PyObject* PyWalkFrames(PyObject* /*self*/, PyObject* /*args*/)
+{
+    std::vector<WalkedFrame> frames;
+    PyStackCore::WalkFrames(8, CollectWalkedFrame, &frames);
+    if (PyErr_Occurred() != nullptr)
+    {
+        return nullptr;
+    }
+    return BuildWalkResult(frames);
+}
+
+// 宿主异常展开中调用: 采集期间暂存宿主异常,照常走链,返回后原样恢复(类型不变)
+PyObject* PyWalkFramesWithPendingError(PyObject* /*self*/, PyObject* /*args*/)
+{
+    PyErr_SetString(PyExc_RuntimeError, "host exception in flight");
+    std::vector<WalkedFrame> frames;
+    const uint32_t walked = PyStackCore::WalkFrames(8, CollectWalkedFrame, &frames);
+    PyObject* pendingExc = PyErr_Occurred();  // borrowed,指向宿主异常类型
+    const int pendingKept = (pendingExc != nullptr) ? 1 : 0;
+    const int sameType = (pendingExc == PyExc_RuntimeError) ? 1 : 0;
+    const char* firstFunc = frames.empty() ? "" : frames[0].funcname.c_str();
+    PyErr_Clear();
+    return Py_BuildValue("(iiis)", static_cast<int>(walked), pendingKept, sameType, firstFunc);
+}
+
+std::string TupleField(PyObject* tuple, Py_ssize_t field)
+{
+    if (tuple == nullptr || !PyTuple_Check(tuple))
+    {
+        PyErr_Clear();
+        return "";
+    }
+    PyObject* item = PyTuple_GetItem(tuple, field);
+    if (item == nullptr || !PyUnicode_Check(item))
+    {
+        PyErr_Clear();
+        return "";
+    }
+    const char* text = PyUnicode_AsUTF8(item);
+    if (text == nullptr)
+    {
+        PyErr_Clear();
+        return "";
+    }
+    return text;
+}
+
+std::string FrameField(PyObject* list, Py_ssize_t index, Py_ssize_t field)
+{
+    PyObject* tuple = PyList_GetItem(list, index);
+    if (tuple == nullptr || !PyTuple_Check(tuple))
+    {
+        PyErr_Clear();
+        return "";
+    }
+    return TupleField(tuple, field);
+}
+}  // namespace
+
+// 回归: WalkFrames在真实帧链上取到的filename/funcname正确,且采集边界内产生的Python错误
+// 不得外泄(旧实现字段直读跨版本取到非str对象时,type error逃逸成宿主SystemError)
+TEST(TestCpython, WalkFramesInRealFrameChain)
+{
+    if (!IsPyInterpRepeInited())
+    {
+        Py_Initialize();  // 单独过滤跑本用例时自举;不finalize,避免影响同进程其他用例
+    }
+    PyInterpGuard guard;  // 已持GIL时Ensure幂等
+    static PyMethodDef walkDef = {"walk_frames", PyWalkFrames, METH_NOARGS, nullptr};
+    static PyMethodDef walkPendingDef = {"walk_frames_pending", PyWalkFramesWithPendingError, METH_NOARGS, nullptr};
+    PyOwned globals(PyDict_New());
+    PyOwned walkFn(PyCFunction_New(&walkDef, nullptr));
+    PyOwned walkPendingFn(PyCFunction_New(&walkPendingDef, nullptr));
+    ASSERT_FALSE(globals.IsBad());
+    ASSERT_FALSE(walkFn.IsBad());
+    ASSERT_FALSE(walkPendingFn.IsBad());
+    ASSERT_EQ(PyDict_SetItemString(globals, "walk_frames", walkFn), 0);
+    ASSERT_EQ(PyDict_SetItemString(globals, "walk_frames_pending", walkPendingFn), 0);
+
+    // 帧链固定为outer→<module>两帧,filename均为"<string>";第二次采集走已定型的快路径
+    // (不再创建名对象),覆盖"快路径不依赖名对象"的分支
+    const char* script =
+        "def outer():\n"
+        "    return walk_frames()\n"
+        "_frames = outer()\n"
+        "_frames2 = outer()\n"
+        "_pending = walk_frames_pending()\n";
+    PyOwned result(PyRun_String(script, Py_file_input, globals, globals));
+    if (result.IsBad())
+    {
+        PyErr_Print();  // 泄漏pending error时这里打印的即为原始TypeError/SystemError
+        FAIL() << "WalkFrames leaked a pending Python error to the interpreter";
+    }
+
+    PyObject* frames = PyDict_GetItemString(globals, "_frames");  // borrowed
+    ASSERT_NE(frames, nullptr);
+    ASSERT_TRUE(PyList_Check(frames));
+    ASSERT_EQ(PyList_Size(frames), 2);
+    EXPECT_EQ(FrameField(frames, 0, 0), "<string>");
+    EXPECT_EQ(FrameField(frames, 0, 1), "outer");
+    EXPECT_EQ(FrameField(frames, 1, 0), "<string>");
+    EXPECT_EQ(FrameField(frames, 1, 1), "<module>");
+
+    PyObject* frames2 = PyDict_GetItemString(globals, "_frames2");  // borrowed
+    ASSERT_NE(frames2, nullptr);
+    ASSERT_TRUE(PyList_Check(frames2));
+    ASSERT_EQ(PyList_Size(frames2), 2);
+    EXPECT_EQ(FrameField(frames2, 0, 1), "outer");
+    EXPECT_EQ(FrameField(frames2, 1, 1), "<module>");
+
+    PyObject* pending = PyDict_GetItemString(globals, "_pending");  // borrowed
+    ASSERT_NE(pending, nullptr);
+    ASSERT_TRUE(PyTuple_Check(pending));
+    EXPECT_EQ(PyLong_AsLong(PyTuple_GetItem(pending, 0)), 1);  // 异常展开中仍完成走链
+    EXPECT_EQ(PyLong_AsLong(PyTuple_GetItem(pending, 1)), 1);  // 宿主异常仍在,未被吞掉
+    EXPECT_EQ(PyLong_AsLong(PyTuple_GetItem(pending, 2)), 1);  // 异常类型未被改写
+    EXPECT_EQ(TupleField(pending, 3), "<module>");  // 帧内容有效
+
+    // 强制属性回退: 同版本运行自检必然通过,不注入则CodeAttrUtf8/CreateCodeAttrNames
+    // 分支零覆盖;注入期间重复同一组帧内容断言
+    PyStackCore::SetFieldLayoutStateForTest(0);
+    PyOwned attrResult(PyRun_String("_frames_attr = outer()\n", Py_file_input, globals, globals));
+    PyStackCore::SetFieldLayoutStateForTest(-1);  // 恢复自动判定,不影响后续用例
+    if (attrResult.IsBad())
+    {
+        PyErr_Print();
+        FAIL() << "attribute fallback path leaked a pending Python error";
+    }
+    PyObject* framesAttr = PyDict_GetItemString(globals, "_frames_attr");  // borrowed
+    ASSERT_NE(framesAttr, nullptr);
+    ASSERT_TRUE(PyList_Check(framesAttr));
+    ASSERT_EQ(PyList_Size(framesAttr), 2);
+    EXPECT_EQ(FrameField(framesAttr, 0, 0), "<string>");
+    EXPECT_EQ(FrameField(framesAttr, 0, 1), "outer");
+    EXPECT_EQ(FrameField(framesAttr, 1, 0), "<string>");
+    EXPECT_EQ(FrameField(framesAttr, 1, 1), "<module>");
+}
