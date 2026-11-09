@@ -218,17 +218,24 @@ void MemScopePythonCall(const std::string& module, const std::string& function);
 /* py帧走链共享核心(py采集模块在namespace hostmem内无前缀调用,钩子侧与hal/mstx共用):
  * 仅走链,帧→(code,file,func,line)逐帧回调,格式化/缓存归属调用方;帧/code引用统一Inc/DecRef,
  * 回调内有效、回调返回后失效;调用方必须已持GIL(钩子采集经PyInterpGuard临时获取);
- * 空指针/字段NULL全防御,无失败分支;直接访问code公开字段co_filename/co_name(3.9+全版本稳定,
- * 3.13t列另有风险),相比属性查找更快且无异常抛出路径 */
+ * filename/funcname为借用视图,仅回调期内有效且保证非空;回调执行期间Python错误指示器为空,
+ * 回调不得依赖或修改Python错误状态 */
 typedef void (*PyFrameVisitor)(void* ctx, PyCodeObject* code, const char* filename, const char* funcname, int lineno,
                                uint32_t depth);
 
 class PyStackCore
 {
    public:
-    // 自当前线程帧向root逐帧回调,至多maxDepth帧;filename/funcname为借用PyUnicode_AsUTF8结果,
-    // 仅回调期内有效;返回实际回调帧数(0=无帧/参数非法)
+    // 自当前线程帧向root逐帧回调,至多maxDepth帧;入口用PyErr_Fetch暂存宿主pending error
+    // (纯指针转移,不归一化/不执行用户代码),出口用PyErr_Restore原样放回——覆盖安装时顺带释放
+    // 采集自产错误,故不向调用方泄漏pending error;返回实际回调帧数(0=无帧/参数非法/缺所需
+    // libpython符号,即未链接libpython,此时不做采集)
     static uint32_t WalkFrames(uint32_t maxDepth, PyFrameVisitor visitor, void* ctx);
+#ifdef MSMEMSCOPE_UNIT_TEST
+    // 仅供单元测试注入字段布局自检结果: -1恢复自动判定,0强制属性回退路径,1强制字段直读快路径;
+    // 仅测试目标定义该宏,发布库不声明也不导出此接口
+    static void SetFieldLayoutStateForTest(int state);
+#endif
 };
 
 /**************************** 以下为模板函数的实现，调用者无需关注 ***********************************/

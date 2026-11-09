@@ -6,6 +6,8 @@ else()
 endif()
 
 add_executable(memscope_test)
+# 单元测试专用接口(如PyStackCore的布局自检注入)仅在测试目标内声明与定义,发布库不导出
+target_compile_definitions(memscope_test PRIVATE MSMEMSCOPE_UNIT_TEST)
 add_subdirectory(framework)
 add_subdirectory(utility)
 add_subdirectory(analysis)
