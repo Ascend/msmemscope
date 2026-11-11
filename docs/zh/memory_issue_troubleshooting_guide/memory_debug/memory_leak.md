@@ -192,9 +192,9 @@ torch_npu.npu.empty_cache()
 
 内存池层占用量：
 
-- **PTA预留（Ascend for PyTorch框架预留的内存池）**：3936 MB
+- **PTA预留（Ascend for PyTorch框架预留的内存池）**：3936MB
 
-- **模型占用（实际被模型使用的片上内存）**：2811 MB
+- **模型占用（实际被模型使用的片上内存）**：2811MB
 
 两者之间相差1125MB，说明很可能存在内存碎片的现象。通过Snapshot采集数据得到下图，证明确实存在大量内存碎片。
 
@@ -276,8 +276,8 @@ def train():
 结果示例：
 
 ```shell
-/home/test.py:3: size=576 B (+576 B), count=1 (+1), average=576 B
-/home/test.py:6: size=144 B (+144 B), count=1 (+1), average=144 B
+/home/test.py:3: size=576B (+576B), count=1 (+1), average=576B
+/home/test.py:6: size=144B (+144B), count=1 (+1), average=144B
 ```
 
 由此可定位内存增长点。
