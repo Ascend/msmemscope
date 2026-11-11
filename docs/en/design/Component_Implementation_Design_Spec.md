@@ -18,15 +18,15 @@ Plan and design the following functional features and matching DFX capabilities:
 | DFX     | Data collection plug-in                 | The hook component is isolated to facilitate expansion because collection items are easy to change and increase.                        | System scalability              |
 | DFX     | Smoked framework                            | Cover all functions in the main path of the tool and run the tool before the version is released and the code is stored in the library. | System reliability              |
 
-## 3. Software implementation design objective analysis and key element design
+## 1. Software implementation design objective analysis and key element design
 
-### 3.1 Overall Design Objective Analysis
+### 1.1 Overall Design Objective Analysis
 
  * Data collection: Each data collection item is decoupled independently. A collection item can be quickly added, deleted, and modified without affecting other collection items.
  * Data analysis: The analysis module supports fast iteration and enables customers to define the analysis logic.
  * Strong code maintenance and test capabilities: When a fault occurs, the root cause can be quickly located based on the symptoms and logs.
 
-### 3.2 Key Element Design
+### 1.2 Key Element Design
 
 | Key elements     | Design Objective                                                                                                                                    |
 | ---------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -35,11 +35,11 @@ Plan and design the following functional features and matching DFX capabilities:
 | Development view | Describes the submodules required for completing each functional module, and displays them in UML class diagrams.                                   |
 | Interaction view | Displays the dynamic interaction relationships between modules, and describes the logic such as concurrency and synchronization. The logic is represented by a sequence diagram.
 
-## 4. Development view
+## 2. Development view
 
-### 4.1 Implementation Model
+### 2.1 Implementation Model
 
-#### 4.1.1 Overview
+#### 2.1.1 Overview
 
 This section describes the software architecture of the components through the following views:
 
@@ -47,7 +47,7 @@ This section describes the software architecture of the components through the f
  * Logical view: describes the interfaces and relationships between the three modules of the entire component. That is, the framework module relies on the information collection module to report data, invokes the analyzer to analyze data, and displays the submodules in each module.
  * UML class diagram: A class diagram shows the detailed internal and external interfaces and relationships of each module (including submodules) in a logical view. It is the finest static view.
 
-#### 4.1.2 Context View
+#### 2.1.2 Context View
 
 The tool depends on AI frameworks, CANN, and driver layers, and uses Insight to visualize and analyze data.
 
@@ -56,9 +56,9 @@ The tool depends on AI frameworks, CANN, and driver layers, and uses Insight to 
  * Driver: The driver is at the bottom layer of the software stack. This layer can obtain the video memory allocation of all upper-layer applications and the actual execution status of the kernel.
  * Insight: The data collected by the tool is displayed by the visualization tool. You can view the video memory change trend and video memory usage details.
 
-    ![image](./figures/ce97d227-4c20-47bc-b40d-0ca124cc5e7d.png)
+    ![image](./figures/207ea55fb5b442dbb72327141145d215.png)
 
-#### 4.1.3 Logical View
+#### 2.1.3 Logical View
 
 ![image](./figures/3c7e7422-39ee-430c-a732-b973454702ed.png)
 
@@ -70,11 +70,12 @@ Similar to most memory analysis tools, it consists of three modules: data collec
 | Data analysis module     | Registers callbacks with the framework module to receive and analyze data sent by the collection module. | EventDispatcher::Subscribe  | EventHandle  | All analyzers register callbacks in a unified manner through the EventDispatcher subscription mode, including HalAnalyzer, StepInnerAnalyzer, DecomposeAnalyzer, InefficientAnalyzer, and Dump. |
 | Framework module            | As the system entry, it parses command lines and connects data collection and analysis modules and instrumentation modules. | CommandParser, EventRouter | DoLaunch, SetPreloadEnv | Parses the customer's CLI configuration; EventRouter::Route routes events uniformly to EventHandler for three-stage processing (UpdateMemoryState → DispatchToAnalyzers → CleanupMemoryState). |
 
-#### 4.1.4 Software Implementation Unit Design
+#### 2.1.4 Software Implementation Unit Design
 
 **UML class diagram**
 
 ![image](./figures/96abcebd-f98d-4594-9856-17ea7aac212c.png)
+
 The class diagram is divided into three parts: data collection (green part), data analysis (red part), and framework (yellow part).
 
  * Data collection: Data collection currently includes LD_PRELOAD hijacking (hooks), MSTX dotting (MstxManager), and reporting from runtime and driver (kernel data in hooks). The EventTraceManager class is used to determine whether data needs to be collected (including the shadow collection mode). If data needs to be reported, the EventReport interface is invoked to report the data to the framework (Process::SendEvent → EventRouter::Route). You can use the msmemscope_python module to set the collection scope and collection items.
@@ -82,9 +83,9 @@ The class diagram is divided into three parts: data collection (green part), dat
  * Framework module: Parses the Linux common command line (ClientParser), connects the data collection module and analysis module (Process, EventRouter, EventDispatcher), and communication module (server and client). EventRouter is a stateless event routing singleton, and EventHandler is split into three stages: UpdateMemoryState → DispatchToAnalyzers → CleanupMemoryState.
  * Tool modules: Not shown in the figure, mainly log modules, character string processing, numerical calculation, and file reading and writing.
 
-### 4.2 Interfaces
+### 2.2 Interfaces
 
-#### 4.2.1 Overall Design
+#### 2.2.1 Overall Design
 
 The interfaces are divided into three parts:
 
@@ -92,24 +93,24 @@ The interfaces are divided into three parts:
  * External interfaces of internal modules: Interfaces between internal modules and other modules, which are important for the stable software architecture. The interfaces must be abstract and extensible. This section describes the main objects.
  * Internal module internal interface: This part describes the internal interface organization form of a module, which is used to implement the specific functions of the module.
 
-#### 4.2.2 Design Objectives
+#### 2.2.2 Design Objectives
 
  * External interfaces must be orthogonal, easy-to-use, and compatible.
  * Stable interfaces are abstracted based on the main functions of the module. For the collection module, the external interfaces remain unchanged after collection items are added, deleted, or modified. The analysis module supports dynamic addition, deletion, and modification of analysis algorithms.
 
-#### 4.2.3 Design Constraints
+#### 2.2.3 Design Constraints
 
 NA
 
-#### 4.2.4 Technical selection
+#### 2.2.4 Technical selection
 
 Generally, the training and inference large model scripts use the Python language. Therefore, the Python interface must be supported. In addition, some device-side inference scenarios do not have the Python environment. Therefore, the command line interface must be supported.
 
-#### 4.2.5 Software Unit
+#### 2.2.5 Software Unit
 
 The following describes the main interfaces based on the framework module, data collection module, and data analysis module.
 
-##### 4.2.5.1 Framework module
+##### 2.2.5.1 Framework module
 
 1. Interface Description
 
@@ -226,7 +227,7 @@ The following describes the main interfaces based on the framework module, data 
     Precautions: N/A
     ```
 
-##### 4.2.5.2 Data acquisition module
+##### 2.2.5.2 Data acquisition module
 
 1. Interface Description
 
@@ -344,7 +345,7 @@ The following describes the main interfaces based on the framework module, data 
     Precautions: It must be called before status_ switches to IN_TRACING. Historical promotion events are only written to disk and do not trigger analyzers.
     ```
 
-##### 4.2.5.3 Data Analysis Module
+##### 2.2.5.3 Data Analysis Module
 
 1. Interface Description
 
@@ -396,25 +397,25 @@ The following describes the main interfaces based on the framework module, data 
     Precautions: N/A
     ```
 
-### 4.3 Algorithm Implementation
+### 2.3 Algorithm Implementation
 
-#### 4.3.1 Design Objectives
+#### 2.3.1 Design Objectives
 
 This component involves the memory comparison in the data analysis module. This function aims to unify the memory used by model parameters in different CANN, PyTorch, and MindSpore versions.
 
-#### 4.3.2 Design Constraints
+#### 2.3.2 Design Constraints
 
 1. The algorithm needs to accurately compare the memory usage before and after the same kernel is invoked and calculate the difference.
 2. The algorithm must be able to identify and locate the key differences between different versions of data when different kernels are invoked.
 3. The algorithm needs to achieve efficient, stable and scalable performance under the premise of ensuring precision and recall.
 
-#### 4.3.3 Technical selection
+#### 2.3.3 Technical selection
 
 For this algorithm, the core challenge is to accurately identify and locate the differences between the kernel invoking in different versions of data. The ideal effect should be similar to the diff function in Git - efficiently identifying the kernel call locations for new, deleted, or sequential changes in two copies of data.
 
 Considering that the data between versions is very similar and only a few kernel calls are added or deleted or sequenced, Myers algorithm is used as the core difference comparison strategy. When the sequence similarity is high and the difference is small (namely, the minimum editing distance D is small), the time complexity is O(ND), where N is the sum of the lengths of two sequences and D is the minimum editing distance. The O(N2) complexity is much better than the traditional dynamic programming method. In actual scenarios, kernel invoking in different versions is basically the same, only partial changes, which fits the optimal application scenario of Myers algorithm, and thus can achieve efficient and accurate difference locating, while considering performance and precision.
 
-#### 4.3.4 Algorithm Implementation
+#### 2.3.4 Algorithm Implementation
 
 **Memory comparison flowchart**
 
@@ -436,20 +437,20 @@ First, the algorithm combines two text A`[a, b, c, d]`(length: m), B`[e, f, g, h
 
 At the same time, the algorithm introduces the concept of k-line:`k=x-y`;`d` indicates the number of steps to the right or down. The ultimate goal is to find the`(0, 0)`To the`(m, n)`Shortest path for. Myers algorithm initializes the distance and path data when constructing the optimal graph path, then records the furthest x coordinate that each k line can reach, increases the distance d, and searches for a new k line. (The value ranges from -d to d, with a step of 2.) Calculate the farthest reachable coordinates on the k-line. Know until you find the end. snake is used to represent diagonal nodes, and the text at this position of the two sequences is the same; The Diff node is used to represent the difference node, and the text at the position of the two sequences is different.
 
-### 4.4 Security Implementation Design
+### 2.4 Security Implementation Design
 
-#### 4.4.1 Security Design Objectives
+#### 2.4.1 Security Design Objectives
 
 > The tool is mainly used to run the customer training script, flush the data related to memory behavior, and analyze the data. The main security design objective of the tool is to collect memory behavior based on the complete running of the customer's training and inference script. The corresponding data meets the confidentiality requirements and the tool availability must be maintained. The security items involved include external file input security protection, generated file and log security verification, secure hash algorithm, and memory access security.
 
-#### 4.4.2 Security Design Context
+#### 2.4.2 Security Design Context
 
 > The northbound interface of the tool mainly includes the commands entered by customers, Python interfaces, and file input and output. For the Python and command lines, parameter validity is verified at the entry, and file input and output are protected based on security requirements.
 > Southbound components, such as runtime, driver, PyTorch, MindSpore, and atb, trace their memory behavior, legalize obtained data, and expose it to customers.
 
-#### 4.4.3 Identification of High Risks
+#### 2.4.3 Identification of High Risks
 
-##### 4.4.3.1 Identification of High-Risk Modules
+##### 2.4.3.1 Identification of High-Risk Modules
 
 > List modules that are considered high risk and describe why they are considered high risk.
 
@@ -459,7 +460,7 @@ At the same time, the algorithm introduces the concept of k-line:`k=x-y`;`d` ind
 | File read-in and write-out module | Read and write files                                                          | Verify the file path, permission, type, and content validity. | utility/path.cpp                   | C++           |         |
 | Hash calculation module           | Performs the hash operation on the tensor binaries that are flushed to disks. | Secure hash algorithms must be used to prevent cracking.      | utility/calculate_data_check_sum.h | C++           |         |
 
-##### 4.4.3.2 High-Risk API Identification
+##### 2.4.3.2 High-Risk API Identification
 
 > List the APIs that are considered high-risk and describe why they are considered high-risk.
 
@@ -469,7 +470,7 @@ At the same time, the algorithm introduces the concept of k-line:`k=x-y`;`d` ind
 | CheckIsValidInputPath/CheckIsValidOutputPath | Verify the paths of input and output files, including the readability, path length, soft link, and permission. | Verify the validity of the input and output files.                                                                       | utility/path.cpp                   | C++           |         |
 | CalculateDataCheckSum64                      | Calculate the hash value of the tensor value.                                                                  | Secure random algorithms are used to prevent cracking.                                                                   | utility/calculate_data_check_sum.h | C++           |         |
 
-#### 4.4.4 Code Implements Security Prevention Processing
+#### 2.4.4 Code Implements Security Prevention Processing
 
 > For each identified high-risk module and API, describe the security protection measures to be taken in detail.
 
@@ -493,29 +494,29 @@ High-risk module security hardening
 2. Do not print in loop and high-frequency APIs to avoid massive screen brushing.
 3. Pay attention to the number of debug logs. Do not print massive logs to cover important information.
 
-### 4.5 Developer Test Model
+### 2.5 Developer Test Model
 
-#### 4.5.1 Design Objectives
+#### 2.5.1 Design Objectives
 
 Developer self-testing is an important step in achieving high-quality software release. Generally, white-box and black-box tests are used to cover functions.
 
  * White-box test objective: The coverage rate of code lines is greater than 80%, and the coverage rate of branches is greater than 60%. In addition, the FUZZ test project is added to verify the code before the code is uploaded to the database.
  * Objective of the black-box test: Build the smoke platform, perform full test cases before the version is released, and complete basic test cases before the code is uploaded to the library.
 
-#### 4.5.2 Design Constraints
+#### 2.5.2 Design Constraints
 
 The test directory is added to the home directory for white-box test monitoring. The code is mainly C++ and the gtest framework is used. In the black box, the new code repository is used to integrate smoke code and use cases.
 
-#### 4.5.3 Testability Design
+#### 2.5.3 Testability Design
 
  * White-box test: Based on the gtest framework and mock mechanism, most code interfaces can be covered. A few private interfaces cannot be accessed. The problem can be solved by replacing macro definitions to meet the white-box test coverage requirements of the PDU.
  * Black-box test: Test suites are divided based on large function blocks, test cases are added based on features, and the smoke environment is started using the Python interface. In addition, test suites and test cases can be selected. If a test case fails, the running of other test cases is not affected.
 
-#### 4.5.4 Layered Test
+#### 2.5.4 Layered Test
 
 Generally, the test is divided into three modules: unit test (UT), interface test (IT), and system test (ST). Due to the particularity of the tool, the interfaces of the test are relatively few and can be directly covered by the UT, as the testing is primarily structured into two layers: UT and ST. The UT monitors the logic errors of the code units, intercepts problems at the front end, and ensures that a large number of problems are found and solved before the board is put into use. ST is an end-to-end test, which is also the most important for tools. The smoke test is also divided into two layers. Level 1 is the primary path for monitoring most functions (more than 80%) and the efficiency is high (minute-level). Level 1 is used as the verification before large-granularity code is uploaded to the database. Level 2 provides complete test case monitoring, covering all test cases and analysis. Tests are performed before each version is released and iteration is transferred to the test.
 
-#### 4.5.5 Key test technical solution
+#### 2.5.5 Key test technical solution
 
 The test technical scheme is described from the white box and black box perspectives.
 
@@ -564,36 +565,36 @@ The test technical scheme is described from the white box and black box perspect
 4. Test double design
    In the white-box test, functions such as dlopen and dlsym must be mocked. Otherwise, a failure message will be returned in the general Linux environment without the Ascend environment, and most test scenarios cannot be covered.
 
-## 5. Running view
+## 3. Running view
 
-### 5.1 Interaction Model
+### 3.1 Interaction Model
 
-#### 5.1.1 Design Objectives
+#### 3.1.1 Design Objectives
 
 It provides two functions: data collection and data analysis. The framework module is connected and transitioned. Data collection and analysis are performed in different processes. Data and scheduling do not affect each other. The framework module provides memory sharing process communication mode to maximize interaction efficiency.
 
-#### 5.1.2 Design Constraints
+#### 3.1.2 Design Constraints
 
 NA
 
-#### 5.1.3 Interaction Model Design
+#### 3.1.3 Interaction Model Design
 
 **Sequence Diagram**
 After the customer enters the corresponding command line, the framework module parses the parameters entered by the customer, forks the subprocess, and starts the tested program in the subprocess. During the running of the tested program, the hijacking module in `event_trace` hijacks and records the memory event in the tested program, and sends the data to the framework module. The framework module cleans the data and forwards the data to the corresponding analysis module. Specially, if the step-to-step comparison mode is used, the processing is offline, and the data collection process is not involved. If the watch function is used, the judgment and flushing functions are processed by the client module because the watch function does not require data aggregation. The figure below shows the overall running design.
 
 ![image](./figures/a208c7b1-ef2d-4361-aa6e-f46e956f5d8e.png)
 
-### 5.2 Concurrency Model
+### 3.2 Concurrency Model
 
-#### 5.2.1 Design Objectives
+#### 3.2.1 Design Objectives
 
 Currently, the single-server-multiple-client interaction mode is used. Multiple clients (usually one client corresponds to one NPU) send messages to the server concurrently. The design must ensure that the communication module can read and write data in an orderly and efficient manner without data loss when processing high-concurrency client messages. There is a fault tolerance mechanism.
 
-#### 5.2.2 Design Constraints
+#### 3.2.2 Design Constraints
 
 Currently, the size of the shared memory is designed to be 200 MB (based on historical experience). When the system memory is insufficient, the maximum remaining memory is used.
 
-#### 5.2.3 Concurrent Model Design
+#### 3.2.3 Concurrent Model Design
 
 Each NPU corresponds to a client to report data. The tool process receives data from all NPUs for the server, and summarizes and analyzes the data. \* \* Therefore, the concurrency model is designed as a multi-producer and single-consumer model. Shared memory + lockless queue is considered as the most efficient inter-process communication mode, and is also the communication mode adopted by this component. As shown in the following figure, the shared memory is divided into two segments. The first segment is the configuration request message sent from the server to the client. The global configuration is performed only once. In the other part, the client sends data to the server. Multiple processes where the NPUs are located write data to the shared memory at the same time. In this example, lock-free queues and atomic variables are used to ensure that data does not conflict when data is written to multiple NPUs. The server uses a resident thread to read data. Each time one more data is written, the tail moves one position backward. When one data is read, the head moves one position backward. When head=tail, no data is stored in the queue.
 ![image](./figures/511a0c05-0460-4695-95cb-d5841afb00c2.png)
