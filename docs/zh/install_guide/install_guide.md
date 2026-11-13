@@ -14,11 +14,11 @@
 
 ### 2.1 在线安装
 
-若您的设备具备互联网访问能力，可通过一条命令自动完成工具的下载与安装。请参见昇腾社区MindStudio[下载](https://www.hiascend.com/developer/software/mindstudio/download)页面，选择对应的CANN版本，并在安装方式中选择"在线安装"，系统将引导您完成后续操作。
+若您的设备具备互联网访问能力，可通过一条命令自动完成工具的下载与安装。请参见昇腾社区MindStudio[下载](https://www.hiascend.com/developer/software/mindstudio/download)页面，选择对应的CANN版本，并在安装方式中选择“在线安装”，系统将引导您完成后续操作。
 
 ### 2.2 离线安装
 
-对处于企业内网等无外网环境的设备，请先在可联网的机器上下载完整的离线安装包，再将其传输至目标设备进行安装。请参见昇腾社区MindStudio[下载](https://www.hiascend.com/developer/software/mindstudio/download)页面，选择对应的CANN版本，并在安装方式中选择"离线安装"，获取对应的安装包及操作指引。
+对处于企业内网等无外网环境的设备，请先在可联网的机器上下载完整的离线安装包，再将其传输至目标设备进行安装。请参见昇腾社区MindStudio[下载](https://www.hiascend.com/developer/software/mindstudio/download)页面，选择对应的CANN版本，并在安装方式中选择“离线安装”，获取对应的安装包及操作指引。
 
 ### 2.3 源码安装
 
@@ -90,7 +90,7 @@ bash mindstudio-memscope_<version>_linux-<arch>.run --install --install-path=<pa
 
 当回显包含以下信息时，表示软件包安装成功。
 
-```text
+```output
 source <path>/msmemscope/set_env.sh
 [INFO] Installation completed successfully
 ```
@@ -109,7 +109,7 @@ source <path>/msmemscope/set_env.sh
 
 环境变量配置成功后，打印以下信息。
 
-```text
+```output
 Setting up msmemscope environment...
 bash: local: can only be used in a function
 ✓ Added to PYTHONPATH (forced to front):<path>/msmemscope/python
@@ -157,7 +157,7 @@ msmemscope --help
 
    卸载成功打印如下信息：
 
-   ```text
+   ```output
    Successfully uninstalled 1 tool ({tools_name})
    ```
 
@@ -180,7 +180,7 @@ msmemscope --help
   >
   > 如果通过./mindstudio-memscope_\<version>_linux-{arch}.run --help命令查询出的参数没有在如下表格中解释，则说明该参数为预留参数或适用于其他产品类型，用户无需关注。
 
-**表 1**  参数说明
+**表 1** 参数说明
 
 <a id="cli-args-table"></a>
 
@@ -205,7 +205,7 @@ msmemscope --help
   </tr>
   <tr>
     <td>--upgrade</td>
-    <td>升级已安装的软件，支持在低版本升级至高版本情况下使用。 如果需要从高版本回退至低版本，需卸载高版本后重新安装所需版本。</td>
+    <td>升级已安装的软件，支持在低版本升级至高版本情况下使用。如果需要从高版本回退至低版本，需卸载高版本后重新安装所需版本。</td>
   </tr>
   <tr>
     <td>--install-path</td>
