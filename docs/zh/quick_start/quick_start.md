@@ -15,7 +15,7 @@ msMemScope工具提供内存事件采集功能，基于采集事件开展内存�
 
 1. 设置环境变量。
 
-   1. 使用CANN运行的用户，请执行以下命令配置环境变量。
+   1. 使用CANN运行的用户，请执行以下命令配置环境变量：
 
       ```bash
       source <cann-path>/Ascend/cann/set_env.sh
@@ -23,7 +23,7 @@ msMemScope工具提供内存事件采集功能，基于采集事件开展内存�
 
       注：其中`cann-path`为CANN的安装目录。
 
-   2. 使用msMemScope工具采集内存数据时，执行以下命令配置环境变量。
+   2. 使用msMemScope工具采集内存数据时，执行以下命令配置环境变量：
 
       ```bash
       source <path>/msmemscope/set_env.sh
@@ -31,7 +31,7 @@ msMemScope工具提供内存事件采集功能，基于采集事件开展内存�
 
       注：其中`path`为msMemScope软件包安装位置。
 
-   3. 使用msMemScope的**Python接口方式**需要执行以下命令设置环境变量。
+   3. 使用msMemScope的**Python接口方式**需要执行以下命令设置环境变量：
 
       ```bash
       source msmemscope --load-api-env
@@ -43,22 +43,22 @@ msMemScope工具提供内存事件采集功能，基于采集事件开展内存�
       source msmemscope --unload-api-env
       ```
 
-2. 进入仓库目录后，执行以下命令进入example目录。
+2. 进入仓库目录后，执行以下命令进入example目录：
 
    ```bash
    cd ./example
    ```
 
-   example目录下按照使用方式提供了不同代码示例。
+   example目录下按照使用方式提供了不同代码示例：
 
    - Python接口使用方式：[example_api](../../../example/example_api.py)
    - 命令行使用方式：[example_cmd](../../../example/example_cmd.py)
 
 3. 选择以下其中一种方式使用msMemScope。**推荐使用Python接口方式。**
 
-   - Python接口使用方式。
+   - Python接口方式。
 
-     提供config、start、stop、step四种API接口。
+     提供config、start、stop、step四种API接口：
 
      | 接口   | 功能说明                         |
      | ------ | -------------------------------- |
@@ -67,13 +67,13 @@ msMemScope工具提供内存事件采集功能，基于采集事件开展内存�
      | stop   | 结束采集。                       |
      | step   | mstx的“step start”固化信息接口。 |
 
-     通过以下命令执行脚本。
+     通过以下命令执行脚本：
 
      ```bash
      python example_api.py
      ```
 
-   - 命令行使用方式。通过以下命令，使用msMemScope执行脚本。
+   - 命令行使用方式。通过以下命令，使用msMemScope执行脚本：
 
      ```bash
      msmemscope --events=alloc,free,access,launch --level=kernel,op --call-stack=c,python --analysis=leaks,inefficient,decompose --output-path=./output --format=csv python ./example_cmd.py

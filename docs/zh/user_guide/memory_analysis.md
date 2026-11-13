@@ -2,16 +2,16 @@
 
 ## 简介
 
-msMemScope工具基于采集的内存数据，提供泄漏、对比、监测、拆解，低效内存识别以及OOM分析等分析能力，帮助开发者快速诊断和优化内存问题。
+msMemScope工具基于采集的内存数据，提供泄漏、对比、监测、拆解、低效内存识别以及OOM分析等分析能力，帮助开发者快速诊断和优化内存问题。
 
 |分析能力|说明|
 |--|--|
-|内存泄漏|针对内存长时间未释放和内存泄漏等问题，需要进行内存分析时，msMemScope工具提供内存泄漏分析和kernel Launch粒度的内存变化分析功能，实现告警定位与分析。|
+|内存泄漏|针对内存长时间未释放和内存泄漏等问题，需要进行内存分析时，msMemScope工具提供内存泄漏分析和Kernel Launch粒度的内存变化分析功能，实现告警定位与分析。|
 |内存对比|当两个Step内存使用存在差异时，可能会导致内存使用过多，甚至出现OOM（Out of Memory，内存溢出）的问题，则需要使用msMemScope工具的内存对比分析功能来定位并分析问题。|
 |内存块监测|在大模型场景中，当遇到内存踩踏定位困难时，msMemScope工具支持通过Python接口和命令行两种方式，在算子执行前后对指定的内存块进行监测。根据内存块数据的变化，快速确定算子间内存踩踏的范围或具体位置。|
 |内存拆解|msMemScope工具提供内存拆解功能，支持对CANN层和Ascend for PyTorch框架的内存使用情况进行拆解，输出模型权重、激活值、梯度，以及优化器等组件的内存占用情况。|
 |低效内存识别|在训练推理模型过程中，可能存在部分内存块申请后未立即使用，或使用完毕后未及时释放的低效情况。msMemScope工具可帮助识别这种低效内存的使用现象，从而优化训练推理模型。|
-|OOM分析|当NPU训练/推理过程中发生OOM（Out of Memory，显存溢出）时，msMemScope工具可自动采集触发OOM的操作信息、最近未释放的内存分配记录和占用最大的内存分配记录，帮助快速定位OOM根因。|
+|OOM分析|当NPU训练/推理过程中发生OOM（Out of Memory，内存溢出）时，msMemScope工具可自动采集触发OOM的操作信息、最近未释放的内存分配记录和占用最大的内存分配记录，帮助快速定位OOM根因。|
 |一键分析|为了提高msMemScope内存分析的易用性，支持一键开启内存拆解和内存快照功能，对vLLM/FSDP/verl的核心函数自动打点，供用户快速分析。|
 |NPU Sanitizer自定义算子打点|对于开发者自行编写的自定义算子，msMemScope联动NPU Sanitizer提供了自定义算子打点功能。开发者通过MSTX接口上报一条格式化字符串，即可将自定义算子的显存读写信息送入Sanitizer分析管线，检测多流同步错误。|
 |Host堆内存泄漏检测|针对训练与推理过程中宿主侧进程堆内存长时间未释放导致的内存增长问题，msMemScope工具对检测区间内申请且未释放的Host堆内存块按调用栈聚合分析，输出泄漏概览报告与逐块明细，实现Host堆内存泄漏的定位与分析。|
@@ -24,14 +24,14 @@ msMemScope工具的安装，请参见《[msMemScope工具安装说明](../instal
 
 ### 功能说明
 
-内存问题主要包括内存泄漏、踩踏、内存碎片，可能导致内存过多等问题，msMemScope工具支持内存泄漏问题的定位。
+内存问题主要包括内存泄漏、踩踏、内存碎片，可能导致内存使用过多等问题，msMemScope工具支持内存泄漏问题的定位。
 
 ### 注意事项
 
 - 在使用内存分析功能时，如果需要设置--events参数，请确保--events参数中包含alloc和free。
 - 在使用内存分析功能时，请勿设置--steps参数。
 - 内存泄漏分析的离线方式目前仅支持HAL内存泄漏分析。
-- 内存泄漏分析暂不支持场景：VLLM-Ascend。
+- 内存泄漏分析暂不支持场景：vLLM-Ascend。
 
 ### 使用示例
 
@@ -83,7 +83,7 @@ msMemScope支持对指定范围内的内存事件进行离线泄漏分析。使�
 
 3. 执行以下命令，调用Python接口，对输出文件中的csv文件进行离线泄漏分析。
 
-    ```python
+    ```Python
     import msmemscope
     msmemscope.check_leaks(input_path="user/memscope.csv",mstx_info="test",start_index=0)
     ```
@@ -240,7 +240,7 @@ Host堆内存泄漏检测的输出文件保存在`{output}/msmemscope_{*PID*}_{_
 |--|--|
 |Data Health Analysis（数据健康度分析）|如实标注本窗口的追踪决策：检测窗口起止时间、上报模式、总申请/释放计数、去重调用栈数（键深K=20，类=前K帧相同的归因语义）、未归因块数（栈表超限转未知桶）、死栈淘汰统计、截断标注（bit0=块表满转溢出通道、bit1=栈表满且死栈回收无供给时新栈转未知桶、bit2=溢出账本满记账停止）、溢出通道统计、开窗前free统计、采样率（非1时标注采样视图）、块阈值与未追踪统计、符号化覆盖率。窗口数据不完整时明确标注“不可作为泄漏结论”。|
 |Total Unfreed（总泄漏量）|本窗口内申请且未释放的块数/字节合计（含未知桶与溢出通道存活块），闭窗遍历的精确值。|
-|Unfreed Block Size Distribution（泄漏块大小排布）|未释放块按大小分桶的块数/字节/占比（默认7桶：0~256B、256B~1kB、1kB~4kB、4kB~32kB、32kB~256kB、256kB~1MB、1MB以上）。|
+|Unfreed Block Size Distribution（泄漏块大小排布）|未释放块按大小分桶的块数/字节/占比（默认7桶：0~256Byte、256Byte~1kB、1kB~4kB、4kB~32kB、32kB~256kB、256kB~1MB、1MB以上）。|
 |Pre-Window Free Size Distribution（开窗前free大小排布）|开窗前申请、窗口期间释放的内存按大小归桶统计（独立通道，不参与泄漏判定，供缓存老化场景分析）。|
 |TOP N Leak Sites（TOP N泄漏点）|按泄漏怀疑指数（LSI，Leak Suspicion Index，0~100，越高越可能为真泄漏）降序的泄漏点列表（默认N=10，上限1024），每行含：状态分类（`suspected_leak`=疑似泄漏、`growth_watch`=增长观察，满足周转占比判据但尾部仍涨时追加`/turnover`）、LSI值、Growth/Release/Lifetime/Pattern/Scale五个研判因子、未释放/申请/释放统计、序列增长斜率（B/拍）与拍数，以及完整符号化栈文本。章节首行输出节拍序列元信息（top-k=256、max-stacks=1024、拍数与窗口时长）。未归因块所在行为未知桶行，栈文本缺失标注`(unresolved stack <stack id>)`。序列数据不可得时对应Growth/Pattern因子显示`-`并标注降级原因（no_series/series_evicted/insufficient_series/no_warmup_thread）。|
 |Resident Baselines（常驻基线子块）|窗口内未释放量可观的常驻栈列表，按未释放量降序，不占TOP N名额，每行判据来源标注`resident/early`（G≈0且早期分配）或`resident/turnover`（未释放/申请占比低且尾部不涨）。闭窗报告不截断；中间概览截断为不超过TOP N行。开窗前free超过窗口内总申请一半时，报告额外输出缓存周转NOTE提示。|
@@ -321,7 +321,7 @@ Host堆内存泄漏检测的输出文件保存在`{output}/msmemscope_{*PID*}_{_
 
 5. Step间对比生成的结果目录如下。
 
-    ```shell
+    ```text
     |- memscopeDumpResults
            |- compare
                    |- memory_compare_{timestamp}.csv
@@ -441,11 +441,11 @@ msMemScope工具通过增加Python接口，支持用户自行对代码段做描�
 ### 注意事项
 
 - 使用示例中的方式一和方式二，最多可添加3个不重复的标签。
-- 内存拆解功能可通过两种方式开启，方式一为自动拆解（自动使能），方式二为一键分析功能开启，具体操作可参见[自动拆解功能介绍](#自动拆解功能介绍)和[一键分析功能介绍](#一键分析功能介绍)。内存拆解支持以下应用场景。
+- 内存拆解功能可通过两种方式开启，方式一为自动拆解（自动使能），方式二为一键分析功能开启，具体操作可参见[自动拆解功能介绍](#自动拆解功能介绍)和[一键分析功能介绍](#一键分析功能介绍)。内存拆解支持以下应用场景：
 
     |场景|说明|
     |----|-----|
-    |训练|支持对Ascend for PyTorch（python原生训练）和pytorch fsdp、fsdp2的训练过程开启内存拆解，可对训练过程中的权重、梯度、优化器状态、激活值等内存申请进行拆解分析。|
+    |训练|支持对Ascend for PyTorch（Python原生训练）和pytorch fsdp、fsdp2的训练过程开启内存拆解，可对训练过程中的权重、梯度、优化器状态、激活值等内存申请进行拆解分析。|
     |推理|支持为vLLM推理框架开启内存拆解功能，可对推理过程中的load_weight、profile_run、kv_cache和activate等环节的内存占用进行拆解分析。|
     |强化学习|强化学习（verl）涉及推理和训练两个阶段，目前暂不支持内存拆解（verl的内存拆解能力规划中）；如需获取verl场景的内存快照，可使用一键分析功能，具体可参见[一键分析功能介绍](#一键分析功能介绍)。|
 
@@ -455,7 +455,7 @@ msMemScope工具通过增加Python接口，支持用户自行对代码段做描�
 
 |场景|框架|版本|拆解内容|
 |----|----|----|----|
-|训练|Ascend for PyTorch（python原生训练）|不限制|权重、梯度、优化器状态等内存申请。|
+|训练|Ascend for PyTorch（Python原生训练）|不限制|权重、梯度、优化器状态等内存申请。|
 |训练|pytorch fsdp1|2.6+|FSDP分布式训练的激活值、分片权重、all-gather缓冲、梯度等内存申请。|
 |训练|pytorch fsdp2|2.6-2.9、2.10+|FSDP2分布式训练的激活值、分片权重、all-gather缓冲、梯度等内存申请。|
 |推理|vllm-ascend|11.0|推理过程中的load_weight、profile_run、kv_cache、activate等环节的内存占用。|
@@ -536,7 +536,7 @@ msMemScope工具仅支持识别ATB LLM和Ascend for PyTorch单算子场景的低
 
 ### 使用示例
 
-执行以下命令，开启低效内存识别功能。其中Application为用户脚本。
+执行以下命令，开启低效内存识别功能，其中Application为用户脚本。
 
 ```shell
 msmemscope ${Application} --analysis=inefficient
@@ -552,7 +552,7 @@ msmemscope ${Application} --analysis=inefficient
 
 ### 功能说明
 
-在NPU训练/推理过程中，当发生OOM（Out of Memory，显存溢出）时，仅凭错误码难以定位是哪些内存分配占用了显存。msMemScope工具提供OOM分析功能，在OOM发生时自动采集诊断信息，包括：
+在NPU训练/推理过程中，当发生OOM（Out of Memory，内存溢出）时，仅凭错误码难以定位是哪些内存分配占用了显存。msMemScope工具提供OOM分析功能，在OOM发生时自动采集诊断信息，包括：
 
 1. **触发信息**：哪个函数触发了OOM、申请了多大内存、返回码及调用栈。
 2. **最近未释放记录**：按时间排序的最近N条已申请但未释放的内存分配。
@@ -566,7 +566,7 @@ msmemscope ${Application} --analysis=inefficient
 
 ### 使用示例
 
-执行以下命令，开启OOM分析功能。其中`K`为可选值，表示采集Top-K条记录，Application为用户脚本。
+执行以下命令，开启OOM分析功能，其中`K`为可选值，表示采集Top-K条记录，Application为用户脚本。
 
 ```shell
 msmemscope ${Application} --analysis=oom:K
@@ -706,9 +706,9 @@ sanitizer-op: name=<operator_name>;read=<alias:addr:size>,...;write=<alias:addr:
 
 | 字段 | 类型 | 必填 | 描述 |
 |------|------|------|------|
-| `name` | string | 是 | 算子全限定名，建议格式 `module.func_name` |
-| `read` | string | 否 | 读显存列表，每项格式 `参数名:地址:字节数`，多项以逗号分隔 |
-| `write` | string | 否 | 写显存列表，格式同 `read` |
+| name | string | 是 | 算子全限定名，建议格式 `module.func_name` |
+| read | string | 否 | 读显存列表，每项格式 `参数名:地址:字节数`，多项以逗号分隔 |
+| write | string | 否 | 写显存列表，格式同 `read` |
 
 **约束规则**
 

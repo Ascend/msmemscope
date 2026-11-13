@@ -12,13 +12,13 @@ msMemScope工具提供快速分析接口和基于analyzer类的离线分析两�
 
     msMemScope工具提供快速分析接口，推荐直接使用快速分析接口进行离线分析，接口列表如[**表 1**  接口列表](#接口列表-1)所示。
 
-    **表 1**  接口列表 <a id="接口列表-1"></a>
+    **表 1** 接口列表 <a id="接口列表-1"></a>
 
     |接口|说明|
     |--|--|
     |list_analyzers|该接口输出msMemScope工具当前支持的所有内存分析类型。|
     |get_analyzer_config|该接口查看运行相应内存分析类型需要输入的参数。|
-    |analyze|msMemScope工具提供的快速分析接口。支持内存泄漏分析和自定义低效内存识别。|
+    |analyze|msMemScope工具提供的快速分析接口，支持内存泄漏分析和自定义低效内存识别。|
     |check_leaks|msMemScope工具提供的内存泄漏快速分析接口。|
     |check_inefficient|msMemScope工具提供的自定义低效内存识别快速分析接口。|
     |enable_npu_sanitizer|msMemScope工具提供的NPU Sanitizer使能接口，联动使能原生Sanitizer并激活自定义算子MSTX打点捕获。|
@@ -56,7 +56,7 @@ msMemScope工具提供快速分析接口和基于analyzer类的离线分析两�
     ineff_analyzer.analyze(ineff_config)
     ```
 
-    **表 2**  analyzer类接口说明 <a id="analyzer类接口说明"></a>
+    **表 2** analyzer类接口说明 <a id="analyzer类接口说明"></a>
 
     |接口|说明|
     |--|--|
@@ -73,7 +73,7 @@ msMemScope工具提供快速分析接口和基于analyzer类的离线分析两�
 
 **函数原型**
 
-```shell
+```python
 list_analyzers() -> List[str]
 ```
 
@@ -133,7 +133,7 @@ print(ineff_para)
 
 **功能说明**
 
-msMemScope工具提供的对外分析接口。支持内存泄漏分析和自定义低效内存识别。
+msMemScope工具提供的对外分析接口，支持内存泄漏分析和自定义低效内存识别。
 
 - 内存泄漏分析
 
@@ -240,7 +240,7 @@ check_inefficient(input_path: str, mem_size: int = 0, inefficient_type: List[str
 |参数名|输入/输出|说明|
 |--|--|--|
 |input_path|输入|需要进行离线自定义低效内存识别处理的csv或者db文件路径。|
-|mem_size|输入|低效内存阈值，单位：Bytes，低于该阈值的内存块不会输出结果。|
+|mem_size|输入|低效内存阈值，单位：Byte，低于该阈值的内存块不会输出结果。|
 |inefficient_type|输入|低效类型分类，确定判断策略，仅输出用户关注的低效内存类型。当前支持的类型如下：<br> - 过早申请：early_allocation <br> - 过迟释放：late_deallocation <br> - 临时闲置：temporary_idleness|
 |idle_threshold|输入|临时闲置阈值，决定临时闲置低效内存的API阈值，可以灵活设置阈值大小。|
 
@@ -248,7 +248,7 @@ check_inefficient(input_path: str, mem_size: int = 0, inefficient_type: List[str
 
 无返回值。
 
-运行后会打印提示分析过程，并识别结果写入原文件中。
+运行后会打印显示分析过程，并将识别结果写入原文件中。
 
 **调用示例**
 
