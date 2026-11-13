@@ -17,19 +17,74 @@
  
 #include <gtest/gtest.h>
 #include <gtest/internal/gtest-port.h>
+
+#include <fcntl.h>
+#include <getopt.h>
+#include <sys/wait.h>
+#include <unistd.h>
+
+// 以下标准库头须先于 private->public 宏包含：python_trace.h 及其传递包含的头文件
+// 不得在宏生效期内首次引入libstdc++头（否则其内部的private关键字会被宏替换）
+#include <algorithm>
+#include <atomic>
+#include <cctype>
+#include <cerrno>
+#include <chrono>
+#include <climits>
+#include <csignal>
+#include <cstdint>
 #include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <deque>
 #include <fstream>
+#include <functional>
+#include <iomanip>
+#include <iostream>
+#include <iterator>
+#include <limits>
+#include <list>
+#include <map>
+#include <memory>
+#include <mutex>
+#include <queue>
+#include <set>
+#include <sstream>
+#include <stack>
+#include <stdexcept>
 #include <string>
+#include <thread>
+#include <tuple>
+#include <type_traits>
+#include <typeinfo>
+#include <unordered_map>
+#include <unordered_set>
+#include <utility>
 #include <vector>
 
 #define private public
 #include "client_parser.h"
+// PythonTrace::active_ 为私有状态：解析事件的Stop分支需注入active观察覆盖，
+// 沿用仓库既有 private->public 测试惯用法（布局不变，只放宽访问）
+#include "event_trace/python_trace.h"
 #include "log.h"
 #include "bit_field.h"
 #include "utility/file.h"
+// MemoryCompare 单例的比对数据为私有成员：compare执行路径需在fork子进程内清空
+// 残留数据(test_memory_compare.cpp同进程先行用例可能已填充)，保证走到确定分支
+#include "analysis/memory_compare.h"
 #undef private
 
 using namespace MemScope;
+
+// client_parser.cpp内部函数(未在client_parser.h声明)，按定义签名前置声明以直达边界分支
+namespace MemScope
+{
+bool UserCommandPrecheck(const UserCommand &userCommand);
+std::vector<option> GetLongOptArray();
+std::string GetShortOptString(const std::vector<option> &longOptArray);
+void ParseUserCommand(const int32_t &opt, const std::string &param, UserCommand &userCommand);
+}  // namespace MemScope
 
 void InvalidParamCheckHelpInfo(const char* invalidInput)
 {
@@ -966,7 +1021,6 @@ TEST(ClientParser, test_invalid_device_case)
     ASSERT_TRUE(cmd.printHelpInfo);
 }
 
-
 TEST(ClientParser, test_valid_device_case)
 {
     std::vector<const char*> argv = {
@@ -1788,3 +1842,496 @@ TEST(ClientParser, pid_mutual_exclusion_errors)
     capture = testing::internal::GetCapturedStdout();
     ASSERT_NE(capture.find("Error: --command requires --pid"), std::string::npos);
 }
+
+// ============================================================================
+// 覆盖率补充用例：目标 framework/client_parser.cpp 未覆盖行(选项解析边界、
+// UserCommandPrecheck成功路径、ParseUserCommand直达分支、attach/compare执行路径)。
+// Interpretor 成功路径会改动 ConfigManager/PythonTrace 等跨用例单例，故在 fork
+// 子进程内执行：父进程 COW 不受影响，子进程正常退出以落盘 gcov。
+// ============================================================================
+namespace
+{
+// OptVal 为 client_parser.cpp 内部枚举(不在头文件)，按定义顺序取数值：
+// 仅用于直达 switch 分支——INPUT_PATH/OUTPUT_PATH/VERBOSE/QUIET 这些 val
+// 在 long option 表中无对应项，CLI(Parse)路径不可达
+constexpr int32_t kOptValInputPath = 13;
+constexpr int32_t kOptValOutputPath = 14;
+constexpr int32_t kOptValVerbose = 16;
+constexpr int32_t kOptValQuiet = 17;
+
+std::string MakeTempFilePath(const char *tag)
+{
+    char tmpl[128] = {0};
+    std::snprintf(tmpl, sizeof(tmpl), "/tmp/msmemscope_cp_ut_%s_XXXXXX", tag);
+    const int fd = ::mkstemp(tmpl);
+    if (fd < 0)
+    {
+        return std::string();
+    }
+    ::close(fd);
+    std::ofstream ofs(tmpl);
+    ofs << "x\n";
+    return std::string(tmpl);
+}
+
+std::string MakeTempDirPath(const char *tag)
+{
+    char tmpl[128] = {0};
+    std::snprintf(tmpl, sizeof(tmpl), "/tmp/msmemscope_cp_ut_%s_XXXXXX", tag);
+    char *dir = ::mkdtemp(tmpl);
+    return dir == nullptr ? std::string() : std::string(dir);
+}
+
+struct ChildRunResult
+{
+    int status{-1};
+    std::string output;
+};
+
+// 子进程执行上限：attach/compare 路径均应在秒级完成；超时强制回收，
+// 避免被测代码回归(卡锁/阻塞写)时无界 waitpid 拖死整个 gtest 进程
+constexpr int kChildTimeoutMs = 30000;
+constexpr int kChildPollStepMs = 50;
+
+// 有界等待子进程退出：期限内轮询 WNOHANG，超时 SIGKILL 后阻塞回收。
+// 超时强杀返回的 status 为“被信号终止”，调用点的 WIFEXITED 断言必然失败并
+// 打印已捕获输出，不会静默通过
+void WaitChildExitBounded(pid_t pid, int *status)
+{
+    for (int waitedMs = 0; waitedMs < kChildTimeoutMs; waitedMs += kChildPollStepMs)
+    {
+        const pid_t ret = ::waitpid(pid, status, WNOHANG);
+        if (ret == pid)
+        {
+            return;
+        }
+        if (ret < 0 && errno != EINTR)
+        {
+            return;
+        }
+        ::usleep(kChildPollStepMs * 1000);
+    }
+    ::kill(pid, SIGKILL);
+    ::waitpid(pid, status, 0);
+}
+
+// fork隔离执行：子进程stdout重定向到临时文件、stderr丢弃；body正常返回后
+// std::exit(0)以落盘gcov。body内自行std::exit(attach路径)时同样保留已写输出
+ChildRunResult RunInFork(const std::function<void()> &body)
+{
+    char tmpl[] = "/tmp/msmemscope_cp_fork_XXXXXX";
+    const int pathFd = ::mkstemp(tmpl);
+    if (pathFd < 0)
+    {
+        return ChildRunResult();
+    }
+    ::close(pathFd);
+    const std::string path(tmpl);
+    ChildRunResult result;
+    const pid_t pid = ::fork();
+    if (pid == 0)
+    {
+        const int fd = ::open(path.c_str(), O_CREAT | O_WRONLY | O_TRUNC, 0600);
+        if (fd >= 0)
+        {
+            ::dup2(fd, STDOUT_FILENO);
+            ::close(fd);
+        }
+        const int nullFd = ::open("/dev/null", O_WRONLY);
+        if (nullFd >= 0)
+        {
+            ::dup2(nullFd, STDERR_FILENO);
+            ::close(nullFd);
+        }
+        body();
+        std::exit(0);  // 正常退出以落盘gcov
+    }
+    if (pid < 0)
+    {
+        ::unlink(path.c_str());
+        return result;
+    }
+    WaitChildExitBounded(pid, &result.status);
+    std::ifstream in(path);
+    result.output.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+    in.close();
+    ::unlink(path.c_str());
+    return result;
+}
+
+// UserCommandPrecheck成功返回true(L210)：默认/attach/compare三种合法组合
+TEST(ClientParser, usercommand_precheck_valid_commands_expect_true)
+{
+    ClientParser cliParser;
+
+    UserCommand defaultCmd{};
+    cliParser.InitialConfig(defaultCmd.config);
+    EXPECT_TRUE(UserCommandPrecheck(defaultCmd));
+
+    // attach模式：--pid + --command 合法
+    UserCommand attachCmd{};
+    cliParser.InitialConfig(attachCmd.config);
+    attachCmd.config.attachPid = 12345;
+    attachCmd.attachCommand = "display memory summary";
+    EXPECT_TRUE(UserCommandPrecheck(attachCmd));
+
+    // compare模式：enableCompare 与 inputCorrectPaths 一致即可
+    UserCommand compareCmd{};
+    cliParser.InitialConfig(compareCmd.config);
+    compareCmd.config.enableCompare = true;
+    compareCmd.config.inputCorrectPaths = true;
+    EXPECT_TRUE(UserCommandPrecheck(compareCmd));
+}
+
+// GetShortOptString(L364-385)：标准表结果 + 自定义表(flag非空/不可打印val/终止项截断)
+TEST(ClientParser, get_short_opt_string_expect_short_options)
+{
+    const std::vector<option> longOpts = GetLongOptArray();
+    EXPECT_EQ(GetShortOptString(longOpts), "hVvqi:o:p:c:");  // -c/--command 为 required_argument
+
+    int32_t flagValue = 0;
+    const std::vector<option> customOpts = {
+        {"alpha", no_argument, nullptr, 'a'},
+        {"beta", required_argument, nullptr, 'b'},
+        {"flag", no_argument, &flagValue, 300},  // flag非空：不生成短选项
+        {"ctrl", no_argument, nullptr, 1},       // 不可打印val：跳过
+        {nullptr, 0, nullptr, 0},                // 终止项
+        {"after", no_argument, nullptr, 'z'},    // 终止项之后不再扫描
+    };
+    EXPECT_EQ(GetShortOptString(customOpts), "ab:");
+}
+
+// ParseAnalysis(L447-452/L518)：decompose/inefficient/host-leaks/leaks 映射
+TEST(ClientParser, parse_analysis_maps_all_types)
+{
+    bool printHelp = false;
+    Config config{};
+    ParseAnalysis("decompose,inefficient", config, printHelp);
+    EXPECT_FALSE(printHelp);
+    const uint8_t expectedDecompose =
+        static_cast<uint8_t>(1u << static_cast<uint8_t>(AnalysisType::DECOMPOSE_ANALYSIS));
+    const uint8_t expectedInefficient =
+        static_cast<uint8_t>(1u << static_cast<uint8_t>(AnalysisType::INEFFICIENCY_ANALYSIS));
+    EXPECT_EQ(config.analysisType, static_cast<uint8_t>(expectedDecompose | expectedInefficient));
+
+    printHelp = false;
+    Config hostLeakConfig{};
+    ParseAnalysis("host-leaks", hostLeakConfig, printHelp);
+    EXPECT_FALSE(printHelp);
+    EXPECT_EQ(hostLeakConfig.analysisType,
+              static_cast<uint8_t>(1u << static_cast<uint8_t>(AnalysisType::HOST_LEAK_ANALYSIS)));
+
+    printHelp = false;
+    Config leaksConfig{};
+    ParseAnalysis("leaks", leaksConfig, printHelp);
+    EXPECT_FALSE(printHelp);
+    EXPECT_EQ(leaksConfig.analysisType,
+              static_cast<uint8_t>(1u << static_cast<uint8_t>(AnalysisType::LEAKS_ANALYSIS)));
+}
+
+// ParseAnalysis(L504-516)：host-leaks 与其余分析项互斥，失败时保持原配置(末尾赋值被跳过)
+TEST(ClientParser, parse_analysis_host_leaks_mutually_exclusive)
+{
+    const uint8_t leaksOnly = static_cast<uint8_t>(1u << static_cast<uint8_t>(AnalysisType::LEAKS_ANALYSIS));
+    Config config{};
+    config.analysisType = leaksOnly;
+    bool printHelp = false;
+    testing::internal::CaptureStdout();
+    ParseAnalysis("host-leaks,decompose", config, printHelp);
+    const std::string capture = testing::internal::GetCapturedStdout();
+    EXPECT_TRUE(printHelp);
+    EXPECT_EQ(config.analysisType, leaksOnly);
+    EXPECT_NE(capture.find("'host-leaks' is mutually exclusive"), std::string::npos) << capture;
+}
+
+// ParseCallstack/CheckIsValidDepthInfo(L551)：未知类型报错；省略深度取默认值50
+TEST(ClientParser, parse_callstack_unknown_type_and_default_depth)
+{
+    bool printHelp = false;
+    Config invalidConfig{};
+    testing::internal::CaptureStdout();
+    ParseCallstack("java:10", invalidConfig, printHelp);
+    const std::string capture = testing::internal::GetCapturedStdout();
+    EXPECT_TRUE(printHelp);
+    EXPECT_FALSE(invalidConfig.enableCStack);
+    EXPECT_FALSE(invalidConfig.enablePyStack);
+    EXPECT_NE(capture.find("invalid call-stack depth input"), std::string::npos) << capture;
+
+    printHelp = false;
+    Config config{};
+    ParseCallstack("c", config, printHelp);
+    EXPECT_FALSE(printHelp);
+    EXPECT_TRUE(config.enableCStack);
+    EXPECT_EQ(config.cStackDepth, static_cast<uint32_t>(DEFAULT_CALL_STACK_DEPTH));
+}
+
+// ParseInputPaths(L591-598)：参数长度超过4096提前返回(不置printHelpInfo)
+TEST(ClientParser, parse_input_path_too_long_expect_early_return)
+{
+    UserCommand cmd{};
+    const std::string tooLong(4097, 'a');  // INPUT_STR_MAX_LEN = 4096
+    testing::internal::CaptureStdout();
+    ParseUserCommand('i', tooLong, cmd);
+    const std::string capture = testing::internal::GetCapturedStdout();
+    EXPECT_FALSE(cmd.printHelpInfo);
+    EXPECT_TRUE(cmd.inputPaths.empty());
+    EXPECT_FALSE(cmd.config.inputCorrectPaths);
+    EXPECT_NE(capture.find("Parameter --input length exceeds the maximum length:4096"), std::string::npos) << capture;
+}
+
+// ParseOutputPath(L626-633)：参数长度超过PATH_MAX提前返回，保留默认输出目录
+TEST(ClientParser, parse_output_path_too_long_expect_default_kept)
+{
+    Config config{};
+    ClientParser cliParser;
+    cliParser.InitialConfig(config);
+    const std::string defaultOutputDir(config.outputDir);
+    bool printHelp = false;
+    const std::string tooLong(static_cast<size_t>(PATH_MAX) + 1, 'a');
+    testing::internal::CaptureStdout();
+    ParseOutputPath(tooLong, config, printHelp);
+    const std::string capture = testing::internal::GetCapturedStdout();
+    EXPECT_FALSE(printHelp);
+    EXPECT_TRUE(config.outputCorrectPaths);
+    EXPECT_EQ(std::string(config.outputDir), defaultOutputDir);
+    EXPECT_NE(capture.find("Parameter --output length exceeds the maximum length:4096"), std::string::npos) << capture;
+    EXPECT_NE(capture.find("output path will be set to default(./memscopeDumpResults)"), std::string::npos)
+        << capture;
+}
+
+// ParseEventTraceType(L739-743)：空token跳过，不影响后续token解析
+TEST(ClientParser, parse_events_skips_empty_tokens)
+{
+    bool printHelp = false;
+    Config config{};
+    ParseEventTraceType("alloc,,free", config, printHelp);
+    EXPECT_FALSE(printHelp);
+    const uint8_t allocBit = static_cast<uint8_t>(1u << static_cast<uint8_t>(EventType::ALLOC_EVENT));
+    const uint8_t freeBit = static_cast<uint8_t>(1u << static_cast<uint8_t>(EventType::FREE_EVENT));
+    EXPECT_EQ(config.eventType, static_cast<uint8_t>(allocBit | freeBit));
+    EXPECT_EQ(config.dumpEventType, config.eventType);
+
+    printHelp = false;
+    Config onlyEmptyConfig{};
+    ParseEventTraceType(",", onlyEmptyConfig, printHelp);
+    EXPECT_FALSE(printHelp);
+    EXPECT_EQ(onlyEmptyConfig.eventType, 0u);
+    EXPECT_EQ(onlyEmptyConfig.dumpEventType, 0u);
+}
+
+// ParseWatchStartConfig(L815-819)：outid前导0被拒绝；单个0合法
+TEST(ClientParser, parse_watch_output_id_leading_zero_rejected)
+{
+    bool printHelp = false;
+    Config config{};
+    testing::internal::CaptureStdout();
+    ParseWatchConfig("start:0123,end", config, printHelp);
+    const std::string capture = testing::internal::GetCapturedStdout();
+    EXPECT_TRUE(printHelp);
+    EXPECT_FALSE(config.watchConfig.isWatched);
+    EXPECT_NE(capture.find("invalid watch config"), std::string::npos) << capture;
+
+    printHelp = false;
+    Config zeroIdConfig{};
+    ParseWatchConfig("start:0,end", zeroIdConfig, printHelp);
+    EXPECT_FALSE(printHelp);
+    EXPECT_TRUE(zeroIdConfig.watchConfig.isWatched);
+    EXPECT_EQ(zeroIdConfig.watchConfig.outputId, 0u);
+    EXPECT_STREQ(zeroIdConfig.watchConfig.start, "start");
+    EXPECT_STREQ(zeroIdConfig.watchConfig.end, "end");
+}
+
+// ParseDataFormat(L934-957)：非法值报错且保持CSV；db合法
+TEST(ClientParser, parse_data_format_invalid_value_rejected)
+{
+    bool printHelp = false;
+    Config config{};
+    testing::internal::CaptureStdout();
+    ParseDataFormat("json", config, printHelp);
+    const std::string capture = testing::internal::GetCapturedStdout();
+    EXPECT_TRUE(printHelp);
+    EXPECT_EQ(config.dataFormat, static_cast<uint8_t>(DataFormat::CSV));
+    EXPECT_NE(capture.find("--data-format param is invalid"), std::string::npos) << capture;
+    EXPECT_NE(capture.find("DATA_FORMAT can only be set csv,db"), std::string::npos) << capture;
+
+    printHelp = false;
+    Config dbConfig{};
+    ParseDataFormat("db", dbConfig, printHelp);
+    EXPECT_FALSE(printHelp);
+    EXPECT_EQ(dbConfig.dataFormat, static_cast<uint8_t>(DataFormat::DB));
+}
+
+// ParseDevice(L977-1016)：空token跳过，npu/cpu标志仍正确
+TEST(ClientParser, parse_device_skips_empty_tokens)
+{
+    bool printHelp = false;
+    Config config{};
+    ParseDevice("npu,,cpu", config, printHelp);
+    EXPECT_FALSE(printHelp);
+    EXPECT_TRUE(config.collectAllNpu);
+    EXPECT_TRUE(config.collectCpu);
+    EXPECT_EQ(config.npuSlots, 0u);
+}
+
+// ParseHostLeakMode(L1044-1066)：event/summary 合法；非法值报错且保持原值
+TEST(ClientParser, parse_host_leak_mode_values)
+{
+    bool printHelp = false;
+    Config eventConfig{};
+    ParseHostLeakMode("event", eventConfig, printHelp);
+    EXPECT_FALSE(printHelp);
+    EXPECT_EQ(eventConfig.hostLeakMode, static_cast<uint8_t>(HostLeakMode::EVENT));
+
+    printHelp = false;
+    Config summaryConfig{};
+    ParseHostLeakMode("summary", summaryConfig, printHelp);
+    EXPECT_FALSE(printHelp);
+    EXPECT_EQ(summaryConfig.hostLeakMode, static_cast<uint8_t>(HostLeakMode::SUMMARY));
+
+    printHelp = false;
+    Config invalidConfig{};
+    invalidConfig.hostLeakMode = static_cast<uint8_t>(HostLeakMode::SUMMARY);
+    testing::internal::CaptureStdout();
+    ParseHostLeakMode("verbose", invalidConfig, printHelp);
+    const std::string capture = testing::internal::GetCapturedStdout();
+    EXPECT_TRUE(printHelp);
+    EXPECT_EQ(invalidConfig.hostLeakMode, static_cast<uint8_t>(HostLeakMode::SUMMARY));
+    EXPECT_NE(capture.find("Host leak mode can only be set to event,summary"), std::string::npos) << capture;
+}
+
+// ParseBlockSizeThreshold(L1069-1083)：0与uint32上界合法；前导0/空/非数字/超界非法且保持原值
+TEST(ClientParser, parse_block_size_threshold_values)
+{
+    bool printHelp = false;
+    Config zeroConfig{};
+    ParseBlockSizeThreshold("0", zeroConfig, printHelp);
+    EXPECT_FALSE(printHelp);
+    EXPECT_EQ(zeroConfig.blockSizeThreshold, 0u);
+
+    printHelp = false;
+    Config maxConfig{};
+    ParseBlockSizeThreshold("4294967295", maxConfig, printHelp);
+    EXPECT_FALSE(printHelp);
+    EXPECT_EQ(maxConfig.blockSizeThreshold, 4294967295ULL);
+
+    const char *invalidValues[] = {"abc", "", "0123", "4294967296"};
+    for (const char *invalid : invalidValues)
+    {
+        printHelp = false;
+        Config invalidConfig{};
+        invalidConfig.blockSizeThreshold = 7;
+        testing::internal::CaptureStdout();
+        ParseBlockSizeThreshold(invalid, invalidConfig, printHelp);
+        const std::string capture = testing::internal::GetCapturedStdout();
+        EXPECT_TRUE(printHelp) << invalid;
+        EXPECT_EQ(invalidConfig.blockSizeThreshold, 7u) << invalid;
+        EXPECT_NE(capture.find("Threshold must be a non-negative integer"), std::string::npos) << invalid;
+    }
+}
+
+// ParseSampleRate(L1087-1101)：1与uint32上界合法；0/非数字/超界非法且保持原值
+TEST(ClientParser, parse_sample_rate_values)
+{
+    bool printHelp = false;
+    Config oneConfig{};
+    ParseSampleRate("1", oneConfig, printHelp);
+    EXPECT_FALSE(printHelp);
+    EXPECT_EQ(oneConfig.sampleRate, 1u);
+
+    printHelp = false;
+    Config maxConfig{};
+    ParseSampleRate("4294967295", maxConfig, printHelp);
+    EXPECT_FALSE(printHelp);
+    EXPECT_EQ(maxConfig.sampleRate, 0xFFFFFFFFu);
+
+    const char *invalidValues[] = {"0", "abc", "4294967296"};
+    for (const char *invalid : invalidValues)
+    {
+        printHelp = false;
+        Config invalidConfig{};
+        invalidConfig.sampleRate = 7;
+        testing::internal::CaptureStdout();
+        ParseSampleRate(invalid, invalidConfig, printHelp);
+        const std::string capture = testing::internal::GetCapturedStdout();
+        EXPECT_TRUE(printHelp) << invalid;
+        EXPECT_EQ(invalidConfig.sampleRate, 7u) << invalid;
+        EXPECT_NE(capture.find("Rate must be a positive integer within uint32"), std::string::npos) << invalid;
+    }
+}
+
+// ParseUserCommand的HOST_LEAK_MODE/BLOCK_SIZE_THRESHOLD/SAMPLE_RATE分支(L1210-1218)
+TEST(ClientParser, parse_host_leak_options_via_cli)
+{
+    std::vector<const char *> argv = {"msmemscope", "--host-leak-mode=event", "--block-size-threshold=4096",
+                                      "--sample-rate=2"};
+    optind = 1;
+    ClientParser cliParser;
+    UserCommand cmd = cliParser.Parse(static_cast<int32_t>(argv.size()), const_cast<char **>(argv.data()));
+    ASSERT_FALSE(cmd.printHelpInfo);
+    EXPECT_EQ(cmd.config.hostLeakMode, static_cast<uint8_t>(HostLeakMode::EVENT));
+    EXPECT_EQ(cmd.config.blockSizeThreshold, 4096u);
+    EXPECT_EQ(cmd.config.sampleRate, 2u);
+}
+
+// DoUserCommand attach分支(L305-311)：--pid目标不存在时 attach 流程执行并以1退出。
+// AttachController::Run 内部 std::exit，必须在 fork 子进程中执行
+TEST(ClientParser, interpretor_attach_mode_runs_attach_and_exits)
+{
+    const ChildRunResult result = RunInFork(
+        []()
+        {
+            // 大于Linux pid上限(PID_MAX_LIMIT)的合法参数值，保证目标进程必然不存在
+            std::vector<const char *> argv = {"msmemscope", "--pid", "2147483647"};
+            optind = 1;
+            ClientParser cliParser;
+            cliParser.Interpretor(static_cast<int32_t>(argv.size()), const_cast<char **>(argv.data()));
+        });
+    ASSERT_TRUE(WIFEXITED(result.status)) << result.output;
+    EXPECT_EQ(WEXITSTATUS(result.status), 1) << result.output;
+    EXPECT_NE(result.output.find("does not exist"), std::string::npos) << result.output;
+}
+
+// DoUserCommand非attach分支(L313-318)：compare流程执行(PrintLogo/SetConfig/Command::Exec)。
+// ConfigManager属跨用例单例，在fork子进程内执行；输出目录指向临时目录避免污染工作区
+TEST(ClientParser, interpretor_compare_mode_runs_comparison)
+{
+    const std::string fileA = MakeTempFilePath("compare_a");
+    const std::string fileB = MakeTempFilePath("compare_b");
+    const std::string outDir = MakeTempDirPath("compare_out");
+    ASSERT_FALSE(fileA.empty());
+    ASSERT_FALSE(fileB.empty());
+    ASSERT_FALSE(outDir.empty());
+
+    const ChildRunResult result = RunInFork(
+        [fileA, fileB, outDir]()
+        {
+            // 清空同进程先行用例可能残留的比对数据(非csv路径ReadFile不改写这些容器)，
+            // 保证走到"无有效数据→打印Memory comparison failed!"的确定分支
+            MemoryCompare &comparer = MemoryCompare::GetInstance();
+            comparer.baseFileOriginData_.clear();
+            comparer.compareFileOriginData_.clear();
+            comparer.result_.clear();
+            comparer.deviceIdSet_.clear();
+
+            const std::string inputArg = "--input-path=" + fileA + "," + fileB;
+            const std::string outputArg = "--output-path=" + outDir;
+            std::vector<std::string> args = {"msmemscope", "--compare", inputArg, outputArg};
+            std::vector<const char *> argv;
+            for (const std::string &arg : args)
+            {
+                argv.push_back(arg.c_str());
+            }
+            optind = 1;
+            ClientParser cliParser;
+            cliParser.Interpretor(static_cast<int32_t>(argv.size()), const_cast<char **>(argv.data()));
+        });
+    ASSERT_TRUE(WIFEXITED(result.status)) << result.output;
+    // 非csv输入使对比失败，但非attach流程正常走完(返回后子进程std::exit(0))
+    EXPECT_EQ(WEXITSTATUS(result.status), 0) << result.output;
+    EXPECT_NE(result.output.find("Memory comparison failed!"), std::string::npos) << result.output;
+
+    ::unlink(fileA.c_str());
+    ::unlink(fileB.c_str());
+    ::rmdir(outDir.c_str());
+}
+}  // namespace

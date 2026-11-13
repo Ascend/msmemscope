@@ -61,4 +61,14 @@ target_link_libraries(memscope_hostmem_child_test gtest_main dl pthread ${Python
 set_target_properties(memscope_hostmem_child_test PROPERTIES LINK_FLAGS "-rdynamic")
 add_dependencies(memscope_test memscope_hostmem_child_test)
 
+# AttachController UT的目标进程替身(独立二进制,不进入memscope_test源码):
+# 输出名强制含libascend_leaks以满足四规则校验的maps规则;协议编解码与控制端同源编译
+add_executable(attach_target_helper ./attach_target/attach_target_helper.cpp
+                                   ../csrc/framework/control_channel/control_protocol.cpp)
+target_include_directories(attach_target_helper PRIVATE ../csrc/framework)
+target_link_libraries(attach_target_helper pthread)
+set_target_properties(attach_target_helper PROPERTIES OUTPUT_NAME "libascend_leaks_attach_target")
+add_dependencies(memscope_test attach_target_helper)
+target_compile_definitions(memscope_test PRIVATE ATTACH_TARGET_HELPER_BIN="$<TARGET_FILE:attach_target_helper>")
+
 add_test(NAME memscope_test COMMAND memscope_test)

@@ -25,14 +25,37 @@
  */
 #include <gtest/gtest.h>
 
+#include <fcntl.h>
+#include <sys/wait.h>
+#include <unistd.h>
+
+#include <array>
+#include <atomic>
+#include <cerrno>
+#include <csignal>
+#include <cstdlib>
+#include <fstream>
+#include <functional>
+#include <iterator>
 #include <memory>
+#include <mutex>
 #include <string>
+#include <unordered_map>
+#include <utility>
 #include <vector>
 
 #include "config_info.h"
 #include "event.h"
-#include "event_dispatcher.h"
+// 状态注入用例需在fork子进程内清零MemoryStateManager的进程级累加字段
+// (其他用例对用量/峰值做绝对断言,主进程不得重置)。沿用test_memory_state_manager
+// 的private->public惯用法读取私有累加器;必须前置于event_dispatcher.h(其间接
+// 包含memory_state_manager.h,头文件守卫会使之后的宏设置失效)。
+// 其所需标准库头已在上方先行包含
+#define private public
 #include "memory_state_manager.h"
+#undef private
+#include "event_dispatcher.h"
+#include "event_report.h"
 #include "trace_manager/event_trace_manager.h"
 #include "control_channel/control_command_handler.h"
 #include "analysis/host_leak_analyzer.h"
@@ -41,6 +64,16 @@ using namespace MemScope;
 
 namespace
 {
+
+// 供TEST_F体与fork子进程lambda共用的构造器(类静态成员在lambda内的访问依赖
+// CWG1202,显式下沉为命名空间函数更稳妥)
+std::shared_ptr<ControlEvent> MakeControlEvent(const std::string& cmd, const std::string& param = "")
+{
+    auto ev = std::make_shared<ControlEvent>();
+    ev->cmd = cmd;
+    ev->param = param;
+    return ev;
+}
 
 class ControlCommandHandlerTest : public ::testing::Test
 {
@@ -59,10 +92,7 @@ class ControlCommandHandlerTest : public ::testing::Test
     // cmd=控制字(含空格,如"display memory block"),param=命令参数(如"--pool hal --TOPN 5")
     static std::shared_ptr<ControlEvent> MakeEvent(const std::string& cmd, const std::string& param = "")
     {
-        auto ev = std::make_shared<ControlEvent>();
-        ev->cmd = cmd;
-        ev->param = param;
-        return ev;
+        return MakeControlEvent(cmd, param);
     }
 
     static void Execute(std::shared_ptr<ControlEvent>& ev)
@@ -358,6 +388,314 @@ TEST_F(ControlCommandHandlerTest, display_host_leak_summary_passes_through_analy
     {
         EXPECT_EQ(ev->output, "no active window");
     }
+}
+
+// ---------------- 状态注入类展示命令(fork隔离) ----------------
+// MemoryStateManager为进程级单例,其他用例对用量/峰值做绝对断言;
+// 状态注入用例在fork子进程内执行(COW隔离),父进程只断言子进程回写的输出文本。
+
+std::string MakeTempPath()
+{
+    char tmpl[] = "/tmp/msmemscope_cmd_ut_XXXXXX";
+    const int fd = ::mkstemp(tmpl);
+    if (fd >= 0)
+    {
+        ::close(fd);
+    }
+    return std::string(tmpl);
+}
+
+// fork子进程内重置MemoryStateManager(COW隔离,主进程状态不变):删除全部活块并清零
+// 进程级累加器,使注入后的绝对断言不受其他用例残留状态影响(hal/host累计与峰值、
+// 池级占用、整卡/本进程用量缓存均跨用例持久)
+void ResetMemoryStateInChild()
+{
+    MemoryStateManager& msm = MemoryStateManager::GetInstance();
+    const std::vector<std::pair<PoolType, MemoryStateKey>> keys = msm.GetAllStateKeys();
+    for (const auto& keyPair : keys)
+    {
+        msm.DeteleState(keyPair.first, keyPair.second);
+    }
+    msm.halUsed_.clear();
+    msm.halPeak_.clear();
+    msm.hostUsed_ = 0;
+    msm.hostPeak_ = 0;
+    msm.hostTensorTotal_ = 0;
+    msm.hostTensorPeak_ = 0;
+    msm.poolUsage_.clear();
+    msm.deviceUsedCache_.fill(-1);
+    msm.processUsedCache_.fill(-1);
+}
+
+// 子进程执行上限：命令处理路径均应在秒级完成；超时强制回收，
+// 避免被测代码回归(fork后继承他人持有的锁等)时无界 waitpid 拖死整个 gtest 进程
+constexpr int kChildTimeoutMs = 30000;
+constexpr int kChildPollStepMs = 50;
+
+void WaitChildExitBounded(pid_t pid, int* status)
+{
+    for (int waitedMs = 0; waitedMs < kChildTimeoutMs; waitedMs += kChildPollStepMs)
+    {
+        const pid_t ret = ::waitpid(pid, status, WNOHANG);
+        if (ret == pid)
+        {
+            return;
+        }
+        if (ret < 0 && errno != EINTR)
+        {
+            return;
+        }
+        ::usleep(kChildPollStepMs * 1000);
+    }
+    ::kill(pid, SIGKILL);
+    ::waitpid(pid, status, 0);
+}
+
+std::string RunInChild(const std::function<std::string()>& body)
+{
+    const std::string path = MakeTempPath();
+    const pid_t pid = ::fork();
+    if (pid == 0)
+    {
+        const int fd = ::open(path.c_str(), O_CREAT | O_WRONLY | O_TRUNC, 0600);
+        if (fd >= 0)
+        {
+            ::dup2(fd, STDOUT_FILENO);
+            ::close(fd);
+        }
+        const std::string text = body();
+        (void)!::write(STDOUT_FILENO, text.data(), text.size());
+        std::exit(0);  // 正常退出以落盘gcov
+    }
+    if (pid < 0)
+    {
+        return std::string();
+    }
+    int status = 0;
+    WaitChildExitBounded(pid, &status);
+    std::ifstream in(path);
+    std::string text{std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()};
+    ::unlink(path.c_str());
+    EXPECT_TRUE(WIFEXITED(status));
+    return text;
+}
+
+void AddLiveEvent(EventBaseType type, PoolType pool, int32_t dev, uint64_t addr, int64_t size, bool pinned = false)
+{
+    auto event = std::make_shared<MemoryEvent>();
+    event->eventType = type;
+    event->poolType = pool;
+    event->device = dev;
+    event->addr = addr;
+    event->size = size;
+    event->pid = static_cast<uint64_t>(::getpid());
+    event->isPinned = pinned;
+    MemoryStateManager::GetInstance().AddEvent(event);
+}
+
+// display memory summary: 设备行四种单位/unknown分支 + 锁页/tensor行 + 四类generic池名
+TEST_F(ControlCommandHandlerTest, display_memory_summary_formats_units_and_pools)
+{
+    const std::string out = RunInChild(
+        []()
+        {
+            ResetMemoryStateInChild();
+            MemoryStateManager& msm = MemoryStateManager::GetInstance();
+            msm.UpdateDeviceUsedCache(0, 3LL * 1024 * 1024 * 1024);  // GB
+            msm.UpdateDeviceUsedCache(1, 5LL * 1024 * 1024);         // MB
+            msm.UpdateProcessUsedCache(1, 2048);                     // KB
+            msm.UpdateDeviceUsedCache(2, -1);                        // unknown
+            msm.UpdateProcessUsedCache(2, 512);                      // B
+            AddLiveEvent(EventBaseType::MALLOC, PoolType::HAL, 0, 0xA000, 2LL * 1024 * 1024 * 1024);
+            AddLiveEvent(EventBaseType::MALLOC, PoolType::HOST, 0, 0xB000, 3LL * 1024 * 1024, true);
+            AddLiveEvent(EventBaseType::MALLOC, PoolType::HOST, 0, 0xC000, 5LL * 1024, false);
+            AddLiveEvent(EventBaseType::MALLOC, PoolType::PTA_CACHING, 5, 0xD000, 100);
+            AddLiveEvent(EventBaseType::MALLOC, PoolType::PTA_WORKSPACE, 6, 0xE000, 200);
+            AddLiveEvent(EventBaseType::MALLOC, PoolType::MINDSPORE, 7, 0xF000, 300);
+            AddLiveEvent(EventBaseType::MALLOC, PoolType::ATB, 8, 0x10000, 400);
+            auto ev = MakeControlEvent("display memory summary");
+            ControlCommandHandler::GetInstance().Execute(ev);
+            return ev->output;
+        });
+    EXPECT_NE(out.find("device_used=3.00 GB"), std::string::npos) << out;
+    EXPECT_NE(out.find("process_used=unknown"), std::string::npos) << out;
+    EXPECT_NE(out.find("device_used=5.00 MB"), std::string::npos) << out;
+    EXPECT_NE(out.find("process_used=2.00 KB"), std::string::npos) << out;
+    EXPECT_NE(out.find("device_used=unknown"), std::string::npos) << out;
+    EXPECT_NE(out.find("process_used=512 B"), std::string::npos) << out;
+    EXPECT_NE(out.find("hal_current=2.00 GB"), std::string::npos) << out;
+    EXPECT_NE(out.find("Host pinned: current=3.00 MB peak=3.00 MB"), std::string::npos) << out;
+    EXPECT_NE(out.find("Host tensor: current=5.00 KB peak=5.00 KB"), std::string::npos) << out;
+    EXPECT_NE(out.find("Pool pta:\n  Device 5: current=100 B peak=100 B"), std::string::npos) << out;
+    EXPECT_NE(out.find("Pool pta_workspace:\n  Device 6: current=200 B peak=200 B"), std::string::npos) << out;
+    EXPECT_NE(out.find("Pool mindspore:\n  Device 7: current=300 B peak=300 B"), std::string::npos) << out;
+    EXPECT_NE(out.find("Pool atb:\n  Device 8: current=400 B peak=400 B"), std::string::npos) << out;
+}
+
+// display memory block: 有活块时按size降序打印(地址/size/时间戳/id),TOPN截断
+TEST_F(ControlCommandHandlerTest, display_memory_block_populated_sorted_and_truncated)
+{
+    const std::string out = RunInChild(
+        []()
+        {
+            ResetMemoryStateInChild();
+            // 0x2222最大(8GB)→0x1111其次(7GB)→0x3333最小(6GB,被TOPN 2截断)
+            AddLiveEvent(EventBaseType::MALLOC, PoolType::HAL, 3, 0x2222, 8LL * 1024 * 1024 * 1024);
+            AddLiveEvent(EventBaseType::MALLOC, PoolType::HAL, 3, 0x1111, 7LL * 1024 * 1024 * 1024);
+            AddLiveEvent(EventBaseType::MALLOC, PoolType::HAL, 3, 0x3333, 6LL * 1024 * 1024 * 1024);
+            auto ev = MakeControlEvent("display memory block", "--pool hal --TOPN 2");
+            ControlCommandHandler::GetInstance().Execute(ev);
+            return ev->output;
+        });
+    const size_t pos2222 = out.find("0x0000000000002222");
+    const size_t pos1111 = out.find("0x0000000000001111");
+    EXPECT_NE(pos2222, std::string::npos) << out;
+    EXPECT_NE(pos1111, std::string::npos) << out;
+    EXPECT_LT(pos2222, pos1111) << out;                                  // 降序
+    EXPECT_EQ(out.find("0x0000000000003333"), std::string::npos) << out;  // TOPN截断
+    EXPECT_NE(out.find("Top 2 live blocks by size (of 3 live, pool=hal):"), std::string::npos) << out;
+}
+
+// display memory block: --pool各合法池名(host/pta/atb/mindspore)均可解析
+TEST_F(ControlCommandHandlerTest, display_memory_block_accepts_all_pool_names)
+{
+    for (const char* pool : {"host", "hal", "pta", "pta_workspace", "atb", "mindspore"})
+    {
+        auto ev = MakeEvent("display memory block", std::string("--pool ") + pool + " --TOPN 1");
+        Execute(ev);
+        EXPECT_TRUE(ev->ok) << pool << ": " << ev->output;
+        EXPECT_NE(ev->output.find(std::string("pool=") + pool), std::string::npos) << ev->output;
+    }
+}
+
+// display memory block: --pool缺值(值以--开头/无后续token)
+TEST_F(ControlCommandHandlerTest, display_memory_block_missing_pool_value)
+{
+    auto ev = MakeEvent("display memory block", "--pool");
+    Execute(ev);
+    EXPECT_EQ(ev->output, "missing value for --pool (option value cannot start with --)");
+    EXPECT_FALSE(ev->ok);
+
+    ev = MakeEvent("display memory block", "--pool --TOPN 5");
+    Execute(ev);
+    EXPECT_EQ(ev->output, "missing value for --pool (option value cannot start with --)");
+    EXPECT_FALSE(ev->ok);
+}
+
+// display config: analysis名字串(含none/单项/逗号拼接)与call_stack组合
+TEST_F(ControlCommandHandlerTest, display_config_analysis_names_and_call_stack)
+{
+    const Config orig = ConfigManager::Instance().GetConfig();
+    const std::pair<const char*, const char*> analysisCases[] = {
+        {"--analysis none", "analysis: none"},
+        {"--analysis decompose", "analysis: decompose"},
+        {"--analysis inefficient", "analysis: inefficient"},
+        {"--analysis host-leaks", "analysis: host-leaks"},
+        {"--analysis leaks,oom:5", "analysis: leaks,oom"},
+    };
+    for (const auto& item : analysisCases)
+    {
+        auto setEv = MakeEvent("set config", item.first);
+        Execute(setEv);
+        ASSERT_TRUE(setEv->ok) << item.first << ": " << setEv->output;
+        auto showEv = MakeEvent("display config");
+        Execute(showEv);
+        EXPECT_NE(showEv->output.find(item.second), std::string::npos) << item.first << ": " << showEv->output;
+    }
+
+    const std::pair<const char*, const char*> callStackCases[] = {
+        {"--call-stack none", "call_stack: none"},
+        {"--call-stack c", "call_stack: c:50"},
+        {"--call-stack python:30", "call_stack: python:30"},
+        {"--call-stack c:10,python:20", "call_stack: c:10,python:20"},
+    };
+    for (const auto& item : callStackCases)
+    {
+        // 先以none清零c/python两个开关:ParseCallStack只置位值中出现的分量、
+        // 不重置未出现的分量,否则上一轮的c残留会混入本轮"裸python"用例
+        auto resetEv = MakeEvent("set config", "--call-stack none");
+        Execute(resetEv);
+        ASSERT_TRUE(resetEv->ok) << resetEv->output;
+        auto setEv = MakeEvent("set config", item.first);
+        Execute(setEv);
+        ASSERT_TRUE(setEv->ok) << item.first << ": " << setEv->output;
+        auto showEv = MakeEvent("display config");
+        Execute(showEv);
+        EXPECT_NE(showEv->output.find(item.second), std::string::npos) << item.first << ": " << showEv->output;
+    }
+
+    // 恢复原配置并同步分析器订阅(UpdateAnalysisType副作用)
+    ConfigManager::Instance().SetConfig(orig);
+    EventReport::Instance(MemScopeCommType::SHARED_MEMORY).UpdateAnalysisType();
+}
+
+// set config: 取值边界(空/超界/溢出/空值)、key=value形式、host-leak-mode event
+TEST_F(ControlCommandHandlerTest, set_config_value_edge_cases)
+{
+    const Config orig = ConfigManager::Instance().GetConfig();
+    struct BadCase
+    {
+        const char* param;
+        const char* expect;
+    };
+    const BadCase badCases[] = {
+        {"--call-stack c:", "invalid --call-stack value: c: (expect c[:depth],python[:depth])"},
+        {"--call-stack c:0", "invalid --call-stack value: c:0 (expect c[:depth],python[:depth])"},
+        {"--call-stack c:1001", "invalid --call-stack value: c:1001 (expect c[:depth],python[:depth])"},
+        {"--call-stack python:", "invalid --call-stack value: python: (expect c[:depth],python[:depth])"},
+        {"--analysis oom:", "invalid oom top-K (range 1..1000): oom:"},
+        {"--analysis oom:1001", "invalid oom top-K (range 1..1000): oom:1001"},
+        {"--analysis oom:abc", "invalid oom top-K (range 1..1000): oom:abc"},
+        {"--block-size-threshold=", "invalid --block-size-threshold value: "},
+        {"--block-size-threshold 99999999999999999999999",
+         "invalid --block-size-threshold value: 99999999999999999999999"},
+        {"--analysis", "missing value for --analysis"},
+    };
+    for (const auto& item : badCases)
+    {
+        auto ev = MakeEvent("set config", item.param);
+        Execute(ev);
+        EXPECT_EQ(ev->output, item.expect) << item.param;
+        EXPECT_FALSE(ev->ok) << item.param;
+    }
+
+    // key=value形式 + host-leak-mode event成功路径
+    auto ev = MakeEvent("set config", "--block-size-threshold=1234 --host-leak-mode event");
+    Execute(ev);
+    EXPECT_TRUE(ev->ok) << ev->output;
+    const Config& cfg = ConfigManager::Instance().GetConfig();
+    EXPECT_EQ(static_cast<uint64_t>(cfg.blockSizeThreshold), 1234ULL);
+    EXPECT_EQ(cfg.hostLeakMode, static_cast<uint8_t>(HostLeakMode::EVENT));
+
+    ConfigManager::Instance().SetConfig(orig);
+    EventReport::Instance(MemScopeCommType::SHARED_MEMORY).UpdateAnalysisType();
+}
+
+// start→step→stop: stop清理路径与step计数回显
+TEST_F(ControlCommandHandlerTest, start_step_stop_sequence)
+{
+    auto ev = MakeEvent("start");
+    Execute(ev);
+    EXPECT_EQ(ev->output, "tracing started");
+
+    ev = MakeEvent("step");
+    Execute(ev);
+    EXPECT_EQ(ev->output.rfind("step ", 0), 0u) << ev->output;
+    EXPECT_TRUE(ev->ok) << ev->output;
+
+    ev = MakeEvent("stop");
+    Execute(ev);
+    EXPECT_EQ(ev->output, "tracing stopped");
+}
+
+// EventHandle(分发回调)委托HandleDispatch: 合法词仅登记不执行(非法词回执由command用例覆盖)
+TEST_F(ControlCommandHandlerTest, event_handle_delegates_to_dispatch)
+{
+    auto valid = MakeEvent("start");
+    std::shared_ptr<EventBase> validBase = valid;
+    ControlCommandHandler::GetInstance().EventHandle(validBase, nullptr);
+    EXPECT_TRUE(valid->output.empty());
+    EXPECT_TRUE(valid->ok);
 }
 
 }  // namespace

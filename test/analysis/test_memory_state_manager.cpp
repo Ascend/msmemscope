@@ -714,3 +714,97 @@ TEST_F(MemoryStateManagerTest, get_used_device_list_union_and_dedup)
     MemoryStateManager::GetInstance().UpdateDeviceUsedCache(5, -1);
     EXPECT_EQ(MemoryStateManager::GetInstance().GetUsedDeviceList(), (std::vector<int32_t>{0}));
 }
+
+// ==================== 标签边界 / 负数截断 / 缓存非法设备 / 查找兜底分支补充 ====================
+
+// OwnerLabelManager：越界 level 的读写均被安全忽略，正常 level 按顺序用 '@' 拼接
+TEST_F(MemoryStateManagerTest, owner_label_manager_boundary)
+{
+    OwnerLabelManager labelMgr;
+    labelMgr.AddLabel(OwnerLevel::FRAMEWORK, "pta");
+    labelMgr.AddLabel(OwnerLevel::DETAIL_1, "weight");
+    EXPECT_EQ(labelMgr.GetLabel(OwnerLevel::FRAMEWORK), "pta");
+    EXPECT_EQ(labelMgr.GetLabel(OwnerLevel::DETAIL_1), "weight");
+    EXPECT_EQ(labelMgr.GetOwnerStr(), "pta@weight");
+
+    // 越界 level：GetLabel 返回空串，AddLabel 不写入任何位置
+    EXPECT_EQ(labelMgr.GetLabel(OwnerLevel::OWNER_LEVEL_NUM), "");
+    labelMgr.AddLabel(OwnerLevel::OWNER_LEVEL_NUM, "ignored");
+    EXPECT_EQ(labelMgr.GetLabel(OwnerLevel::OWNER_LEVEL_NUM), "");
+    EXPECT_EQ(labelMgr.GetOwnerStr(), "pta@weight");
+}
+
+// HOST 锁页/CPU tensor 无匹配 MALLOC 的 FREE 导致累计为负：截断为 0 且事件 used 回填 0
+TEST_F(MemoryStateManagerTest, host_negative_accumulation_truncated_to_zero)
+{
+    auto pinnedFree = CreateHostFree(0x1000, 100, true);
+    Handle(pinnedFree);
+    EXPECT_EQ(pinnedFree->used, 0);
+    EXPECT_EQ(MemoryStateManager::GetInstance().hostUsed_, 0);
+
+    auto tensorFree = CreateHostFree(0x2000, 200, false);
+    Handle(tensorFree);
+    EXPECT_EQ(tensorFree->used, 0);
+    EXPECT_EQ(MemoryStateManager::GetInstance().hostTensorTotal_, 0);
+}
+
+// GetState(MemoryEvent)：key 未命中后按 pid + 地址区间扫描，覆盖命中/pid 不同/device 不同/未命中
+TEST_F(MemoryStateManagerTest, get_state_containment_scan_paths)
+{
+    auto bigEvent = CreateMalloc(PoolType::PTA_CACHING, 0xC000, 0, 1, 1, 1000, 4096);
+    ASSERT_NE(MemoryStateManager::GetInstance().AddEvent(bigEvent), nullptr);
+
+    // 地址落在已分配区间内（device 缺失，不参与 device 过滤）
+    auto innerFree = CreateFree(PoolType::PTA_CACHING, 0xC100, GD_INVALID_NUM, 1, 2, 2000);
+    MemoryState* matched = MemoryStateManager::GetInstance().GetState(innerFree);
+    ASSERT_NE(matched, nullptr);
+    EXPECT_EQ(matched->events[0]->eventType, EventBaseType::MALLOC);
+
+    // pid 不同：跳过
+    auto otherPid = CreateFree(PoolType::PTA_CACHING, 0xC100, GD_INVALID_NUM, 2, 3, 3000);
+    EXPECT_EQ(MemoryStateManager::GetInstance().GetState(otherPid), nullptr);
+
+    // device 有效且与块不同：跳过
+    auto otherDevice = CreateFree(PoolType::PTA_CACHING, 0xC100, 1, 1, 4, 4000);
+    EXPECT_EQ(MemoryStateManager::GetInstance().GetState(otherDevice), nullptr);
+
+    // 地址不在任何区间：遍历完返回 nullptr（0xE000 已越过 [0xC000, 0xD000] 覆盖范围）
+    auto outside = CreateFree(PoolType::PTA_CACHING, 0xE000, GD_INVALID_NUM, 1, 5, 5000);
+    EXPECT_EQ(MemoryStateManager::GetInstance().GetState(outside), nullptr);
+
+    MemoryStateManager::GetInstance().DeteleState(PoolType::PTA_CACHING, MemoryStateKey{1, 0, 0xC000});
+}
+
+// PromoteShadowStates：待处理 key 在回调中被删除后，后续处理跳过该 key
+TEST_F(MemoryStateManagerTest, promote_shadow_states_vanished_key_skipped)
+{
+    auto stateA = CreateMalloc(PoolType::PTA_CACHING, 0xA000, 0, 1, 1, 1000);
+    auto stateB = CreateMalloc(PoolType::PTA_CACHING, 0xB000, 0, 1, 2, 2000);
+    ASSERT_NE(MemoryStateManager::GetInstance().AddEvent(stateA), nullptr);
+    ASSERT_NE(MemoryStateManager::GetInstance().AddEvent(stateB), nullptr);
+    MemoryStateManager::GetInstance().GetState(stateA)->shadowState = ShadowState::SHADOW_FREED;
+    MemoryStateManager::GetInstance().GetState(stateB)->shadowState = ShadowState::SHADOW_FREED;
+
+    int dumpCount = 0;
+    auto& statesMap = MemoryStateManager::GetInstance().poolsMap_[PoolType::PTA_CACHING].statesMap;
+    auto eraseOther = [&statesMap](const MemoryStateKey& key, MemoryState* current)
+    {
+        auto it = statesMap.find(key);
+        if (it != statesMap.end() && &it->second != current)
+        {
+            statesMap.erase(it);
+        }
+    };
+    auto dumpFunc = [&](MemoryState* state)
+    {
+        ++dumpCount;
+        // 模拟回调中删除了另一个待处理 key（不能删除 current，否则迭代器失效）
+        eraseOther(MemoryStateKey{1, 0, 0xA000}, state);
+        eraseOther(MemoryStateKey{1, 0, 0xB000}, state);
+    };
+    MemoryStateManager::GetInstance().PromoteShadowStates(dumpFunc);
+
+    // 第一个 SHADOW_FREED 落盘时删除另一个 key，第二个 key 查找失败被跳过
+    EXPECT_EQ(dumpCount, 1);
+    EXPECT_TRUE(statesMap.empty());
+}

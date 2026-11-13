@@ -18,7 +18,59 @@
 
 #include <gtest/gtest.h>
 
+#include "event_trace/op_handler.h"
+#include "event_trace/trace_manager/event_trace_manager.h"
+
 using namespace MemScope;
+
+namespace {
+MstxFuncPointer g_memFuncSlots[5] = {nullptr};
+MstxFuncPointer *g_memFuncTable[5] = {&g_memFuncSlots[0], &g_memFuncSlots[1], &g_memFuncSlots[2],
+                                       &g_memFuncSlots[3], &g_memFuncSlots[4]};
+
+int MockMemCoreFuncTable(mstxFuncModule module, MstxFuncTable *outTable, unsigned int *outSize)
+{
+    if (module != MSTX_API_MODULE_CORE_MEM) {
+        return MSTX_FAIL;
+    }
+    *outTable = g_memFuncTable;
+    *outSize = static_cast<unsigned int>(mstxImplCoreMemFuncId::MSTX_API_CORE_MEM_REGIONS_UNREGISTER);
+    return MSTX_SUCCESS;
+}
+
+// 仅覆盖到REGIONS_REGISTER的函数表：越界槽位不应被写入
+int MockMemCoreFuncTableLimited(mstxFuncModule module, MstxFuncTable *outTable, unsigned int *outSize)
+{
+    if (module != MSTX_API_MODULE_CORE_MEM) {
+        return MSTX_FAIL;
+    }
+    *outTable = g_memFuncTable;
+    *outSize = static_cast<unsigned int>(mstxImplCoreMemFuncId::MSTX_API_CORE_MEM_REGIONS_REGISTER);
+    return MSTX_SUCCESS;
+}
+
+// 保存/恢复追踪与sanitizer状态，避免影响其他用例
+class MstxStateGuard {
+public:
+    MstxStateGuard()
+        : tracing_(EventTraceManager::Instance().IsTracingEnabled()),
+          sanitizer_(SanitizerOpHandler::IsEnabled())
+    {
+    }
+    ~MstxStateGuard()
+    {
+        EventTraceManager::Instance().SetTraceStatus(tracing_ ? EventTraceStatus::IN_TRACING
+                                                              : EventTraceStatus::NOT_IN_TRACING);
+        SanitizerOpHandler::SetEnabled(sanitizer_);
+    }
+    MstxStateGuard(const MstxStateGuard &) = delete;
+    MstxStateGuard &operator=(const MstxStateGuard &) = delete;
+
+private:
+    bool tracing_;
+    bool sanitizer_;
+};
+}  // namespace
 
 TEST(MstxTest, MstxMarkAFuncTest) {
     const char* msg = "Test Message";
@@ -123,4 +175,45 @@ TEST(MstxTest, ReportRegionsHandleTest) {
     unregisterBatch.refArray = regionRef;
 
     MstxMemRegionsUnregisterFunc(msmemscope, &unregisterBatch);
+}
+
+// 非追踪且sanitizer关闭时，mark/range接口应提前返回
+TEST(MstxInjectExtraTest, tracing_disabled_early_returns)
+{
+    MstxStateGuard guard;
+    EventTraceManager::Instance().SetTraceStatus(EventTraceStatus::NOT_IN_TRACING);
+    SanitizerOpHandler::SetEnabled(false);
+
+    aclrtStream stream = reinterpret_cast<aclrtStream>(0x4000);
+    MstxMarkAFunc("ut_mark_disabled", stream);
+
+    // range开始返回0，range结束直接返回
+    EXPECT_EQ(MstxRangeStartAFunc("ut_range_disabled", stream), 0U);
+    MstxRangeEndFunc(1);
+}
+
+// mem模块函数表注入：outSize覆盖到REGIONS_UNREGISTER时，第5个槽位应写入卸载函数
+TEST(MstxInjectExtraTest, mem_core_inject_writes_regions_unregister)
+{
+    for (auto &slot : g_memFuncSlots) {
+        slot = nullptr;
+    }
+
+    EXPECT_TRUE(MstxTableMemCoreInject(MockMemCoreFuncTable));
+    EXPECT_EQ(g_memFuncSlots[static_cast<unsigned int>(mstxImplCoreMemFuncId::MSTX_API_CORE_MEM_REGIONS_UNREGISTER)],
+              reinterpret_cast<MstxFuncPointer>(MstxMemRegionsUnregisterFunc));
+}
+
+// outSize只到REGIONS_REGISTER：REGIONS_UNREGISTER槽位保持为空
+TEST(MstxInjectExtraTest, mem_core_inject_stops_at_out_size)
+{
+    for (auto &slot : g_memFuncSlots) {
+        slot = nullptr;
+    }
+
+    EXPECT_TRUE(MstxTableMemCoreInject(MockMemCoreFuncTableLimited));
+    EXPECT_EQ(g_memFuncSlots[static_cast<unsigned int>(mstxImplCoreMemFuncId::MSTX_API_CORE_MEM_REGIONS_REGISTER)],
+              reinterpret_cast<MstxFuncPointer>(MstxMemRegionsRegisterFunc));
+    EXPECT_EQ(g_memFuncSlots[static_cast<unsigned int>(mstxImplCoreMemFuncId::MSTX_API_CORE_MEM_REGIONS_UNREGISTER)],
+              nullptr);
 }

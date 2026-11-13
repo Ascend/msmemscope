@@ -87,6 +87,22 @@ TEST(Utils, StrToUInt32_Failed_Test)
     EXPECT_FALSE(ret);
 }
 
+TEST(Utils, StrToInt64_Overflow_Test)
+{
+    // 超出 int64_t 表示范围，std::stoll 抛异常后被捕获
+    std::string str(30, '9');
+    int64_t dest = 0;
+    EXPECT_FALSE(StrToInt64(dest, str));
+
+    str = "-" + std::string(30, '9');
+    EXPECT_FALSE(StrToInt64(dest, str));
+
+    // 合法边界值应成功
+    str = "9223372036854775807";
+    EXPECT_TRUE(StrToInt64(dest, str));
+    EXPECT_EQ(dest, 9223372036854775807LL);
+}
+
 TEST(Utils, GetProcessVmRss_Test)
 {
     uint64_t vmrss = GetProcessVmRss();

@@ -19,6 +19,10 @@
 #include <vector>
 #include <iterator>
 #include <unistd.h>
+#include <sys/stat.h>
+#include <cstdio>
+#include <iostream>
+#include <sstream>
 #include <gtest/gtest.h>
 #include <linux/limits.h>
 
@@ -375,4 +379,143 @@ TEST(Path, check_write_permission_invalid_path_expect_return_false)
     ASSERT_TRUE(Utility::CheckIsValidInputPath(pathStr));
     ASSERT_TRUE(Utility::CheckIsValidOutputPath(pathStr));
     remove(pathStr.c_str());
+}
+
+// ==================== 路径边界与权限告警补充 ====================
+
+namespace {
+// 恢复工作目录的 RAII 守卫：用例会删除当前工作目录以构造 getcwd 失败场景
+class CwdGuard {
+public:
+    CwdGuard()
+    {
+        cwdOk_ = getcwd(original_, sizeof(original_)) != nullptr;
+    }
+    ~CwdGuard()
+    {
+        if (cwdOk_) {
+            (void)chdir(original_);
+        }
+    }
+    bool IsValid() const { return cwdOk_; }
+private:
+    char original_[PATH_MAX] = {0};
+    bool cwdOk_ = false;
+};
+
+constexpr int OVER_DEPTH_LEVEL = 40;
+}  // namespace
+
+// IsValidLength：根路径 route 为空（长度 0）时非法；组件长度合法但总长超过 PATH_MAX 时非法
+TEST(Path, check_length_root_and_total_exceed_expect_false)
+{
+    EXPECT_FALSE(Path("/").IsValidLength());
+
+    // 17 个 255 字节组件，单个组件未超 NAME_MAX，但总长 4351 超过 PATH_MAX(4096)
+    std::string name(255, 'A');
+    std::string longPath = name;
+    for (int i = 0; i < 16; ++i) {
+        longPath += "/" + name;
+    }
+    Path totalExceed(longPath);
+    EXPECT_FALSE(totalExceed.IsValidLength());
+}
+
+// DeclarePermissionRisk：文件对 group/other 可写时打印告警
+TEST(Path, declare_permission_risk_writable_by_others_expect_warn)
+{
+    const std::string file = "./msms_risk_writable.txt";
+    FILE* fp = fopen(file.c_str(), "w");
+    ASSERT_NE(fp, nullptr);
+    fclose(fp);
+    ASSERT_EQ(chmod(file.c_str(), 0666), 0);
+
+    std::ostringstream oss;
+    std::streambuf* oldBuf = std::cout.rdbuf(oss.rdbuf());
+    Path(file).DeclarePermissionRisk();
+    std::cout.rdbuf(oldBuf);
+
+    remove(file.c_str());
+    EXPECT_NE(oss.str().find("can be modified by other users"), std::string::npos);
+}
+
+// DeclarePermissionRisk：属主不是当前用户时打印告警
+// root 下把文件属主改为 uid=1，覆盖“以 root 运行”分支；非 root 下使用属主为 root 的根目录，
+// 覆盖“路径不属于当前用户”分支
+TEST(Path, declare_permission_risk_foreign_owner_expect_warn)
+{
+    std::ostringstream oss;
+    std::streambuf* oldBuf = std::cout.rdbuf(oss.rdbuf());
+    if (geteuid() == 0) {
+        const std::string file = "./msms_risk_owner.txt";
+        FILE* fp = fopen(file.c_str(), "w");
+        std::cout.rdbuf(oldBuf);
+        ASSERT_NE(fp, nullptr);
+        fclose(fp);
+        if (chown(file.c_str(), 1, 1) != 0) {
+            remove(file.c_str());
+            GTEST_SKIP() << "cannot change file owner in current environment";
+        }
+        oldBuf = std::cout.rdbuf(oss.rdbuf());
+        Path(file).DeclarePermissionRisk();
+        std::cout.rdbuf(oldBuf);
+        remove(file.c_str());
+        EXPECT_NE(oss.str().find("Process is running as user root"), std::string::npos);
+    } else {
+        Path("/").DeclarePermissionRisk();
+        std::cout.rdbuf(oldBuf);
+        EXPECT_NE(oss.str().find("is not owned by the current user"), std::string::npos);
+    }
+}
+
+// Absolute：getcwd 失败（当前工作目录已被删除）时置错误标志并打印错误
+TEST(Path, absolute_getcwd_failed_expect_error_occurred)
+{
+    CwdGuard guard;
+    ASSERT_TRUE(guard.IsValid());
+    const std::string deletedDir = "./msms_deleted_cwd";
+    (void)MakeDir(deletedDir);
+    // chdir 前先求绝对路径，删除当前工作目录使后续 getcwd 失败
+    std::string absDir = Path(deletedDir).Absolute().ToString();
+    ASSERT_EQ(chdir(absDir.c_str()), 0);
+    ASSERT_EQ(rmdir(absDir.c_str()), 0);
+
+    // 绝对路径作为右操作数时 operator/ 直接返回该右值，getcwd 失败置的错误标志得以保留
+    Path abs = Path("/msms_cwd_fail_probe").Absolute();
+    EXPECT_TRUE(abs.ErrorOccured());
+    EXPECT_EQ(abs.ToString(), "/msms_cwd_fail_probe");
+
+    // 输入/输出路径校验在 Resolved 报错时直接返回 false
+    EXPECT_FALSE(Utility::CheckIsValidInputPath("/msms_cwd_fail_probe"));
+    EXPECT_FALSE(Utility::CheckIsValidOutputPath("/msms_cwd_fail_probe"));
+    // 工作目录由 CwdGuard 析构恢复
+}
+
+// CheckIsValidInputPath：存在但深度超限的路径返回 false
+TEST(Path, check_input_path_over_depth_expect_false)
+{
+    std::vector<std::string> created;
+    std::string cur = "./msms_path_deep";
+    created.push_back(cur);
+    for (int i = 0; i < OVER_DEPTH_LEVEL; ++i) {
+        cur += "/d" + std::to_string(i);
+        created.push_back(cur);
+    }
+    ASSERT_TRUE(MakeDir(cur));
+
+    EXPECT_FALSE(Utility::CheckIsValidInputPath(cur));
+
+    for (auto it = created.rbegin(); it != created.rend(); ++it) {
+        rmdir(it->c_str());
+    }
+}
+
+// CheckIsValidOutputPath：路径长度合法但深度超限时返回 false（不要求路径存在）
+TEST(Path, check_output_path_over_depth_expect_false)
+{
+    std::string deepPath = "d0";
+    for (int i = 1; i <= OVER_DEPTH_LEVEL; ++i) {
+        deepPath += "/d" + std::to_string(i);
+    }
+    EXPECT_FALSE(Utility::CheckIsValidOutputPath(deepPath));
 }

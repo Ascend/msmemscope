@@ -18,6 +18,10 @@
 #include <gtest/gtest.h>
 #include <dlfcn.h>
 #include <unistd.h>
+#include <cstdio>
+#include <sstream>
+#include <string>
+#include <vector>
 #define private public
 #include "utility/file.h"
 #undef private
@@ -64,7 +68,6 @@ TEST_F(FileTest, make_recursive_path_expect_return_true)
     rmdir("./test_dir/test1");
     rmdir("./test_dir");
 }
-
 
 TEST_F(FileTest, make_exist_path_expect_return_false)
 {
@@ -347,4 +350,214 @@ TEST_F(FileTest, refresh_output_dir_pinned_project_dir_expect_not_overwritten)
     // 恢复单例状态（解除pin并回到派生态）
     manager.projectDirPinned_ = false;
     manager.RefreshOutputDir("./testmsmemscope");
+}
+
+// ==================== 文件/目录创建失败分支补充 ====================
+
+namespace {
+constexpr int DEEP_LEVEL = 40;
+
+// 递归创建深度超过 PATH_DEPTH_MAX(32) 的目录，用于触发 IsValidDepth 失败分支；
+// created 记录从 base 到最深层的每一级路径，便于逆序清理
+std::string MakeOverDepthDir(const std::string& base, std::vector<std::string>& created)
+{
+    std::string cur = base;
+    created.push_back(cur);
+    for (int i = 0; i < DEEP_LEVEL; ++i) {
+        cur += "/d" + std::to_string(i);
+        created.push_back(cur);
+    }
+    (void)MakeDir(cur);
+    return cur;
+}
+
+void RemoveOverDepthDir(std::vector<std::string>& created)
+{
+    for (auto it = created.rbegin(); it != created.rend(); ++it) {
+        rmdir(it->c_str());
+    }
+    created.clear();
+}
+}  // namespace
+
+// CreateCsvFile：DEVICE_ID_CPU 设备目录分支
+TEST_F(FileTest, create_csv_file_cpu_device_expect_true)
+{
+    auto& manager = Utility::FileCreateManager::GetInstance("./testmsmemscope");
+    manager.SetProjectDir("./testmsmemscope");
+    FILE* fp = nullptr;
+    constexpr int32_t DEVICE_ID_CPU = 10000;
+    ASSERT_TRUE(manager.CreateCsvFile(&fp, DEVICE_ID_CPU, "cpu_test", MemScope::DUMP_DIR, "h\n"));
+    ASSERT_NE(fp, nullptr);
+    fclose(fp);
+
+    std::string csvDir = manager.GetProjectDir() + "/device_cpu/" + MemScope::DUMP_DIR;
+    std::string csvPath = csvDir + "/cpu_test" + Utility::GetDateStr() + ".csv";
+    EXPECT_TRUE(Utility::FileExists(csvPath));
+    remove(csvPath.c_str());
+    rmdir(csvDir.c_str());
+    rmdir((manager.GetProjectDir() + "/device_cpu").c_str());
+}
+
+// CreateCsvFile：目标目录超深导致 CreateFile 失败，打印错误并返回 false
+TEST_F(FileTest, create_csv_file_open_failed_expect_false)
+{
+    std::vector<std::string> created;
+    std::string deepPath = MakeOverDepthDir("./msms_deep_csv", created);
+    auto& manager = Utility::FileCreateManager::GetInstance("./testmsmemscope");
+    manager.SetProjectDir(deepPath);
+
+    FILE* fp = nullptr;
+    EXPECT_FALSE(manager.CreateCsvFile(&fp, 9999, "x", MemScope::DUMP_DIR, "h\n"));
+    EXPECT_EQ(fp, nullptr);
+
+    manager.SetProjectDir("./testmsmemscope");
+    // CreateFile 先 MakeDir 再校验深度，dump 任务子目录已被创建，需要单独清理
+    rmdir((deepPath + "/" + MemScope::DUMP_DIR).c_str());
+    RemoveOverDepthDir(created);
+}
+
+// CreateDbFile：GD_INVALID_NUM 走项目根目录，表创建成功
+TEST_F(FileTest, create_db_file_invalid_device_num_expect_true)
+{
+    auto& manager = Utility::FileCreateManager::GetInstance("./testmsmemscope");
+    manager.SetProjectDir("./testmsmemscope");
+    sqlite3* db = nullptr;
+    const std::string createSql = "CREATE TABLE IF NOT EXISTS test_table (id INTEGER);";
+    ASSERT_TRUE(manager.CreateDbFile(&db, 9999, "db_test", MemScope::DUMP_DIR, "test_table", createSql));
+    ASSERT_NE(db, nullptr);
+    EXPECT_TRUE(Utility::TableExists(db, "test_table"));
+    sqlite3_close(db);
+
+    std::string dbDir = manager.GetProjectDir() + "/" + MemScope::DUMP_DIR;
+    std::string dbPath = dbDir + "/db_test" + manager.dbDateStr_ + ".db";
+    EXPECT_TRUE(Utility::FileExists(dbPath));
+    remove(dbPath.c_str());
+    remove((dbPath + "-wal").c_str());
+    remove((dbPath + "-shm").c_str());
+    rmdir(dbDir.c_str());
+}
+
+// CreateDbFile：DEVICE_ID_CPU 设备目录分支
+TEST_F(FileTest, create_db_file_cpu_device_expect_true)
+{
+    auto& manager = Utility::FileCreateManager::GetInstance("./testmsmemscope");
+    manager.SetProjectDir("./testmsmemscope");
+    sqlite3* db = nullptr;
+    const std::string createSql = "CREATE TABLE IF NOT EXISTS cpu_table (id INTEGER);";
+    constexpr int32_t DEVICE_ID_CPU = 10000;
+    ASSERT_TRUE(manager.CreateDbFile(&db, DEVICE_ID_CPU, "cpu_db", MemScope::DUMP_DIR, "cpu_table", createSql));
+    ASSERT_NE(db, nullptr);
+    EXPECT_TRUE(Utility::TableExists(db, "cpu_table"));
+    sqlite3_close(db);
+
+    std::string dbDir = manager.GetProjectDir() + "/device_cpu/" + MemScope::DUMP_DIR;
+    std::string dbPath = dbDir + "/cpu_db" + manager.dbDateStr_ + ".db";
+    EXPECT_TRUE(Utility::FileExists(dbPath));
+    remove(dbPath.c_str());
+    remove((dbPath + "-wal").c_str());
+    remove((dbPath + "-shm").c_str());
+    rmdir(dbDir.c_str());
+    rmdir((manager.GetProjectDir() + "/device_cpu").c_str());
+}
+
+// CreateDbFile：目标目录超深导致 CreateFile 失败，返回 false
+TEST_F(FileTest, create_db_file_open_failed_expect_false)
+{
+    std::vector<std::string> created;
+    std::string deepPath = MakeOverDepthDir("./msms_deep_db", created);
+    auto& manager = Utility::FileCreateManager::GetInstance("./testmsmemscope");
+    manager.SetProjectDir(deepPath);
+
+    sqlite3* db = nullptr;
+    const std::string createSql = "CREATE TABLE IF NOT EXISTS test_table (id INTEGER);";
+    EXPECT_FALSE(manager.CreateDbFile(&db, 9999, "db_test", MemScope::DUMP_DIR, "test_table", createSql));
+    EXPECT_EQ(db, nullptr);
+
+    manager.SetProjectDir("./testmsmemscope");
+    // CreateFile 先 MakeDir 再校验深度，dump 任务子目录已被创建，需要单独清理
+    rmdir((deepPath + "/" + MemScope::DUMP_DIR).c_str());
+    RemoveOverDepthDir(created);
+}
+
+// CreateDbFile：建表 SQL 非法，CreateDbTable 失败后关闭数据库并返回 false
+TEST_F(FileTest, create_db_file_create_table_failed_expect_false)
+{
+    auto& manager = Utility::FileCreateManager::GetInstance("./testmsmemscope");
+    manager.SetProjectDir("./testmsmemscope");
+    sqlite3* db = nullptr;
+    EXPECT_FALSE(manager.CreateDbFile(&db, 9999, "bad_db", MemScope::DUMP_DIR, "bad_table", "INVALID SQL"));
+    EXPECT_EQ(db, nullptr);
+
+    std::string dbDir = manager.GetProjectDir() + "/" + MemScope::DUMP_DIR;
+    std::string dbPath = dbDir + "/bad_db" + manager.dbDateStr_ + ".db";
+    remove(dbPath.c_str());
+    remove((dbPath + "-wal").c_str());
+    remove((dbPath + "-shm").c_str());
+    rmdir(dbDir.c_str());
+}
+
+// CreateDbFile：句柄已存在但表不存在且建表失败，返回 false
+TEST_F(FileTest, create_db_file_existing_handle_table_failed_expect_false)
+{
+    auto& manager = Utility::FileCreateManager::GetInstance("./testmsmemscope");
+    manager.SetProjectDir("./testmsmemscope");
+    sqlite3* db = nullptr;
+    ASSERT_TRUE(manager.CreateDbFile(&db, 9999, "exist_db", MemScope::DUMP_DIR, "test_table",
+                                     "CREATE TABLE IF NOT EXISTS test_table (id INTEGER);"));
+    ASSERT_NE(db, nullptr);
+    // 第二个表名不存在且建表 SQL 非法，命中“已打开句柄”分支的失败返回
+    EXPECT_FALSE(manager.CreateDbFile(&db, 9999, "exist_db", MemScope::DUMP_DIR, "other_table", "INVALID SQL"));
+    sqlite3_close(db);
+
+    std::string dbDir = manager.GetProjectDir() + "/" + MemScope::DUMP_DIR;
+    std::string dbPath = dbDir + "/exist_db" + manager.dbDateStr_ + ".db";
+    remove(dbPath.c_str());
+    remove((dbPath + "-wal").c_str());
+    remove((dbPath + "-shm").c_str());
+    rmdir(dbDir.c_str());
+}
+
+// CreateLogFile：目标目录超深导致 CreateFile 失败，返回 false
+TEST_F(FileTest, create_log_file_open_failed_expect_false)
+{
+    std::vector<std::string> created;
+    std::string deepPath = MakeOverDepthDir("./msms_deep_log", created);
+    auto& manager = Utility::FileCreateManager::GetInstance("./testmsmemscope");
+    manager.SetProjectDir(deepPath);
+
+    FILE* fp = nullptr;
+    char logPath[PATH_MAX] = {0};
+    EXPECT_FALSE(manager.CreateLogFile(&fp, MemScope::DUMP_DIR, logPath, sizeof(logPath)));
+    EXPECT_EQ(fp, nullptr);
+
+    manager.SetProjectDir("./testmsmemscope");
+    // CreateFile 先 MakeDir 再校验深度，dump 任务子目录已被创建，需要单独清理
+    rmdir((deepPath + "/" + MemScope::DUMP_DIR).c_str());
+    RemoveOverDepthDir(created);
+}
+
+// CreateLogFile：文件创建成功但日志路径回填失败（strncpy_s 目标长度不足），仍返回 true
+TEST_F(FileTest, create_log_file_save_path_failed_expect_true)
+{
+    auto& manager = Utility::FileCreateManager::GetInstance("./testmsmemscope");
+    manager.SetProjectDir("./testmsmemscope");
+    FILE* fp = nullptr;
+    char logPath[8] = {0};
+
+    std::ostringstream oss;
+    std::streambuf* oldBuf = std::cout.rdbuf(oss.rdbuf());
+    bool ret = manager.CreateLogFile(&fp, MemScope::DUMP_DIR, logPath, 1);
+    std::cout.rdbuf(oldBuf);
+
+    EXPECT_TRUE(ret);
+    ASSERT_NE(fp, nullptr);
+    fclose(fp);
+    EXPECT_NE(oss.str().find("Save log file path failed"), std::string::npos);
+
+    std::string logDir = manager.GetProjectDir() + "/" + MemScope::DUMP_DIR;
+    std::string logPathExpected = logDir + "/msmemscope_" + Utility::GetDateStr() + ".log";
+    EXPECT_TRUE(Utility::FileExists(logPathExpected));
+    remove(logPathExpected.c_str());
+    rmdir(logDir.c_str());
 }

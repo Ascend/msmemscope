@@ -155,8 +155,43 @@ TEST(ToSafeStringTest, log_safe_string_test)
     std::string testStr = "test\t1";
     ToSafeString(testStr);
     ASSERT_EQ(testStr, "test\\t1");
- 
+
     testStr = "test1";
     ToSafeString(testStr);
     ASSERT_EQ(testStr, "test1");
+}
+
+TEST(UString, extract_attr_value_by_key_prefix_without_colon)
+{
+    // key 首次出现仅为其他 key 的前缀，应继续向后查找真正带冒号的键
+    std::string str = "{nameX,y=1,name:ut_value}";
+    EXPECT_EQ(ExtractAttrValueByKey(str, "name"), "ut_value");
+
+    // key 出现在串尾且后面没有冒号，循环应正常结束并返回空
+    std::string tail = "{addr:1000,name";
+    EXPECT_EQ(ExtractAttrValueByKey(tail, "name"), "");
+
+    // 命中冒号但后面紧跟 '}'，值为空
+    std::string emptyValue = "{name:}";
+    EXPECT_EQ(ExtractAttrValueByKey(emptyValue, "name"), "");
+}
+
+TEST(VersionClass, compare_size_when_common_prefix_equal)
+{
+    Version shortVer("3");
+    Version longVer("3.11");
+    // 公共前缀相同，按段数比较
+    EXPECT_TRUE(shortVer < longVer);
+    EXPECT_FALSE(longVer < shortVer);
+    EXPECT_TRUE(longVer > shortVer);
+    EXPECT_FALSE(shortVer > longVer);
+    EXPECT_TRUE(shortVer <= longVer);
+    EXPECT_TRUE(longVer >= shortVer);
+}
+
+TEST(ToSafeStringTest, all_invalid_chars_escaped)
+{
+    std::string testStr = "a\nb\fc\rd\be\tf\vg\x7Fh";
+    ToSafeString(testStr);
+    ASSERT_EQ(testStr, "a\\nb\\fc\\rd\\be\\tf\\vg\\u007Fh");
 }

@@ -16,7 +16,15 @@
  */
 
 #include <gtest/gtest.h>
+#include <unistd.h>
+#include <cstdio>
+#include <cstdlib>
 #include <cstring>
+#include <fstream>
+#include <iterator>
+#include <string>
+
+#include "utility/cpython.h"
 
 #define private public
 #include "op_handler.h"
@@ -461,4 +469,277 @@ TEST_F(OpHandlerTest, Handle_EmptyMessage_ReturnsEarly)
 
     // 空消息中找不到 name，应直接返回
     handler.Handle("", 0);
+}
+
+// ============================================================================
+// 隔离子进程用例
+// TriggerKernelLaunch 依赖 Python 解释器以及 torch_npu 侧 sanitizer 模块：
+//  - Handle 的“解释器未初始化”早退分支要求进程内确实没有解释器；
+//  - 其余分支需要解释器已初始化，且导入结果必须可控（真机上 torch_npu 是否存在、
+//    其 event_handler 是否就绪都不确定）。
+// 因此这两类路径都改由 fork+exec 拉起本测试二进制的子进程执行，--gtest_filter
+// 保证子进程只跑目标用例；子进程内先向 sys.modules 注入假 torch_npu/torch 顶层模块，
+// 阻断真实第三方包的导入，再按阶段构造 sanitizer 模块的不同残缺形态。
+// 假 _handle_kernel_launch 把收到的参数写入标记文件，供主线程侧断言参数个数与内容。
+// ============================================================================
+bool RunMemScopeTestChild(const char *gtestFilter);
+
+namespace
+{
+constexpr const char *OP_HANDLER_MARKER = "msmemscope_ut_op_handler_marker.txt";
+constexpr const char *OP_MSG_WITH_ACCESS =
+    "name=my_op;read=ra:0x1000:4,rb:0x2000:8;write=ra:0x1000:4,wc:0x3000:12";
+
+void RemoveOpMarker()
+{
+    std::remove(OP_HANDLER_MARKER);
+}
+
+bool OpMarkerExists()
+{
+    return access(OP_HANDLER_MARKER, F_OK) == 0;
+}
+
+std::string ReadOpMarker()
+{
+    std::ifstream ifs(OP_HANDLER_MARKER);
+    return std::string(std::istreambuf_iterator<char>(ifs), std::istreambuf_iterator<char>());
+}
+
+std::string OpMarkerFirstLine()
+{
+    std::ifstream ifs(OP_HANDLER_MARKER);
+    std::string line;
+    std::getline(ifs, line);
+    return line;
+}
+
+// 在主线程已持GIL的前提下，嵌套获取GIL是幂等的；统一封装便于失败时清理错误指示器
+bool RunPythonCode(const char *code)
+{
+    PyGILState_STATE state = PyGILState_Ensure();
+    const int rc = PyRun_SimpleString(code);
+    PyGILState_Release(state);
+    return rc == 0;
+}
+
+void ClearPythonError()
+{
+    PyGILState_STATE state = PyGILState_Ensure();
+    PyErr_Clear();
+    PyGILState_Release(state);
+}
+
+void ExpectMarkerArgs(const std::string &expectedCount, const char *message)
+{
+    ASSERT_TRUE(OpMarkerExists()) << message;
+    EXPECT_EQ(OpMarkerFirstLine(), expectedCount) << message;
+}
+}  // namespace
+
+// 子进程用例：解释器未初始化时，Handle 完成消息解析后 TriggerKernelLaunch 直接返回
+TEST(OpHandlerChild, NoPythonInterpreter)
+{
+    if (getenv("MSMEMSCOPE_UT_CHILD") == nullptr)
+    {
+        GTEST_SKIP() << "仅在RunMemScopeTestChild拉起的子进程中执行";
+    }
+    // 子进程仅执行本用例，未调用 Py_Initialize：保证走的是解释器未初始化分支
+    ASSERT_FALSE(Utility::IsPyInterpRepeInited());
+
+    SanitizerOpHandler &handler = SanitizerOpHandler::GetInstance();
+    SanitizerOpHandler::SetEnabled(true);
+    EXPECT_TRUE(SanitizerOpHandler::IsEnabled());
+    // 使能且 name/read/write 均合法：解析完成后 TriggerKernelLaunch 早退
+    handler.Handle(OP_MSG_WITH_ACCESS, 11);
+    SanitizerOpHandler::SetEnabled(false);
+    EXPECT_FALSE(SanitizerOpHandler::IsEnabled());
+}
+
+// 子进程用例：解释器初始化后的 TriggerKernelLaunch 全分支
+TEST(OpHandlerChild, FullPythonPath)
+{
+    if (getenv("MSMEMSCOPE_UT_CHILD") == nullptr)
+    {
+        GTEST_SKIP() << "仅在RunMemScopeTestChild拉起的子进程中执行";
+    }
+    RemoveOpMarker();
+    Py_Initialize();
+    ASSERT_NE(Py_IsInitialized(), 0);
+    ASSERT_TRUE(Utility::IsPyInterpRepeInited());
+
+    SanitizerOpHandler &handler = SanitizerOpHandler::GetInstance();
+    SanitizerOpHandler::SetEnabled(true);
+
+    // 注入假顶层模块，阻断真实 torch_npu/torch 的导入；此时叶子模块均不存在
+    ASSERT_TRUE(RunPythonCode(R"PY(
+import sys, types
+sys.modules['torch_npu'] = types.ModuleType('torch_npu')
+sys.modules['torch'] = types.ModuleType('torch')
+)PY"));
+
+    // 阶段1：sanitizer 模块导入失败
+    handler.Handle(OP_MSG_WITH_ACCESS, 11);
+    EXPECT_FALSE(OpMarkerExists());
+
+    // 阶段2：sanitizer 存在，但 _stream_check 导入失败
+    ASSERT_TRUE(RunPythonCode(R"PY(
+import sys, types
+m = types.ModuleType('torch_npu.npu._sanitizer')
+m.npu_sanitizer = object()
+sys.modules['torch_npu.npu._sanitizer'] = m
+sys.modules.pop('torch_npu.npu._stream_check', None)
+)PY"));
+    handler.Handle(OP_MSG_WITH_ACCESS, 11);
+    EXPECT_FALSE(OpMarkerExists());
+
+    // 阶段3：两个模块都在，但缺少 npu_sanitizer 实例
+    ASSERT_TRUE(RunPythonCode(R"PY(
+import sys, types
+san = sys.modules['torch_npu.npu._sanitizer']
+if hasattr(san, 'npu_sanitizer'):
+    del san.npu_sanitizer
+sys.modules['torch_npu.npu._stream_check'] = types.ModuleType('torch_npu.npu._stream_check')
+)PY"));
+    handler.Handle(OP_MSG_WITH_ACCESS, 11);
+    EXPECT_FALSE(OpMarkerExists());
+
+    // 阶段4：npu_sanitizer 存在，但缺少 event_handler
+    ASSERT_TRUE(RunPythonCode(R"PY(
+import sys, types
+san = sys.modules['torch_npu.npu._sanitizer']
+san.npu_sanitizer = types.SimpleNamespace()
+)PY"));
+    handler.Handle(OP_MSG_WITH_ACCESS, 11);
+    EXPECT_FALSE(OpMarkerExists());
+
+    // 阶段5：event_handler 存在，但缺少 _handle_kernel_launch 方法
+    ASSERT_TRUE(RunPythonCode(R"PY(
+import sys, types
+san = sys.modules['torch_npu.npu._sanitizer']
+san.npu_sanitizer = types.SimpleNamespace(event_handler=types.SimpleNamespace())
+)PY"));
+    handler.Handle(OP_MSG_WITH_ACCESS, 11);
+    EXPECT_FALSE(OpMarkerExists());
+
+    // 阶段6：完整 handler；_stream_check 无 NPURecordStreamHandler（旧版本，6参数）
+    ASSERT_TRUE(RunPythonCode(R"PY(
+import sys, types
+san = sys.modules['torch_npu.npu._sanitizer']
+def _handle_v1(*args):
+    with open('msmemscope_ut_op_handler_marker.txt', 'w') as f:
+        f.write('%d\n' % len(args))
+        f.write(repr(args))
+    return []
+san.npu_sanitizer = types.SimpleNamespace(
+    event_handler=types.SimpleNamespace(_handle_kernel_launch=_handle_v1))
+sc = sys.modules['torch_npu.npu._stream_check']
+if hasattr(sc, 'NPURecordStreamHandler'):
+    del sc.NPURecordStreamHandler
+)PY"));
+    RemoveOpMarker();
+    handler.Handle(OP_MSG_WITH_ACCESS, 11);
+    ExpectMarkerArgs("6", "旧版本 _handle_kernel_launch 应收到6个参数");
+    {
+        const std::string content = ReadOpMarker();
+        // 参数0为stream；operator名与read/write解析出的别名、地址都应进入参数
+        EXPECT_NE(content.find("(11, "), std::string::npos);
+        EXPECT_NE(content.find("'my_op'"), std::string::npos);
+        EXPECT_NE(content.find("'ra'"), std::string::npos);
+        EXPECT_NE(content.find("'rb'"), std::string::npos);
+        EXPECT_NE(content.find("'wc'"), std::string::npos);
+        EXPECT_NE(content.find("8192"), std::string::npos);   // read_only 独有地址
+        EXPECT_NE(content.find("4096"), std::string::npos);   // read+write 同一地址
+        EXPECT_NE(content.find("12288"), std::string::npos);  // write 独有地址
+    }
+
+    // 不含 read/write 字段：两个列表为空，仍构造6参数并调用
+    RemoveOpMarker();
+    handler.Handle("name=no_access", 7);
+    ExpectMarkerArgs("6", "缺少read/write时应构造空列表");
+    {
+        const std::string content = ReadOpMarker();
+        EXPECT_NE(content.find("(7, set(), set(), set(), 'no_access', {})"), std::string::npos);
+    }
+
+    // 阶段7：_stream_check 有 NPURecordStreamHandler（新版本，7参数），返回 None
+    ASSERT_TRUE(RunPythonCode(R"PY(
+import sys, types
+sc = sys.modules['torch_npu.npu._stream_check']
+sc.NPURecordStreamHandler = type('NPURecordStreamHandler', (), {})
+san = sys.modules['torch_npu.npu._sanitizer']
+def _handle_v2(*args):
+    with open('msmemscope_ut_op_handler_marker.txt', 'w') as f:
+        f.write('%d\n' % len(args))
+        f.write(repr(args))
+    return None
+san.npu_sanitizer.event_handler._handle_kernel_launch = _handle_v2
+)PY"));
+    RemoveOpMarker();
+    handler.Handle(OP_MSG_WITH_ACCESS, 11);
+    ExpectMarkerArgs("7", "新版本 _handle_kernel_launch 应收到7个参数");
+    EXPECT_NE(ReadOpMarker().find("'my_op'"), std::string::npos);
+
+    // 阶段8：返回非空错误列表，torch.cuda._sanitizer 不可导入（打印错误后返回）
+    ASSERT_TRUE(RunPythonCode(R"PY(
+import sys, types
+sys.modules.pop('torch.cuda._sanitizer', None)
+san = sys.modules['torch_npu.npu._sanitizer']
+def _handle_err(*args):
+    with open('msmemscope_ut_op_handler_marker.txt', 'w') as f:
+        f.write('%d\n' % len(args))
+        f.write(repr(args))
+    return ['err_one', 'err_two']
+san.npu_sanitizer.event_handler._handle_kernel_launch = _handle_err
+)PY"));
+    RemoveOpMarker();
+    handler.Handle(OP_MSG_WITH_ACCESS, 11);
+    ExpectMarkerArgs("7", "返回错误列表前应完成调用");
+
+    // 阶段9：torch.cuda._sanitizer 存在但缺少 CUDASanitizerErrors 类
+    ASSERT_TRUE(RunPythonCode(R"PY(
+import sys, types
+sys.modules['torch.cuda._sanitizer'] = types.ModuleType('torch.cuda._sanitizer')
+)PY"));
+    RemoveOpMarker();
+    handler.Handle(OP_MSG_WITH_ACCESS, 11);
+    ExpectMarkerArgs("7", "缺少异常类时应仅告警后返回");
+
+    // 阶段10：异常类存在，构造实例并置位Python错误指示器
+    ASSERT_TRUE(RunPythonCode(R"PY(
+import sys
+m = sys.modules['torch.cuda._sanitizer']
+m.CUDASanitizerErrors = type('CUDASanitizerErrors', (Exception,), {})
+)PY"));
+    RemoveOpMarker();
+    handler.Handle(OP_MSG_WITH_ACCESS, 11);
+    ExpectMarkerArgs("7", "返回错误列表时应尝试抛出CUDASanitizerErrors");
+    // 用例侧清理业务代码有意置位的异常，避免影响后续Python调用
+    ClearPythonError();
+
+    // 阶段11：_handle_kernel_launch 自身抛异常 → Call 返回无效对象，仅告警后返回
+    ASSERT_TRUE(RunPythonCode(R"PY(
+import sys
+san = sys.modules['torch_npu.npu._sanitizer']
+def _handle_boom(*args):
+    raise RuntimeError('boom')
+san.npu_sanitizer.event_handler._handle_kernel_launch = _handle_boom
+)PY"));
+    RemoveOpMarker();
+    handler.Handle(OP_MSG_WITH_ACCESS, 11);
+    EXPECT_FALSE(OpMarkerExists());
+
+    SanitizerOpHandler::SetEnabled(false);
+    RemoveOpMarker();
+}
+
+// 父进程驱动用例：拉起隔离子进程并断言其正常退出（退出码非0说明子用例失败）
+TEST(OpHandlerIsolation, NoPythonInterpreterChildProcess)
+{
+    EXPECT_TRUE(RunMemScopeTestChild("OpHandlerChild.NoPythonInterpreter"));
+}
+
+TEST(OpHandlerIsolation, FullPythonPathChildProcess)
+{
+    EXPECT_TRUE(RunMemScopeTestChild("OpHandlerChild.FullPythonPath"));
 }
