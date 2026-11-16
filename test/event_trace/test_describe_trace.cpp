@@ -16,6 +16,7 @@
  */
 
 #include <gtest/gtest.h>
+#include <algorithm>
 #include <string>
 #include <utility>
 #include <vector>
@@ -116,4 +117,44 @@ TEST(DescribeTrace, DescribeAddrTest)
         {OwnerLevel::DETAIL_1, "ut_weights"},
     };
     DescribeTrace::GetInstance().DescribeAddr(123, labels);
+}
+
+// 同级别标签栈超过上限时静默丢弃；撤销不存在的系统/用户标签仅打印错误
+TEST(DescribeTrace, MaxStackSizeAndUnknownEraseTest)
+{
+    DescribeTrace& trace = DescribeTrace::GetInstance();
+    auto contains = [](const std::vector<std::string>& labels, const std::string& target) {
+        return std::find(labels.begin(), labels.end(), target) != labels.end();
+    };
+    // 清空本线程DETAIL_2残留标签，保证栈上限判定从确定状态开始
+    while (!trace.GetDescribe()[static_cast<size_t>(OwnerLevel::DETAIL_2)].empty())
+    {
+        trace.EraseDescribe(OwnerLevel::DETAIL_2,
+                            trace.GetDescribe()[static_cast<size_t>(OwnerLevel::DETAIL_2)]);
+    }
+
+    // DETAIL_2级别压入4个不同标签，第4个超出每级上限(3)被丢弃
+    trace.AddDescribe(OwnerLevel::DETAIL_2, "ut_ovf_1");
+    trace.AddDescribe(OwnerLevel::DETAIL_2, "ut_ovf_2");
+    trace.AddDescribe(OwnerLevel::DETAIL_2, "ut_ovf_3");
+    trace.AddDescribe(OwnerLevel::DETAIL_2, "ut_ovf_4");
+    EXPECT_EQ(trace.GetDescribe()[static_cast<size_t>(OwnerLevel::DETAIL_2)], "ut_ovf_3");
+    EXPECT_TRUE(!contains(trace.GetDescribe(), "ut_ovf_4"));
+
+    trace.EraseDescribe(OwnerLevel::DETAIL_2, "ut_ovf_1");
+    trace.EraseDescribe(OwnerLevel::DETAIL_2, "ut_ovf_2");
+    trace.EraseDescribe(OwnerLevel::DETAIL_2, "ut_ovf_3");
+    EXPECT_TRUE(trace.GetDescribe()[static_cast<size_t>(OwnerLevel::DETAIL_2)].empty());
+
+    // 撤销不存在的系统标签：打印错误，状态不变
+    trace.EraseDescribe(OwnerLevel::DETAIL_2, "ut_never_added");
+    EXPECT_TRUE(trace.GetDescribe()[static_cast<size_t>(OwnerLevel::DETAIL_2)].empty());
+
+    // 撤销不存在的用户标签：打印错误，已存在的用户标签保留
+    trace.AddUserDescribe("ut_user_keep");
+    EXPECT_TRUE(contains(trace.GetDescribe(), "ut_user_keep"));
+    trace.EraseUserDescribe("ut_never_added_user");
+    EXPECT_TRUE(contains(trace.GetDescribe(), "ut_user_keep"));
+    trace.EraseUserDescribe("ut_user_keep");
+    EXPECT_TRUE(!contains(trace.GetDescribe(), "ut_user_keep"));
 }

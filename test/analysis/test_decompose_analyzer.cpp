@@ -291,4 +291,73 @@ TEST_F(DecomposeAnalyzerTest, TestShadowEventIsSkipped)
     delete state;
 }
 
+// CPU内存事件(poolType=HOST)不参与拆解
+TEST_F(DecomposeAnalyzerTest, TestInitOwner_HostPoolSkipped)
+{
+    auto memoryEvent = std::make_shared<MemoryEvent>();
+    memoryEvent->eventType = EventBaseType::MALLOC;
+    memoryEvent->eventSubType = EventSubType::HOST;
+    memoryEvent->poolType = PoolType::HOST;
+
+    std::shared_ptr<EventBase> eventBase = memoryEvent;
+    MemoryState* state = new MemoryState();
+
+    analyzer->EventHandle(eventBase, state);
+
+    EXPECT_TRUE(state->owner.GetOwnerStr().empty());
+    delete state;
+}
+
+// MALLOC事件的subtype未命中已知框架：switch走default，不写入框架标签
+TEST_F(DecomposeAnalyzerTest, TestInitOwner_UnknownSubTypeUsesDefault)
+{
+    auto memoryEvent = std::make_shared<MemoryEvent>();
+    memoryEvent->eventType = EventBaseType::MALLOC;
+    memoryEvent->eventSubType = static_cast<EventSubType>(250);
+    memoryEvent->poolType = PoolType::PTA_CACHING;
+
+    std::shared_ptr<EventBase> eventBase = memoryEvent;
+    MemoryState* state = new MemoryState();
+
+    analyzer->EventHandle(eventBase, state);
+
+    EXPECT_TRUE(state->owner.GetOwnerStr().empty());
+    delete state;
+}
+
+// 用户标签(USER_DEFINED_n)参与owner输出
+TEST_F(DecomposeAnalyzerTest, TestInitOwner_WithUserLabels)
+{
+    DescribeTrace::GetInstance().AddUserDescribe("ut_user_a");
+
+    auto memoryEvent = std::make_shared<MemoryEvent>();
+    memoryEvent->eventType = EventBaseType::MALLOC;
+    memoryEvent->eventSubType = EventSubType::PTA_CACHING;
+
+    std::shared_ptr<EventBase> eventBase = memoryEvent;
+    MemoryState* state = new MemoryState();
+
+    analyzer->EventHandle(eventBase, state);
+
+    EXPECT_EQ(state->owner.GetOwnerStr(), "PTA@ut_user_a");
+    delete state;
+}
+
+// 地址直标中空标签跳过，仅应用非空标签
+TEST_F(DecomposeAnalyzerTest, TestUpdateOwner_SkipsEmptyLabel)
+{
+    auto memoryEvent = std::make_shared<MemoryOwnerEvent>();
+    memoryEvent->eventType = EventBaseType::MEMORY_OWNER;
+    memoryEvent->eventSubType = EventSubType::DESCRIBE_OWNER;
+    memoryEvent->ownerLabels = {{OwnerLevel::COMPONENT, ""}, {OwnerLevel::PROCESS, "ut_forward"}};
+
+    std::shared_ptr<EventBase> eventBase = memoryEvent;
+    MemoryState* state = new MemoryState();
+
+    analyzer->EventHandle(eventBase, state);
+
+    EXPECT_EQ(state->owner.GetOwnerStr(), "ut_forward");
+    delete state;
+}
+
 } // namespace MemScope

@@ -16,6 +16,12 @@
  */
 #include <gtest/gtest.h>
 #include <gtest/internal/gtest-port.h>
+#include <cstdio>
+#include <sstream>
+#include <string>
+#include <tuple>
+#include <unordered_map>
+#include <vector>
 #include "config_info.h"
 #include "file.h"
 #include "bit_field.h"
@@ -31,14 +37,19 @@ class MemoryCompareTest : public ::testing::Test {
 protected:
     void SetUp() override
     {
+        // 保存全局配置，用例内修改 levelType 后由 TearDown 恢复，避免影响其他用例
+        savedConfig_ = GetConfig();
         Utility::FileCreateManager::GetInstance("./testmsmemscope").SetProjectDir("./testmsmemscope");
     }
 
     void TearDown() override
     {
+        ConfigManager::Instance().SetConfig(savedConfig_);
         Utility::FileCreateManager::GetInstance("./testmsmemscope").SetProjectDir("");
         rmdir("./testmsmemscope");
     }
+
+    Config savedConfig_;
 };
 
 void CreateCsvData(ORIGINAL_FILE_DATA &data)
@@ -128,6 +139,9 @@ TEST_F(MemoryCompareTest, do_read_invalid_csv_file_expect_empty_data)
     fprintf(fp, testHeader.c_str());
     fprintf(fp, "1,0,pytorch,malloc,123,234,0,0,N/A,N/A,0\n");
     fclose(fp);
+    // 上面写入的是合法12列表头+11列数据行，需读回该文件才能进入"列数不匹配"分支
+    // (此处若沿用上面的"test.csv"会因文件不存在走!is_open分支，断言形同虚设)
+    str = "test_memscope.csv";
     memCompare.ReadCsvFile(str, data);
     ASSERT_EQ(data.size(), 0);
     remove("test_memscope.csv");
@@ -385,4 +399,215 @@ TEST_F(MemoryCompareTest, do_kernel_launch_compare)
     memCompare.RunComparison(paths);
     ASSERT_EQ(memCompare.result_.size(), 2);
     remove("test_memscope.csv");
+}
+
+// ==================== 引用字段 / 排序 / 非法数据行补充 ====================
+
+namespace MemScope
+{
+// memory_compare.cpp 内部自由函数（供 sort 使用），此处仅作外部声明以直接驱动
+bool Compare(const std::unordered_map<std::string, std::string> &a,
+             const std::unordered_map<std::string, std::string> &b);
+}  // namespace MemScope
+
+namespace {
+// 按 MEMSCOPE_HEADERS 生成一行 12 列数据；deviceId 传入非数字可构造解析失败场景
+std::string MakeCompareCsvRow(const std::string &eventType, const std::string &deviceId)
+{
+    return "1," + eventType + "," + eventType + ",name,1,123,234," + deviceId + ",0,{size:124},,\n";
+}
+
+// 构造 40 层超限目录，覆盖创建 compare csv 失败的路径
+std::string MakeCompareOverDepthDir(const std::string &base, std::vector<std::string> &created)
+{
+    std::string cur = base;
+    created.push_back(cur);
+    for (int i = 0; i < 40; ++i) {
+        cur += "/d" + std::to_string(i);
+        created.push_back(cur);
+    }
+    (void)Utility::MakeDir(cur);
+    return cur;
+}
+}  // namespace
+
+// ReadQuotedField：引号包裹的字段整体读出（字段内逗号不作为分隔符）并跳过字段后的分隔逗号，
+// 后续普通字段仍按逗号切分
+TEST_F(MemoryCompareTest, read_quoted_field_with_comma_expect_whole_field)
+{
+    MemoryCompare memCompare;
+    std::stringstream ss("\"mat, mul, v\",123");
+    EXPECT_EQ(memCompare.ReadQuotedField(ss), "mat, mul, v");
+    EXPECT_EQ(memCompare.ReadQuotedField(ss), "123");
+}
+
+// Compare：时间戳无法解析时按 UINT64_MAX 处理，排序结果仍可比较
+TEST_F(MemoryCompareTest, compare_invalid_timestamp_expect_uint64_max)
+{
+    std::unordered_map<std::string, std::string> valid;
+    valid["Timestamp(ns)"] = "10";
+    std::unordered_map<std::string, std::string> invalid;
+    invalid["Timestamp(ns)"] = "abc";
+
+    EXPECT_TRUE(Compare(valid, invalid));   // 10 < UINT64_MAX
+    EXPECT_FALSE(Compare(invalid, valid));  // UINT64_MAX < 10 为假
+    EXPECT_FALSE(Compare(valid, valid));
+}
+
+// ReadCsvFile：数据行列数与表头不一致时清空已读数据并返回
+TEST_F(MemoryCompareTest, read_csv_invalid_line_expect_data_cleared)
+{
+    Utility::UmaskGuard umaskGuard(Utility::DEFAULT_UMASK_FOR_CSV_FILE);
+    const std::string path = "msms_cmp_bad_line.csv";
+    FILE *fp = fopen(path.c_str(), "w");
+    ASSERT_NE(fp, nullptr);
+    fprintf(fp, "%s", MEMSCOPE_HEADERS);
+    fprintf(fp, "1,2\n");
+    fclose(fp);
+
+    MemoryCompare memCompare;
+    std::unordered_map<DEVICEID, ORIGINAL_FILE_DATA> data;
+    data[0].emplace_back(std::unordered_map<std::string, std::string>{});
+    std::string filePath = path;
+    memCompare.ReadCsvFile(filePath, data);
+
+    EXPECT_TRUE(data.empty());
+    remove(path.c_str());
+}
+
+// ReadCsvFile：同一文件内出现两种受支持框架时判为非法并清空数据
+TEST_F(MemoryCompareTest, read_csv_framework_mismatch_expect_data_cleared)
+{
+    Utility::UmaskGuard umaskGuard(Utility::DEFAULT_UMASK_FOR_CSV_FILE);
+    const std::string path = "msms_cmp_framework.csv";
+    FILE *fp = fopen(path.c_str(), "w");
+    ASSERT_NE(fp, nullptr);
+    fprintf(fp, "%s", MEMSCOPE_HEADERS);
+    fprintf(fp, "%s", MakeCompareCsvRow("PTA", "0").c_str());
+    fprintf(fp, "%s", MakeCompareCsvRow("MINDSPORE", "0").c_str());
+    fclose(fp);
+
+    MemoryCompare memCompare;
+    std::unordered_map<DEVICEID, ORIGINAL_FILE_DATA> data;
+    std::string filePath = path;
+    memCompare.ReadCsvFile(filePath, data);
+
+    EXPECT_TRUE(data.empty());
+    remove(path.c_str());
+}
+
+// ReadCsvFile：host/N/A/无效设备号(9999)与不可解析设备号的行被跳过，仅保留有效设备数据
+TEST_F(MemoryCompareTest, read_csv_invalid_device_id_skipped)
+{
+    Utility::UmaskGuard umaskGuard(Utility::DEFAULT_UMASK_FOR_CSV_FILE);
+    const std::string path = "msms_cmp_device.csv";
+    FILE *fp = fopen(path.c_str(), "w");
+    ASSERT_NE(fp, nullptr);
+    fprintf(fp, "%s", MEMSCOPE_HEADERS);
+    fprintf(fp, "%s", MakeCompareCsvRow("PTA", "host").c_str());
+    fprintf(fp, "%s", MakeCompareCsvRow("PTA", "N/A").c_str());
+    fprintf(fp, "%s", MakeCompareCsvRow("PTA", "9999").c_str());
+    fprintf(fp, "%s", MakeCompareCsvRow("PTA", "abc").c_str());
+    fprintf(fp, "%s", MakeCompareCsvRow("PTA", "1").c_str());
+    fclose(fp);
+
+    MemoryCompare memCompare;
+    std::unordered_map<DEVICEID, ORIGINAL_FILE_DATA> data;
+    std::string filePath = path;
+    memCompare.ReadCsvFile(filePath, data);
+
+    ASSERT_EQ(data.size(), 1);
+    EXPECT_EQ(data[1].size(), 1);
+    remove(path.c_str());
+}
+
+// ReadNameIndexData：op 级别下 MINDSPORE 框架不支持比对，直接返回空结果
+TEST_F(MemoryCompareTest, read_name_index_mindspore_op_level_expect_empty)
+{
+    Config opConfig{};
+    BitField<decltype(opConfig.levelType)> levelBit;
+    levelBit.setBit(static_cast<size_t>(LevelType::LEVEL_OP));
+    opConfig.levelType = levelBit.getValue();
+    ConfigManager::Instance().SetConfig(opConfig);
+
+    ORIGINAL_FILE_DATA data;
+    CreateCsvData(data);
+    // 追加一条 op 级可比对记录：若未走 MINDSPORE 早退，该记录会被收集，使空结果断言具备区分度
+    std::unordered_map<std::string, std::string> row;
+    row["Event"] = "ATB_END";
+    row["Event Type"] = "ATB_END";
+    row["Name"] = "op_atb";
+    data.emplace_back(row);
+    MemoryCompare memCompare;
+    memCompare.framework_ = "MINDSPORE";
+    NAME_WITH_INDEX result;
+    memCompare.ReadNameIndexData(data, result);
+
+    EXPECT_TRUE(result.empty());
+}
+
+// ReadNameIndexData：op 级别下 PTA 框架收集 ATB_END / ATEN_END 事件
+TEST_F(MemoryCompareTest, read_name_index_pta_op_level_expect_atb_and_aten)
+{
+    Config opConfig{};
+    BitField<decltype(opConfig.levelType)> levelBit;
+    levelBit.setBit(static_cast<size_t>(LevelType::LEVEL_OP));
+    opConfig.levelType = levelBit.getValue();
+    ConfigManager::Instance().SetConfig(opConfig);
+
+    ORIGINAL_FILE_DATA data;
+    std::unordered_map<std::string, std::string> row;
+    row["Event"] = "ATB_END";
+    row["Event Type"] = "ATB_END";
+    row["Name"] = "op_atb";
+    data.emplace_back(row);
+    row["Event"] = "ATEN_END";
+    row["Event Type"] = "ATEN_END";
+    row["Name"] = "op_aten";
+    data.emplace_back(row);
+
+    MemoryCompare memCompare;
+    memCompare.framework_ = "PTA";
+    NAME_WITH_INDEX result;
+    memCompare.ReadNameIndexData(data, result);
+
+    ASSERT_EQ(result.size(), 2);
+    EXPECT_EQ(std::get<0>(result[0]), "op_atb");
+    EXPECT_EQ(std::get<0>(result[1]), "op_aten");
+}
+
+// GetMemoryUsage：Attr 中 size 非数字时保留调用方传入的 memDiff
+TEST_F(MemoryCompareTest, get_memory_usage_invalid_size_expect_diff_unchanged)
+{
+    ORIGINAL_FILE_DATA data;
+    CreateCsvData(data);
+    data[3]["Event Type"] = "PTA";
+    data[3]["Attr"] = "{addr:1001,size:notanumber,owner:,MID:3}";
+    MemoryCompare memCompare;
+    memCompare.framework_ = "PTA";
+
+    int64_t memDiff = 777;
+    memCompare.GetMemoryUsage(1, data, memDiff);
+    EXPECT_EQ(memDiff, 777);
+}
+
+// WriteCompareDataToCsv：fprintf 写文件失败（/dev/full 无缓冲）时打印错误并返回 false
+TEST_F(MemoryCompareTest, write_compare_csv_fprintf_failed_expect_false)
+{
+    MemoryCompare memCompare;
+    // compareFile_ 非空时 CreateCsvFile 直接返回成功，保留注入的句柄
+    memCompare.compareFile_ = fopen("/dev/full", "w");
+    ASSERT_NE(memCompare.compareFile_, nullptr);
+    ASSERT_EQ(setvbuf(memCompare.compareFile_, nullptr, _IONBF, 0), 0);
+    memCompare.result_[0].emplace_back("KERNEL_LAUNCH,k,0,1,1,0");
+
+    std::ostringstream oss;
+    std::streambuf *oldBuf = std::cout.rdbuf(oss.rdbuf());
+    bool ret = memCompare.WriteCompareDataToCsv();
+    std::cout.rdbuf(oldBuf);
+
+    EXPECT_FALSE(ret);
+    EXPECT_NE(oss.str().find("Fail to write data to csv file"), std::string::npos);
+    fclose(memCompare.compareFile_);
+    memCompare.compareFile_ = nullptr;
 }

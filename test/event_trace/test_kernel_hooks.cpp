@@ -16,15 +16,25 @@
  */
 
 #include <gtest/gtest.h>
+#include <atomic>
+#include <csignal>
 #include <cstdlib>
+#include <string>
+#include <sys/wait.h>
+#include <tuple>
+#include <unistd.h>
 #include <unordered_map>
 #include <memory.h>
 #define private public
 #include "event_trace/event_report.h"
 #undef private
 #include "bit_field.h"
+#include "config_info.h"
+#include "kernel_hooks/kernel_event_trace.h"
 #include "kernel_hooks/runtime_hooks.h"
 #include "kernel_hooks/acl_hooks.h"
+#include "trace_manager/event_trace_manager.h"
+#include "utils.h"
 #include "vallina_symbol.h"
 
 using namespace testing;
@@ -325,4 +335,217 @@ TEST(RuntimeHooks, do_vallina_get_nullptr_when_dlsym_fails)
     void *ptr = VallinaSymbol<RuntimeLibLoader>::Instance().Get("rtKernelLaunch");
     EXPECT_EQ(ptr, nullptr);
 
+}
+
+// ============================================================================
+// 子进程隔离用例：runtime_hooks 的符号解析结果缓存在函数内 static 中，同一进程
+// 内无法既验证“解析成功”又验证“解析失败”。以下用例 fork+exec 当前测试二进制，
+// 以 --gtest_filter 只运行目标用例，使每个子进程拥有独立的首次解析时机。
+// 子进程由 gtest 正常返回退出，gcov 计数可正常落盘；父进程断言子进程退出码。
+// ============================================================================
+bool RunMemScopeTestChild(const char* gtestFilter)
+{
+    char exePath[4096] = {0};
+    const ssize_t len = readlink("/proc/self/exe", exePath, sizeof(exePath) - 1);
+    if (len <= 0)
+    {
+        return false;
+    }
+    exePath[len] = '\0';
+    const pid_t pid = fork();
+    if (pid < 0)
+    {
+        return false;
+    }
+    if (pid == 0)
+    {
+        setenv("MSMEMSCOPE_UT_CHILD", "1", 1);
+        const std::string filterArg = std::string("--gtest_filter=") + gtestFilter;
+        execl(exePath, exePath, filterArg.c_str(), static_cast<char*>(nullptr));
+        _exit(127);
+    }
+    int status = 0;
+    for (int i = 0; i < 200; ++i)
+    {
+        const pid_t ret = waitpid(pid, &status, WNOHANG);
+        if (ret == pid)
+        {
+            return WIFEXITED(status) && WEXITSTATUS(status) == 0;
+        }
+        usleep(50000);
+    }
+    kill(pid, SIGKILL);
+    waitpid(pid, &status, 0);
+    return false;
+}
+
+// aclrt 钩子在 g_isInAclrtFunc 窗口内回调 rt 钩子的次数（验证委托分支）
+std::atomic<int> g_rtDelegatedCalls{0};
+std::atomic<int> g_aclrtImplCalls{0};
+std::atomic<int> g_aclrtCfgCalls{0};
+std::atomic<int> g_aclrtV2Calls{0};
+std::atomic<int> g_aclrtHostArgsCalls{0};
+
+RTS_API rtError_t MockDelegatedRtKernelLaunch(const void*, uint32_t, void*, uint32_t, rtSmDesc_t*, rtStream_t)
+{
+    ++g_rtDelegatedCalls;
+    return RT_ERROR_NONE;
+}
+
+RTS_API rtError_t MockDelegatedRtKernelLaunchWithHandleV2(void*, const uint64_t, uint32_t, rtArgsEx_t*, rtSmDesc_t*,
+                                                          rtStream_t, const rtTaskCfgInfo_t*)
+{
+    ++g_rtDelegatedCalls;
+    return RT_ERROR_NONE;
+}
+
+RTS_API rtError_t MockDelegatedRtKernelLaunchWithFlagV2(const void*, uint32_t, rtArgsEx_t*, rtSmDesc_t*, rtStream_t,
+                                                        uint32_t, const rtTaskCfgInfo_t*)
+{
+    ++g_rtDelegatedCalls;
+    return RT_ERROR_NONE;
+}
+
+RTS_API rtError_t MockDelegatedRtAicpuKernelLaunchExWithArgs(const uint32_t, const char* const, const uint32_t,
+                                                             const RtAicpuArgsExT*, RtSmDescT* const, const RtStreamT,
+                                                             const uint32_t)
+{
+    ++g_rtDelegatedCalls;
+    return RT_ERROR_NONE;
+}
+
+RTS_API rtError_t MockDelegatedRtLaunchKernelByFuncHandle(rtFuncHandle, uint32_t, rtLaunchArgsHandle, RtStreamT)
+{
+    ++g_rtDelegatedCalls;
+    return RT_ERROR_NONE;
+}
+
+RTS_API rtError_t MockDelegatedRtLaunchKernelByFuncHandleV2(rtFuncHandle, uint32_t, rtLaunchArgsHandle, RtStreamT,
+                                                            const RtTaskCfgInfoT*)
+{
+    ++g_rtDelegatedCalls;
+    return RT_ERROR_NONE;
+}
+
+// aclrt 钩子的桩：在钩子置位的 g_isInAclrtFunc 窗口内回调对应 rt 钩子，
+// 既验证返回值透传，也覆盖 rt 钩子的“已在 aclrt 调用内”委托分支。
+aclError MockAclrtLaunchKernelImpl(aclrtFuncHandle, uint32_t, const void*, size_t, aclrtStream)
+{
+    ++g_aclrtImplCalls;
+    const rtError_t r1 = rtKernelLaunch(nullptr, 1, nullptr, 0, nullptr, nullptr);
+    const rtError_t r2 = rtKernelLaunchWithFlagV2(nullptr, 1, nullptr, nullptr, nullptr, 0, nullptr);
+    const rtError_t r3 = rtAicpuKernelLaunchExWithArgs(0, "add", 1, nullptr, nullptr, nullptr, 0);
+    return (r1 == RT_ERROR_NONE && r2 == RT_ERROR_NONE && r3 == RT_ERROR_NONE) ? ACL_SUCCESS : ACL_ERROR_RT_FAILURE;
+}
+
+aclError MockAclrtLaunchKernelWithConfig(aclrtFuncHandle, uint32_t, aclrtStream, aclrtLaunchKernelCfg*,
+                                         aclrtArgsHandle, void*)
+{
+    ++g_aclrtCfgCalls;
+    return rtKernelLaunchWithHandleV2(nullptr, 0, 1, nullptr, nullptr, nullptr, nullptr) == RT_ERROR_NONE
+               ? ACL_SUCCESS
+               : ACL_ERROR_RT_FAILURE;
+}
+
+aclError MockAclrtLaunchKernelV2Impl(aclrtFuncHandle, uint32_t, const void*, size_t, aclrtLaunchKernelCfg*,
+                                     aclrtStream)
+{
+    ++g_aclrtV2Calls;
+    return rtLaunchKernelByFuncHandle(nullptr, 1, nullptr, nullptr) == RT_ERROR_NONE ? ACL_SUCCESS
+                                                                                     : ACL_ERROR_RT_FAILURE;
+}
+
+aclError MockAclrtLaunchKernelWithHostArgs(aclrtFuncHandle, uint32_t, aclrtStream, aclrtLaunchKernelCfg*, void*,
+                                           size_t, aclrtPlaceHolderInfo*, size_t)
+{
+    ++g_aclrtHostArgsCalls;
+    return rtLaunchKernelByFuncHandleV2(nullptr, 1, nullptr, nullptr, nullptr) == RT_ERROR_NONE
+               ? ACL_SUCCESS
+               : ACL_ERROR_RT_FAILURE;
+}
+
+// 子进程用例：符号全部解析失败时，各钩子返回“保留错误”且不再访问驱动
+TEST(RuntimeHooksChild, NullVallina)
+{
+    if (getenv("MSMEMSCOPE_UT_CHILD") == nullptr)
+    {
+        GTEST_SKIP() << "仅在RunMemScopeTestChild拉起的子进程中执行";
+    }
+    g_isDlsymNullptr = true;
+    EXPECT_EQ(rtKernelLaunch(nullptr, 1, nullptr, 0, nullptr, nullptr), RT_ERROR_RESERVED);
+    EXPECT_EQ(rtKernelLaunchWithHandleV2(nullptr, 0, 1, nullptr, nullptr, nullptr, nullptr), RT_ERROR_RESERVED);
+    EXPECT_EQ(rtKernelLaunchWithFlagV2(nullptr, 1, nullptr, nullptr, nullptr, 0, nullptr), RT_ERROR_RESERVED);
+    EXPECT_EQ(rtAicpuKernelLaunchExWithArgs(0, "add", 1, nullptr, nullptr, nullptr, 0), RT_ERROR_RESERVED);
+    EXPECT_EQ(rtLaunchKernelByFuncHandle(nullptr, 1, nullptr, nullptr), RT_ERROR_RESERVED);
+    EXPECT_EQ(rtLaunchKernelByFuncHandleV2(nullptr, 1, nullptr, nullptr, nullptr), RT_ERROR_RESERVED);
+    EXPECT_EQ(aclrtLaunchKernelImpl(nullptr, 1, nullptr, 0, nullptr), ACL_ERROR_RT_FAILURE);
+    EXPECT_EQ(aclrtLaunchKernelWithConfig(nullptr, 1, nullptr, nullptr, nullptr, nullptr), ACL_ERROR_RT_FAILURE);
+    EXPECT_EQ(aclrtLaunchKernelV2Impl(nullptr, 1, nullptr, 0, nullptr, nullptr), ACL_ERROR_RT_FAILURE);
+    EXPECT_EQ(aclrtLaunchKernelWithHostArgs(nullptr, 1, nullptr, nullptr, nullptr, 0, nullptr, 0),
+              ACL_ERROR_RT_FAILURE);
+}
+
+// 子进程用例：符号解析成功时覆盖委托分支（g_isInAclrtFunc 置位窗口）与
+// KernelWatchEnd 的 watch 配置分支
+TEST(RuntimeHooksChild, DelegateAndWatch)
+{
+    if (getenv("MSMEMSCOPE_UT_CHILD") == nullptr)
+    {
+        GTEST_SKIP() << "仅在RunMemScopeTestChild拉起的子进程中执行";
+    }
+    g_isDlsymNullptr = false;
+    g_funcMocks["rtKernelLaunch"] = reinterpret_cast<void*>(&MockDelegatedRtKernelLaunch);
+    g_funcMocks["rtKernelLaunchWithHandleV2"] = reinterpret_cast<void*>(&MockDelegatedRtKernelLaunchWithHandleV2);
+    g_funcMocks["rtKernelLaunchWithFlagV2"] = reinterpret_cast<void*>(&MockDelegatedRtKernelLaunchWithFlagV2);
+    g_funcMocks["rtAicpuKernelLaunchExWithArgs"] =
+        reinterpret_cast<void*>(&MockDelegatedRtAicpuKernelLaunchExWithArgs);
+    g_funcMocks["rtLaunchKernelByFuncHandle"] = reinterpret_cast<void*>(&MockDelegatedRtLaunchKernelByFuncHandle);
+    g_funcMocks["rtLaunchKernelByFuncHandleV2"] =
+        reinterpret_cast<void*>(&MockDelegatedRtLaunchKernelByFuncHandleV2);
+    g_funcMocks["aclrtLaunchKernelImpl"] = reinterpret_cast<void*>(&MockAclrtLaunchKernelImpl);
+    g_funcMocks["aclrtLaunchKernelWithConfig"] = reinterpret_cast<void*>(&MockAclrtLaunchKernelWithConfig);
+    g_funcMocks["aclrtLaunchKernelV2Impl"] = reinterpret_cast<void*>(&MockAclrtLaunchKernelV2Impl);
+    g_funcMocks["aclrtLaunchKernelWithHostArgs"] = reinterpret_cast<void*>(&MockAclrtLaunchKernelWithHostArgs);
+
+    Config config{};
+    BitField<decltype(config.levelType)> levelBits(config.levelType);
+    levelBits.setBit(static_cast<size_t>(LevelType::LEVEL_OP));
+    levelBits.setBit(static_cast<size_t>(LevelType::LEVEL_KERNEL));
+    config.levelType = levelBits.getValue();
+    config.watchConfig.isWatched = true;  // 触发 KernelWatchEnd 的 watch 分支
+    ConfigManager::Instance().SetConfig(config);
+
+    RuntimeKernelLinker& linker = RuntimeKernelLinker::GetInstance();
+    linker.SetHashInfo(2026, "kernel_add");
+    linker.KernelLaunch();
+    auto key = std::make_tuple(static_cast<uint16_t>(0), static_cast<uint16_t>(1), static_cast<uint16_t>(2));
+    linker.RuntimeTaskInfoLaunch(key, 2026);
+    const std::string expectName = "0_" + std::to_string(Utility::GetTid()) + "/kernel_add";
+    EXPECT_EQ(linker.GetLastKernelName(Utility::GetTid()), expectName);
+
+    // 4个aclrt钩子内部共委托6个rt钩子（其中impl桩连续回调3个），返回值透传为ACL_SUCCESS
+    EXPECT_EQ(aclrtLaunchKernelImpl(nullptr, 1, nullptr, 0, nullptr), ACL_SUCCESS);
+    EXPECT_EQ(aclrtLaunchKernelWithConfig(nullptr, 1, nullptr, nullptr, nullptr, nullptr), ACL_SUCCESS);
+    EXPECT_EQ(aclrtLaunchKernelV2Impl(nullptr, 1, nullptr, 0, nullptr, nullptr), ACL_SUCCESS);
+    EXPECT_EQ(aclrtLaunchKernelWithHostArgs(nullptr, 1, nullptr, nullptr, nullptr, 0, nullptr, 0), ACL_SUCCESS);
+    EXPECT_EQ(g_aclrtImplCalls.load(), 1);
+    EXPECT_EQ(g_aclrtCfgCalls.load(), 1);
+    EXPECT_EQ(g_aclrtV2Calls.load(), 1);
+    EXPECT_EQ(g_aclrtHostArgsCalls.load(), 1);
+    EXPECT_EQ(g_rtDelegatedCalls.load(), 6);
+
+    // 非委托路径：g_isInAclrtFunc 为 false，执行 StartKernelEventTrace + KernelLaunch + KernelWatchEnd
+    EXPECT_EQ(rtKernelLaunch(nullptr, 1, nullptr, 0, nullptr, nullptr), RT_ERROR_NONE);
+    EXPECT_EQ(linker.GetLastKernelName(Utility::GetTid()), expectName);
+}
+
+// 父进程驱动用例：拉起隔离子进程并断言其正常退出（退出码非0说明子用例失败）
+TEST(RuntimeHooksIsolation, NullVallinaChildProcess)
+{
+    EXPECT_TRUE(RunMemScopeTestChild("RuntimeHooksChild.NullVallina"));
+}
+
+TEST(RuntimeHooksIsolation, DelegateAndWatchChildProcess)
+{
+    EXPECT_TRUE(RunMemScopeTestChild("RuntimeHooksChild.DelegateAndWatch"));
 }

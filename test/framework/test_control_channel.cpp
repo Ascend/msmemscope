@@ -30,6 +30,12 @@
 #include <set>
 #include <string>
 #include <vector>
+#include <thread>
+#include <chrono>
+#include <cerrno>
+#include <cstring>
+#include <cstdlib>
+#include <sys/time.h>
 
 #include "control_channel/control_protocol.h"
 #include "line_editor.h"
@@ -668,3 +674,135 @@ TEST_F(LineEditorScriptedTest, history_dedup_and_cap)
 }
 
 }  // namespace
+
+namespace
+{
+using namespace MemScope::ControlProtocol;
+
+constexpr int UT_RECV_TIMEOUT_MS = 20;
+constexpr int UT_WRITER_DELAY_MS = 60;
+
+std::vector<uint8_t> BuildHeader(uint8_t msgType, uint16_t flags, uint16_t seq, uint32_t payloadLen)
+{
+    std::vector<uint8_t> header(HEADER_LEN, 0);
+    header[0] = PROTO_VERSION;
+    header[1] = msgType;
+    header[2] = static_cast<uint8_t>(flags & 0xFF);
+    header[3] = static_cast<uint8_t>((flags >> 8) & 0xFF);
+    header[4] = static_cast<uint8_t>(seq & 0xFF);
+    header[5] = static_cast<uint8_t>((seq >> 8) & 0xFF);
+    for (size_t i = 0; i < 4; ++i) {
+        header[6 + i] = static_cast<uint8_t>((payloadLen >> (8 * i)) & 0xFF);
+    }
+    return header;
+}
+
+bool SetRecvTimeout(int fd, int timeoutMs)
+{
+    struct timeval tv;
+    tv.tv_sec = timeoutMs / 1000;
+    tv.tv_usec = (timeoutMs % 1000) * 1000;
+    return setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv)) == 0;
+}
+
+void RawSendAll(int fd, const std::vector<uint8_t>& data)
+{
+    size_t sent = 0;
+    while (sent < data.size()) {
+        ssize_t n = ::send(fd, data.data() + sent, data.size() - sent, MSG_NOSIGNAL);
+        if (n > 0) {
+            sent += static_cast<size_t>(n);
+        } else if (n < 0 && errno == EINTR) {
+            continue;
+        } else {
+            break;
+        }
+    }
+}
+}  // namespace
+
+// 接收超时先返回EAGAIN，随后数据到达：ReadFrame头部循环应continue后继续读取
+TEST(ControlProtocolTest, read_frame_header_eagain_then_success)
+{
+    int fds[2];
+    ASSERT_EQ(socketpair(AF_UNIX, SOCK_STREAM, 0, fds), 0);
+    ASSERT_TRUE(SetRecvTimeout(fds[1], UT_RECV_TIMEOUT_MS));
+
+    std::thread writer([&fds]() {
+        std::this_thread::sleep_for(std::chrono::milliseconds(UT_WRITER_DELAY_MS));
+        std::string err;
+        (void)SendFrame(fds[0], MSG_REGISTER, 0, 7, "", err);
+    });
+
+    std::vector<uint8_t> payload;
+    uint16_t seq = 0;
+    uint8_t msgType = 0;
+    uint16_t flags = 0;
+    std::string error;
+    bool ok = ReadFrame(fds[1], payload, seq, msgType, flags, error);
+    writer.join();
+
+    EXPECT_TRUE(ok) << error;
+    EXPECT_TRUE(error.empty());
+    EXPECT_EQ(msgType, MSG_REGISTER);
+    EXPECT_EQ(seq, 7);
+    EXPECT_EQ(flags, 0);
+    EXPECT_TRUE(payload.empty());
+
+    close(fds[0]);
+    close(fds[1]);
+}
+
+// 头部已到、payload延迟到达：payload循环应continue后继续读取
+TEST(ControlProtocolTest, read_frame_payload_eagain_then_success)
+{
+    int fds[2];
+    ASSERT_EQ(socketpair(AF_UNIX, SOCK_STREAM, 0, fds), 0);
+    ASSERT_TRUE(SetRecvTimeout(fds[1], UT_RECV_TIMEOUT_MS));
+
+    const std::vector<uint8_t> header = BuildHeader(MSG_CONTROL, 0, 0x22, 4);
+    const std::vector<uint8_t> body = {'A', 'B', 'C', 'D'};
+    std::thread writer([&fds, &header, &body]() {
+        RawSendAll(fds[0], header);
+        std::this_thread::sleep_for(std::chrono::milliseconds(UT_WRITER_DELAY_MS));
+        RawSendAll(fds[0], body);
+    });
+
+    std::vector<uint8_t> payload;
+    uint16_t seq = 0;
+    uint8_t msgType = 0;
+    uint16_t flags = 0;
+    std::string error;
+    bool ok = ReadFrame(fds[1], payload, seq, msgType, flags, error);
+    writer.join();
+
+    EXPECT_TRUE(ok) << error;
+    EXPECT_EQ(msgType, MSG_CONTROL);
+    EXPECT_EQ(seq, 0x22);
+    ASSERT_EQ(payload.size(), body.size());
+    EXPECT_EQ(std::string(payload.begin(), payload.end()), "ABCD");
+
+    close(fds[0]);
+    close(fds[1]);
+}
+
+// 头部完整但payload中途对端关闭：ReadFrame报peer closed并返回false
+TEST(ControlProtocolTest, read_frame_peer_closed_mid_payload)
+{
+    int fds[2];
+    ASSERT_EQ(socketpair(AF_UNIX, SOCK_STREAM, 0, fds), 0);
+
+    const std::vector<uint8_t> header = BuildHeader(MSG_CONTROL, 0, 1, 4);
+    RawSendAll(fds[0], header);
+    close(fds[0]);
+
+    std::vector<uint8_t> payload;
+    uint16_t seq = 0;
+    uint8_t msgType = 0;
+    uint16_t flags = 0;
+    std::string error;
+    EXPECT_FALSE(ReadFrame(fds[1], payload, seq, msgType, flags, error));
+    EXPECT_EQ(error, "peer closed");
+
+    close(fds[1]);
+}

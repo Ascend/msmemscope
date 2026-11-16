@@ -29,12 +29,16 @@
 #include <gtest/gtest.h>
 #include <gtest/internal/gtest-port.h>
 
+#include <algorithm>
+#include <cerrno>
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
+#include <iomanip>
 #include <iostream>
 #include <sstream>
 #include <string>
+#include <sys/stat.h>
 #include <unistd.h>
 #include <vector>
 
@@ -188,6 +192,10 @@ struct FakeSvcData
 
 FakeSvcData g_fakeSvcData;
 
+// 用例钩子:非0时在中间快照回调尾部派发该pid的STAGE_END——模拟"快照交付期间
+// 窗口被关闭"的竞态,覆盖QueryInterimOverview复检不通过分支。正常用例保持0
+uint64_t g_closeWindowDuringInterim = 0;
+
 void FakeSvcSetEnabled(int)
 {
 }
@@ -317,6 +325,11 @@ void FakeSvcDumpInterimSnapshot(void (*emitStack)(void* ctx, uint64_t stackId, u
             emitSeries(ctx, s.stackId, s.beat, s.liveBytes, s.liveCount, s.flags);
         }
     }
+    // 用例钩子(见g_closeWindowDuringInterim):在快照交付尾部关闭窗口
+    if (g_closeWindowDuringInterim != 0)
+    {
+        Dispatch(CreateStageEnd(g_closeWindowDuringInterim, 1, 200));
+    }
 }
 
 const MsmemscopeHostmemSvc g_fakeSvc = {FakeSvcSetEnabled,      FakeSvcGetStats,     FakeSvcDumpLiveBlocks,
@@ -344,6 +357,7 @@ class HostLeakAnalyzerTest : public ::testing::Test
         // 注入假svc表:闭窗拉取的全部快照数据来自g_fakeSvcData(测试进程无钩子so)
         FakeReport().SetHostMemSvcForTest(&g_fakeSvc);
         ResetFakeSvcData();
+        g_closeWindowDuringInterim = 0;  // 竞态钩子按用例启用,默认关闭
         // 清理单例跨用例残留状态
         HostLeakAnalyzer::GetInstance().windows_.clear();
     }
@@ -1287,3 +1301,819 @@ TEST_F(HostLeakAnalyzerTest, file_generation_prints_to_stdout)
     EXPECT_TRUE(FileExists(REPORT_DIR + "/block_detail_10.csv"));
     RemoveReportFiles(REPORT_DIR, "10");
 }
+
+// ===========================================================================
+// 覆盖率补强用例(解析容错/退化渲染/异常写盘/析构兜底/中间概览未覆盖分支)
+// 分析器为进程内单例:用例内各自构造所需状态,结束后清理环境变量、特殊目录与
+// 报告文件(SetUp/TearDown兜底),不依赖其他用例的执行次序
+// ===========================================================================
+
+namespace
+{
+// 建单层目录(已存在视为成功);调用方需保证父目录已存在
+bool EnsureDir(const std::string& path)
+{
+    if (mkdir(path.c_str(), 0755) != 0 && errno != EEXIST)
+    {
+        return false;
+    }
+    struct stat st;
+    return stat(path.c_str(), &st) == 0 && S_ISDIR(st.st_mode);
+}
+
+// 最小可出报告的窗口状态(白盒直调WriteWindowReport):一个候选栈行+一个大小桶。
+// statsAvailable=false时健康度章节走Snapshot unavailable,不影响总泄漏量章节
+HostLeakAnalyzer::WindowState MakeMinimalWindow(uint64_t stageId, uint64_t startTs, uint64_t endTs)
+{
+    HostLeakAnalyzer::WindowState ws;
+    ws.stageId = stageId;
+    ws.startTs = startTs;
+    ws.endTs = endTs;
+    HostLeakAnalyzer::StackRow row;
+    row.stackId = 5;
+    row.allocCount = 1;
+    row.allocBytes = 100;
+    row.unfreedCount = 1;
+    row.unfreedBytes = 100;
+    row.maxBlockSize = 100;
+    row.maxAllocTsNs = endTs > 0 ? endTs - 1 : 0;
+    row.frameDesc = "minimal\n";
+    ws.stacks.push_back(row);
+    HostLeakAnalyzer::SizeBucket bucket;
+    bucket.rangeLow = 0;
+    bucket.rangeHigh = 256;
+    bucket.blockCount = 1;
+    bucket.blockBytes = 100;
+    ws.buckets.push_back(bucket);
+    return ws;
+}
+
+// 大小排布行精确文本(与WriteWindowReport/RenderInterimOverview同版式:
+// 范围左对齐16宽,计数/字节右对齐10/12宽)
+std::string SizeDistRow(const std::string& range, uint64_t count, uint64_t bytes)
+{
+    std::ostringstream row;
+    row << std::left << std::setw(16) << range << std::right << std::setw(10) << count << std::setw(12) << bytes;
+    return row.str();
+}
+}  // namespace
+
+// COV-H1: 非法事件输入——空事件/非SYSTEM事件/SYSTEM非STAGE子类型直接返回不建窗;
+// STAGE_START的stageId文本解析失败(std::stoull抛异常)按0处理,窗口照常开启
+TEST_F(HostLeakAnalyzerTest, ignored_events_and_malformed_stage_name)
+{
+    const uint64_t pid = 1234;
+    auto& analyzer = HostLeakAnalyzer::GetInstance();
+
+    std::shared_ptr<EventBase> nullEvent;
+    analyzer.EventHandle(nullEvent, nullptr);
+
+    auto memEvent = std::make_shared<MemoryEvent>();
+    memEvent->eventType = EventBaseType::MALLOC;
+    std::shared_ptr<EventBase> memBase = memEvent;
+    analyzer.EventHandle(memBase, nullptr);
+
+    auto traceEvent = std::make_shared<SystemEvent>();
+    traceEvent->eventType = EventBaseType::SYSTEM;
+    traceEvent->eventSubType = EventSubType::TRACE_START;
+    std::shared_ptr<EventBase> traceBase = traceEvent;
+    analyzer.EventHandle(traceBase, nullptr);
+    EXPECT_TRUE(analyzer.windows_.empty());
+
+    auto start = CreateStageStart(pid, 1, 100);
+    start->name = "not-a-number";
+    Dispatch(start);
+    ASSERT_EQ(analyzer.windows_.size(), 1u);
+    EXPECT_EQ(analyzer.windows_.at(pid).stageId, 0u);
+    EXPECT_TRUE(analyzer.windows_.at(pid).open);
+    // 收尾:空窗口闭窗不出报告(by stageId=0)
+    Dispatch(CreateStageEnd(pid, 0, 200));
+    EXPECT_FALSE(analyzer.windows_.at(pid).open);
+}
+
+// COV-H2: 环境变量解析容错——非数字(std::stoull异常)与"0"均回落默认值
+// (TOP N=10、键深K=20),报告头部按默认值渲染
+TEST_F(HostLeakAnalyzerTest, env_parse_failure_and_zero_use_defaults)
+{
+    const uint64_t pid = 1234;
+    setenv("MSMEMSCOPE_HOSTMEM_TOP_N", "not-a-number", 1);
+    setenv("MSMEMSCOPE_HOSTMEM_STACK_KEY_FRAMES", "not-a-number", 1);
+    g_fakeSvcData.stats.totalAllocCount = 1;
+    g_fakeSvcData.stats.totalAllocBytes = 100;
+    FakeStackRow stack5;
+    stack5.stackId = 5;
+    stack5.allocCount = 1;
+    stack5.allocBytes = 100;
+    stack5.unfreedCount = 1;
+    stack5.unfreedBytes = 100;
+    stack5.maxBlockSize = 100;
+    stack5.frameDesc = "f\n";
+    g_fakeSvcData.stacks.push_back(stack5);
+    g_fakeSvcData.buckets.push_back(FakeBucket{0, 256, 1, 100});
+    Dispatch(CreateStageStart(pid, 1, 100));
+    Dispatch(CreateStageEnd(pid, 1, 200));
+    std::string text = ReadAllText(REPORT_DIR + "/leak_overview_1.txt");
+    EXPECT_NE(text.find("--- TOP 10 Leak Sites (by LSI desc) ---"), std::string::npos);
+    EXPECT_NE(text.find("key depth K=20"), std::string::npos);
+
+    // "0"视为未配置,同走默认值
+    setenv("MSMEMSCOPE_HOSTMEM_TOP_N", "0", 1);
+    unsetenv("MSMEMSCOPE_HOSTMEM_STACK_KEY_FRAMES");
+    Dispatch(CreateStageStart(pid, 2, 300));
+    Dispatch(CreateStageEnd(pid, 2, 400));
+    text = ReadAllText(REPORT_DIR + "/leak_overview_2.txt");
+    EXPECT_NE(text.find("--- TOP 10 Leak Sites (by LSI desc) ---"), std::string::npos);
+    EXPECT_NE(text.find("key depth K=20"), std::string::npos);
+    unsetenv("MSMEMSCOPE_HOSTMEM_TOP_N");
+    RemoveReportFiles(REPORT_DIR, "1");
+    RemoveReportFiles(REPORT_DIR, "2");
+}
+
+// COV-H3: 析构兜底形态的报告——endTs=0(结束时刻未知)+atExit=true:Window行
+// 标注进程退出前未闭窗/快照不完整,另出"闭窗未发生"Note,开窗前free小节标注
+// 快照不可得(不猜零值)
+TEST_F(HostLeakAnalyzerTest, at_exit_report_marks_window_unknown_and_incomplete)
+{
+    const uint64_t pid = 1234;
+    HostLeakAnalyzer::WindowState ws;
+    ws.stageId = 3;
+    ws.startTs = 100;
+    ws.endTs = 0;
+    ws.statsAvailable = true;
+    ws.stats.totalAllocCount = 1;
+    ws.stats.totalAllocBytes = 64;
+
+    HostLeakAnalyzer::GetInstance().WriteWindowReport(pid, ws, true);
+    const std::string text = ReadAllText(REPORT_DIR + "/leak_overview_3.txt");
+    EXPECT_NE(text.find("Window: 100 -> unknown (process exit before window closed; snapshot incomplete)"),
+              std::string::npos);
+    EXPECT_NE(text.find("Note: window closed at process exit without snapshot; unfreed details unavailable"),
+              std::string::npos);
+    EXPECT_NE(text.find("(snapshot unavailable)"), std::string::npos);
+    RemoveReportFiles(REPORT_DIR, "3");
+}
+
+// COV-H4: 析构兜底报告(白盒构造独立分析器实例)——仅残留open窗口出退化报告,
+// 已闭窗口跳过;析构退订了同一SubscriberId,本用例负责恢复单例订阅并验证
+// 事件状态机仍可用
+TEST_F(HostLeakAnalyzerTest, destructor_fallback_reports_open_window_only)
+{
+    g_fakeSvcData.stats.totalAllocCount = 2;
+    g_fakeSvcData.stats.totalAllocBytes = 200;
+    {
+        HostLeakAnalyzer probe;
+        HostLeakAnalyzer::WindowState openWs;
+        openWs.open = true;
+        openWs.stageId = 4;
+        openWs.startTs = 100;
+        probe.windows_[100] = openWs;
+        HostLeakAnalyzer::WindowState closedWs;
+        closedWs.open = false;
+        closedWs.stageId = 5;
+        closedWs.startTs = 50;
+        closedWs.endTs = 60;
+        HostLeakAnalyzer::SizeBucket bucket;
+        bucket.rangeLow = 0;
+        bucket.rangeHigh = 256;
+        bucket.blockCount = 1;
+        bucket.blockBytes = 64;
+        closedWs.buckets.push_back(bucket);
+        probe.windows_[200] = closedWs;
+    }
+    // probe析构已按SubscriberId退订(同一id即单例订阅),恢复单例订阅
+    HostLeakAnalyzer::GetInstance().Subscribe();
+
+    EXPECT_TRUE(FileExists(REPORT_DIR + "/leak_overview_4.txt"));
+    EXPECT_FALSE(FileExists(REPORT_DIR + "/leak_overview_5.txt")) << "closed window must be skipped by fallback";
+    const std::string text = ReadAllText(REPORT_DIR + "/leak_overview_4.txt");
+    EXPECT_NE(text.find("Window: 100 -> unknown (process exit before window closed; snapshot incomplete)"),
+              std::string::npos);
+    // 订阅已恢复:单例仍能驱动STAGE状态机
+    Dispatch(CreateStageStart(777, 6, 100));
+    EXPECT_TRUE(HostLeakAnalyzer::GetInstance().windows_.at(777).open);
+    Dispatch(CreateStageEnd(777, 6, 200));
+    EXPECT_FALSE(HostLeakAnalyzer::GetInstance().windows_.at(777).open);
+    RemoveReportFiles(REPORT_DIR, "4");
+}
+
+// COV-H5: 报告目录建链失败(MakeDir=false,工程目录被同名普通文件占位)——
+// 写报告前中止:概览/明细/生成三行打屏均不出现,也无任何文件产出
+TEST_F(HostLeakAnalyzerTest, report_mkdir_failure_aborts_without_file)
+{
+    const std::string blockedDir = "./testmsmemscope_blocked_ut_" + std::to_string(static_cast<long long>(getpid()));
+    rmdir(blockedDir.c_str());  // 清理上次异常退出可能残留的目录
+    {
+        std::ofstream blocker(blockedDir);
+        ASSERT_TRUE(blocker.is_open());
+        blocker << "blocked";
+    }
+    Utility::FileCreateManager::GetInstance(blockedDir).SetProjectDir(blockedDir);
+    HostLeakAnalyzer::WindowState ws = MakeMinimalWindow(1, 100, 200);
+    std::ostringstream captured;
+    std::streambuf* oldBuf = std::cout.rdbuf(captured.rdbuf());
+    HostLeakAnalyzer::GetInstance().WriteWindowReport(1234, ws, false);
+    std::cout.rdbuf(oldBuf);
+    Utility::FileCreateManager::GetInstance(blockedDir).SetProjectDir("./testmsmemscope");
+
+    EXPECT_EQ(captured.str().find("Host leak overview report created"), std::string::npos);
+    EXPECT_EQ(captured.str().find("Host leak block detail report created"), std::string::npos);
+    EXPECT_EQ(captured.str().find("Host leak report generated"), std::string::npos);
+    EXPECT_FALSE(FileExists(blockedDir + "/host_leak/leak_overview_1.txt"));
+    std::remove(blockedDir.c_str());
+}
+
+// COV-H6: 概览文件打开失败(报告文件路径被同名目录占位)——直接返回:
+// 不打"created"/"generated",也不继续写CSV
+TEST_F(HostLeakAnalyzerTest, overview_open_failure_aborts_report)
+{
+    ASSERT_TRUE(EnsureDir("./testmsmemscope"));
+    ASSERT_TRUE(EnsureDir(REPORT_DIR));
+    const std::string overviewPath = REPORT_DIR + "/leak_overview_1.txt";
+    std::remove(overviewPath.c_str());
+    ASSERT_TRUE(EnsureDir(overviewPath));
+    HostLeakAnalyzer::WindowState ws = MakeMinimalWindow(1, 100, 200);
+    std::ostringstream captured;
+    std::streambuf* oldBuf = std::cout.rdbuf(captured.rdbuf());
+    HostLeakAnalyzer::GetInstance().WriteWindowReport(1234, ws, false);
+    std::cout.rdbuf(oldBuf);
+
+    EXPECT_EQ(captured.str().find("Host leak overview report created"), std::string::npos);
+    EXPECT_EQ(captured.str().find("Host leak report generated"), std::string::npos);
+    EXPECT_EQ(rmdir(overviewPath.c_str()), 0);
+}
+
+// COV-H7: 概览写盘失败(报告文件指向/dev/full)——打开成功(created打屏),
+// flush失败仅落告警不中断后续流程(generated仍打屏)
+TEST_F(HostLeakAnalyzerTest, overview_write_failure_keeps_generation)
+{
+    if (access("/dev/full", W_OK) != 0)
+    {
+        GTEST_SKIP() << "/dev/full not writable in current environment";
+    }
+    ASSERT_TRUE(EnsureDir("./testmsmemscope"));
+    ASSERT_TRUE(EnsureDir(REPORT_DIR));
+    const std::string overviewPath = REPORT_DIR + "/leak_overview_1.txt";
+    rmdir(overviewPath.c_str());  // 清掉上次异常残留(目录/文件/链接)
+    std::remove(overviewPath.c_str());
+    ASSERT_EQ(symlink("/dev/full", overviewPath.c_str()), 0);
+    HostLeakAnalyzer::WindowState ws = MakeMinimalWindow(1, 100, 200);
+    std::ostringstream captured;
+    std::streambuf* oldBuf = std::cout.rdbuf(captured.rdbuf());
+    HostLeakAnalyzer::GetInstance().WriteWindowReport(1234, ws, false);
+    std::cout.rdbuf(oldBuf);
+
+    EXPECT_NE(captured.str().find("Host leak overview report created"), std::string::npos);
+    EXPECT_NE(captured.str().find("Host leak report generated"), std::string::npos);
+    EXPECT_EQ(std::remove(overviewPath.c_str()), 0);
+}
+
+// COV-H8: 明细CSV打开失败(CSV路径被同名目录占位)——概览正常产出的同时
+// 静默跳过明细(无明细created打屏),generated仍打屏
+TEST_F(HostLeakAnalyzerTest, detail_open_failure_skips_csv)
+{
+    ASSERT_TRUE(EnsureDir("./testmsmemscope"));
+    ASSERT_TRUE(EnsureDir(REPORT_DIR));
+    const std::string detailPath = REPORT_DIR + "/block_detail_1.csv";
+    std::remove(detailPath.c_str());
+    ASSERT_TRUE(EnsureDir(detailPath));
+    HostLeakAnalyzer::WindowState ws = MakeMinimalWindow(1, 100, 200);
+    HostLeakAnalyzer::LiveBlock block;
+    block.addr = 0x1000;
+    block.size = 100;
+    block.allocTs = 150;
+    block.stackId = 5;
+    ws.blocks.push_back(block);
+    std::ostringstream captured;
+    std::streambuf* oldBuf = std::cout.rdbuf(captured.rdbuf());
+    HostLeakAnalyzer::GetInstance().WriteWindowReport(1234, ws, false);
+    std::cout.rdbuf(oldBuf);
+
+    EXPECT_NE(captured.str().find("Host leak overview report created"), std::string::npos);
+    EXPECT_EQ(captured.str().find("Host leak block detail report created"), std::string::npos);
+    EXPECT_NE(captured.str().find("Host leak report generated"), std::string::npos);
+    EXPECT_EQ(rmdir(detailPath.c_str()), 0);
+    RemoveReportFiles(REPORT_DIR, "1");
+}
+
+// COV-H9: 明细CSV写盘失败(CSV指向/dev/full)——打开与打屏成功,写失败只落
+// 告警,概览生成流程走完
+TEST_F(HostLeakAnalyzerTest, detail_write_failure_keeps_generation)
+{
+    if (access("/dev/full", W_OK) != 0)
+    {
+        GTEST_SKIP() << "/dev/full not writable in current environment";
+    }
+    ASSERT_TRUE(EnsureDir("./testmsmemscope"));
+    ASSERT_TRUE(EnsureDir(REPORT_DIR));
+    const std::string detailPath = REPORT_DIR + "/block_detail_1.csv";
+    rmdir(detailPath.c_str());  // 清掉上次异常残留(目录/文件/链接)
+    std::remove(detailPath.c_str());
+    ASSERT_EQ(symlink("/dev/full", detailPath.c_str()), 0);
+    HostLeakAnalyzer::WindowState ws = MakeMinimalWindow(1, 100, 200);
+    HostLeakAnalyzer::LiveBlock block;
+    block.addr = 0x1000;
+    block.size = 100;
+    block.allocTs = 150;
+    block.stackId = 5;
+    ws.blocks.push_back(block);
+    std::ostringstream captured;
+    std::streambuf* oldBuf = std::cout.rdbuf(captured.rdbuf());
+    HostLeakAnalyzer::GetInstance().WriteWindowReport(1234, ws, false);
+    std::cout.rdbuf(oldBuf);
+
+    EXPECT_NE(captured.str().find("Host leak overview report created"), std::string::npos);
+    EXPECT_NE(captured.str().find("Host leak block detail report created"), std::string::npos);
+    EXPECT_NE(captured.str().find("Host leak report generated"), std::string::npos);
+    EXPECT_EQ(std::remove(detailPath.c_str()), 0);
+    RemoveReportFiles(REPORT_DIR, "1");
+}
+
+// COV-H10: CSV的1MB堆缓冲攒行+整块write——4万条明细(单行无内嵌换行)足以
+// 触发中途整块刷写:行数=块数+表头,首行为地址升序的小地址块
+TEST_F(HostLeakAnalyzerTest, csv_buffer_flush_spans_multiple_writes)
+{
+    const uint64_t pid = 1234;
+    const size_t blockCount = 40000;
+    g_fakeSvcData.stats.totalAllocCount = blockCount;
+    g_fakeSvcData.stats.totalAllocBytes = blockCount * 100;
+    FakeStackRow stack1;
+    stack1.stackId = 1;
+    stack1.allocCount = blockCount;
+    stack1.allocBytes = blockCount * 100;
+    stack1.unfreedCount = blockCount;
+    stack1.unfreedBytes = blockCount * 100;
+    stack1.maxBlockSize = 100;
+    stack1.frameDesc = "frame";  // 无换行:CSV行数=块数+表头
+    g_fakeSvcData.stacks.push_back(stack1);
+    g_fakeSvcData.buckets.push_back(FakeBucket{0, 256, blockCount, blockCount * 100});
+    for (size_t i = 0; i < blockCount; ++i)
+    {
+        g_fakeSvcData.blocks.push_back(FakeBlock{0x1000 + i, 100, 1000 + i, 1});
+    }
+    Dispatch(CreateStageStart(pid, 1, 100));
+    Dispatch(CreateStageEnd(pid, 1, 200));
+
+    const std::string csv = ReadAllText(REPORT_DIR + "/block_detail_1.csv");
+    EXPECT_GT(csv.size(), static_cast<size_t>(1u << 20)) << "csv must exceed the 1MB write buffer";
+    EXPECT_EQ(static_cast<size_t>(std::count(csv.begin(), csv.end(), '\n')), blockCount + 1);
+    EXPECT_NE(csv.find("0x0000000000001000,100,1000,\"frame\",\"\""), std::string::npos);
+    RemoveReportFiles(REPORT_DIR, "1");
+}
+
+// COV-H11: 栈快照缺失、仅逐块明细的退化场景——TOP候选行由块明细按stackId
+// 聚合回推(未释放量/块数/最大块),唯一栈数同样由合成行回推
+TEST_F(HostLeakAnalyzerTest, synthesized_rows_from_block_only_snapshot)
+{
+    const uint64_t pid = 1234;
+    g_fakeSvcData.stats.totalAllocCount = 3;
+    g_fakeSvcData.stats.totalAllocBytes = 600;
+    g_fakeSvcData.blocks.push_back(FakeBlock{0x1000, 100, 1100, 3});
+    g_fakeSvcData.blocks.push_back(FakeBlock{0x2000, 300, 1200, 3});
+    g_fakeSvcData.blocks.push_back(FakeBlock{0x3000, 200, 1300, 4});
+    Dispatch(CreateStageStart(pid, 1, 100));
+    Dispatch(CreateStageEnd(pid, 1, 200));
+
+    const auto& ws = HostLeakAnalyzer::GetInstance().windows_.at(pid);
+    EXPECT_TRUE(ws.stacks.empty());
+    ASSERT_EQ(ws.blocks.size(), 3u);
+
+    const std::string text = ReadAllText(REPORT_DIR + "/leak_overview_1.txt");
+    // 唯一栈数:栈表缺失时由逐块明细回推(2个stackId)
+    EXPECT_NE(text.find("Distinct stacks: 2 (key depth K=20, category semantics)"), std::string::npos);
+    // 总泄漏量:桶缺失时以块明细回推
+    EXPECT_NE(text.find("Total unfreed: 600 bytes in 3 blocks (avg 200B, max 300B)"), std::string::npos);
+    // 合成行按stackId聚合:stack3两块400B、stack4一块200B
+    EXPECT_NE(text.find("unfreed 400B(2 blocks)"), std::string::npos);
+    EXPECT_NE(text.find("stack 0x3"), std::string::npos);
+    EXPECT_NE(text.find("stack 0x4"), std::string::npos);
+    EXPECT_TRUE(FileExists(REPORT_DIR + "/block_detail_1.csv"));
+    RemoveReportFiles(REPORT_DIR, "1");
+}
+
+// COV-H12: 溢出通道与开窗前free标注——溢出转出/逆向修正、开窗前free统计行,
+// 以及开窗前free大小排布的行渲染(含范围文本与列宽)
+TEST_F(HostLeakAnalyzerTest, overflow_and_prewindow_distribution_rows)
+{
+    const uint64_t pid = 1234;
+    g_fakeSvcData.stats.totalAllocCount = 1;
+    g_fakeSvcData.stats.totalAllocBytes = 1000;
+    g_fakeSvcData.stats.overflowAllocCount = 5;
+    g_fakeSvcData.stats.overflowAllocBytes = 500;
+    g_fakeSvcData.stats.overflowFreedCount = 2;
+    g_fakeSvcData.stats.overflowFreedBytes = 200;
+    g_fakeSvcData.stats.preWindowFreeCount = 2;
+    g_fakeSvcData.stats.preWindowFreeBytes = 128;
+    g_fakeSvcData.stats.sampleRate = 1;
+    FakeStackRow stack5;
+    stack5.stackId = 5;
+    stack5.allocCount = 1;
+    stack5.allocBytes = 1000;
+    stack5.unfreedCount = 1;
+    stack5.unfreedBytes = 100;
+    stack5.maxBlockSize = 100;
+    stack5.frameDesc = "f\n";
+    g_fakeSvcData.stacks.push_back(stack5);
+    g_fakeSvcData.buckets.push_back(FakeBucket{0, 256, 1, 100});
+    g_fakeSvcData.preWindowBuckets.push_back(FakeBucket{64, 128, 2, 128});
+    Dispatch(CreateStageStart(pid, 1, 100));
+    Dispatch(CreateStageEnd(pid, 1, 200));
+
+    const std::string text = ReadAllText(REPORT_DIR + "/leak_overview_1.txt");
+    EXPECT_NE(text.find("Overflow channel: 5 allocations / 500B diverted; 2 freed / 200B (reverse-corrected)"),
+              std::string::npos);
+    EXPECT_NE(text.find("Pre-window frees: 2 / 128B (allocated before window, not in ledger)"), std::string::npos);
+    EXPECT_NE(text.find("--- Pre-Window Free Size Distribution ---"), std::string::npos);
+    EXPECT_NE(text.find(SizeDistRow("[64, 128)", 2, 128)), std::string::npos);
+    EXPECT_EQ(text.find("(no pre-window frees)"), std::string::npos) << "non-empty buckets must render rows";
+    RemoveReportFiles(REPORT_DIR, "1");
+}
+
+// COV-H13: 无候选栈占位行+序列拍数兜底——序列锚点缺失(seriesStartTsNs=0)时
+// 拍数按已交付序列最大拍号回推;栈表无未释放行时TOP N节输出占位行
+TEST_F(HostLeakAnalyzerTest, top_placeholder_with_series_beat_fallback)
+{
+    const uint64_t pid = 1234;
+    g_fakeSvcData.stats.totalAllocCount = 0;
+    g_fakeSvcData.stats.totalAllocBytes = 0;
+    g_fakeSvcData.series.push_back(FakeSeriesRow{9, 0, 10, 1, 0});
+    g_fakeSvcData.series.push_back(FakeSeriesRow{9, 3, 20, 1, 0});
+    g_fakeSvcData.series.push_back(FakeSeriesRow{9, 7, 30, 1, 0});
+    g_fakeSvcData.buckets.push_back(FakeBucket{0, 256, 0, 0});
+    Dispatch(CreateStageStart(pid, 1, 100));
+    Dispatch(CreateStageEnd(pid, 1, 200));
+
+    const std::string text = ReadAllText(REPORT_DIR + "/leak_overview_1.txt");
+    EXPECT_NE(text.find("Series: top-k=256, max-stacks=1024, beats=8(0s, 1s/beat)"), std::string::npos);
+    EXPECT_NE(text.find("(no unfreed blocks in this window)"), std::string::npos);
+    EXPECT_NE(text.find("Total unfreed: 0 bytes in 0 blocks (avg 0B, max 0B)"), std::string::npos);
+    RemoveReportFiles(REPORT_DIR, "1");
+}
+
+// COV-H14: 负增长斜率——每拍-1000B的回归结果走FormatSizeAbbrev负号分支,
+// growth行渲染"-1000B/beat"(同时验证参与回归拍数pts)
+TEST_F(HostLeakAnalyzerTest, negative_growth_rate_sign_format)
+{
+    const uint64_t pid = 1234;
+    const uint64_t ns = 1000000000ULL;
+    g_fakeSvcData.stats.totalAllocCount = 21;
+    g_fakeSvcData.stats.totalAllocBytes = 20000;
+    g_fakeSvcData.stats.seriesStartTsNs = 100 * ns;
+    g_fakeSvcData.stats.seriesBeatIntervalNs = ns;
+    FakeStackRow stack5;
+    stack5.stackId = 5;
+    stack5.allocCount = 21;
+    stack5.allocBytes = 20000;
+    stack5.freedCount = 20;
+    stack5.freedBytes = 10000;
+    stack5.unfreedCount = 1;
+    stack5.unfreedBytes = 10000;
+    stack5.maxBlockSize = 10000;
+    stack5.maxAllocTsNs = 199 * ns;
+    stack5.freedLifetimeSumNs = 20 * ns;
+    stack5.liveAgeSumNs = 10 * ns;
+    stack5.frameDesc = "dec\n";
+    g_fakeSvcData.stacks.push_back(stack5);
+    for (uint32_t b = 0; b <= 20; ++b)
+    {
+        // 每拍-1000B:回归斜率-1000B/beat(负值走FormatSizeAbbrev符号分支)
+        g_fakeSvcData.series.push_back(FakeSeriesRow{5, b, 100000 - 1000ULL * b, 1, 0});
+    }
+    g_fakeSvcData.buckets.push_back(FakeBucket{8192, 16384, 1, 10000});
+    Dispatch(CreateStageStart(pid, 1, 100 * ns));
+    Dispatch(CreateStageEnd(pid, 1, 200 * ns));
+
+    const std::string text = ReadAllText(REPORT_DIR + "/leak_overview_1.txt");
+    EXPECT_NE(text.find("growth -1000B/beat  pts 16  degraded -  stack 0x5"), std::string::npos);
+    RemoveReportFiles(REPORT_DIR, "1");
+}
+
+// COV-H15: 周转形态——unfreed/alloc≤0.3(占比判据满足)但尾部仍以100B/beat上涨
+// (cond5不满足)→疑似榜状态追加/turnover后缀
+TEST_F(HostLeakAnalyzerTest, turnover_mark_suffix_in_suspect_row)
+{
+    const uint64_t pid = 1234;
+    const uint64_t ns = 1000000000ULL;
+    g_fakeSvcData.stats.totalAllocCount = 100;
+    g_fakeSvcData.stats.totalAllocBytes = 100000;
+    g_fakeSvcData.stats.seriesStartTsNs = 100 * ns;
+    g_fakeSvcData.stats.seriesBeatIntervalNs = ns;
+    FakeStackRow stack5;
+    stack5.stackId = 5;
+    stack5.allocCount = 100;
+    stack5.allocBytes = 100000;
+    stack5.unfreedCount = 1;
+    stack5.unfreedBytes = 10000;  // unfreed/alloc=0.1≤0.3(占比判据满足)
+    stack5.maxBlockSize = 10000;
+    stack5.maxAllocTsNs = 199 * ns;  // 窗口尾部:early条件(2)不满足
+    stack5.frameDesc = "buf\n";
+    g_fakeSvcData.stacks.push_back(stack5);
+    for (uint32_t b = 0; b <= 20; ++b)
+    {
+        // 全窗缓涨(β=100B/beat>0.05):尾部仍在涨→cond5不满足→turnoverMark
+        g_fakeSvcData.series.push_back(FakeSeriesRow{5, b, 1000 + 100ULL * b, 1, 0});
+    }
+    g_fakeSvcData.buckets.push_back(FakeBucket{8192, 16384, 1, 10000});
+    Dispatch(CreateStageStart(pid, 1, 100 * ns));
+    Dispatch(CreateStageEnd(pid, 1, 200 * ns));
+
+    const std::string text = ReadAllText(REPORT_DIR + "/leak_overview_1.txt");
+    EXPECT_NE(text.find("1. [growth_watch/turnover]"), std::string::npos);
+    EXPECT_NE(text.find("degraded -"), std::string::npos);
+    RemoveReportFiles(REPORT_DIR, "1");
+}
+
+// COV-H16: 中间概览两阶段锁的边界——(a)仅存在已闭窗口:扫描跳过(continue)后
+// 按无活动窗口返回;(b)快照交付期间STAGE_END闭窗:复检不通过,不渲染过期快照
+TEST_F(HostLeakAnalyzerTest, interim_query_skips_closed_window_and_recheck_race)
+{
+    const uint64_t pid = 1234;
+    auto& analyzer = HostLeakAnalyzer::GetInstance();
+    // (a)窗口表只有已闭窗口
+    HostLeakAnalyzer::WindowState closed;
+    closed.open = false;
+    closed.stageId = 1;
+    closed.startTs = 10;
+    closed.endTs = 20;
+    analyzer.windows_[pid] = closed;
+    std::string text;
+    EXPECT_FALSE(analyzer.QueryInterimOverview(text));
+    EXPECT_EQ(text, "no active window");
+
+    // (b)中间快照回调内闭窗:复检失败按无活动窗口处理
+    analyzer.windows_.clear();
+    Dispatch(CreateStageStart(pid, 1, 100));
+    g_closeWindowDuringInterim = pid;
+    const bool rendered = analyzer.QueryInterimOverview(text);
+    g_closeWindowDuringInterim = 0;
+    EXPECT_FALSE(rendered);
+    EXPECT_EQ(text, "no active window");
+    EXPECT_FALSE(analyzer.windows_.at(pid).open);
+}
+
+// COV-H17: 中间快照收集回调——开窗前free桶收集(CollectInterimPreWindowCb)
+// 与同栈多拍序列聚合/槽驱逐标注(CollectInterimSeriesCb):渲染侧呈现开窗前
+// free行与series_evicted降级
+TEST_F(HostLeakAnalyzerTest, interim_query_collects_prewindow_and_evicted_series)
+{
+    const uint64_t pid = 1234;
+    const uint64_t ns = 1000000000ULL;
+    Dispatch(CreateStageStart(pid, 1, 100 * ns));
+    MsmemscopeInterimStats& st = g_fakeSvcData.interimStats;
+    st.totalAllocCount = 2;
+    st.totalAllocBytes = 200;
+    st.snapTsNs = 150 * ns;
+    st.seriesStartTsNs = 100 * ns;
+    st.seriesBeatIntervalNs = ns;
+    FakeStackRow row;
+    row.stackId = 5;
+    row.allocCount = 2;
+    row.allocBytes = 200;
+    row.unfreedCount = 1;
+    row.unfreedBytes = 100;
+    row.maxBlockSize = 100;
+    row.maxAllocTsNs = 149 * ns;
+    row.frameDesc = "f\n";
+    g_fakeSvcData.stacks.push_back(row);
+    g_fakeSvcData.buckets.push_back(FakeBucket{0, 256, 1, 100});
+    g_fakeSvcData.preWindowBuckets.push_back(FakeBucket{64, 128, 2, 128});
+    g_fakeSvcData.series.push_back(FakeSeriesRow{5, 0, 100, 1, 0x1});  // 槽被驱逐
+    g_fakeSvcData.series.push_back(FakeSeriesRow{5, 1, 100, 1, 0});    // 同栈索引命中
+    std::string text;
+    ASSERT_TRUE(HostLeakAnalyzer::GetInstance().QueryInterimOverview(text));
+    EXPECT_NE(text.find("--- Pre-Window Free Size Distribution ---"), std::string::npos);
+    EXPECT_NE(text.find(SizeDistRow("[64, 128)", 2, 128)), std::string::npos);
+    // 序列槽被驱逐:降级标注series_evicted(该栈仍为候选)
+    EXPECT_NE(text.find("degraded series_evicted"), std::string::npos);
+}
+
+// COV-H18: 中间概览健康度标注全集合(白盒直调渲染)——未归因/整窗截断复合文本/
+// 本次快照降级复合文本/死栈淘汰/溢出通道/开窗前free/采样/块阈值/符号化健康,
+// 以及开窗前free分布行、常驻子块排序与周转NOTE(interim版本不引用章节号)
+TEST_F(HostLeakAnalyzerTest, interim_render_health_annotations)
+{
+    const uint64_t pid = 1234;
+    const uint64_t ns = 1000000000ULL;
+    Config config = MemScope::GetConfig();
+    config.blockSizeThreshold = 128;
+    ConfigManager::Instance().SetConfig(config);
+
+    HostLeakAnalyzer::InterimCollector ic;
+    ic.statsAvailable = true;
+    MsmemscopeInterimStats& st = ic.stats;
+    st.liveBlockCount = 7;
+    st.totalAllocCount = 10;
+    st.totalAllocBytes = 100000;
+    st.totalFreedCount = 2;
+    st.totalFreedBytes = 200;
+    st.truncated = 0x7;
+    st.snapshotDegraded = 0x7;
+    st.evictedStackCount = 3;
+    st.evictedAllocCount = 30;
+    st.evictedAllocBytes = 3000;
+    st.overflowAllocCount = 5;
+    st.overflowAllocBytes = 500;
+    st.overflowFreedCount = 2;
+    st.overflowFreedBytes = 200;
+    st.preWindowFreeCount = 4;
+    st.preWindowFreeBytes = 65536;
+    st.sampleRate = 4;
+    st.untrackedCount = 2;
+    st.untrackedBytes = 64;
+    st.snapTsNs = 150 * ns;
+    st.seriesStartTsNs = 100 * ns;
+    st.seriesBeatIntervalNs = ns;
+
+    HostLeakAnalyzer::StackRow row5;
+    row5.stackId = 5;
+    row5.allocCount = 1;
+    row5.allocBytes = 1000;
+    row5.unfreedCount = 1;
+    row5.unfreedBytes = 1000;
+    row5.maxBlockSize = 1000;
+    row5.maxAllocTsNs = 149 * ns;
+    row5.frameDesc = "sym5\n";
+    HostLeakAnalyzer::StackRow unknown;
+    unknown.stackId = 0;
+    unknown.allocCount = 1;
+    unknown.allocBytes = 1000;
+    unknown.unfreedCount = 1;
+    unknown.unfreedBytes = 1000;
+    unknown.maxBlockSize = 1000;
+    HostLeakAnalyzer::StackRow zero;
+    zero.stackId = 7;
+    zero.allocCount = 1;
+    zero.allocBytes = 500;
+    zero.unfreedCount = 0;
+    HostLeakAnalyzer::StackRow unresolved;
+    unresolved.stackId = 8;
+    unresolved.allocCount = 1;
+    unresolved.allocBytes = 500;
+    unresolved.unfreedCount = 1;
+    unresolved.unfreedBytes = 500;
+    unresolved.maxBlockSize = 500;
+    ic.stacks.push_back(row5);
+    ic.stacks.push_back(unknown);
+    ic.stacks.push_back(zero);
+    ic.stacks.push_back(unresolved);
+    HostLeakAnalyzer::SizeBucket bucket;
+    bucket.rangeLow = 0;
+    bucket.rangeHigh = 256;
+    bucket.blockCount = 3;
+    bucket.blockBytes = 3000;
+    ic.buckets.push_back(bucket);
+    HostLeakAnalyzer::SizeBucket pre;
+    pre.rangeLow = 1048576;
+    pre.rangeHigh = UINT64_MAX;
+    pre.blockCount = 4;
+    pre.blockBytes = 65536;
+    ic.preWindowBuckets.push_back(pre);
+
+    std::string text;
+    HostLeakAnalyzer::GetInstance().RenderInterimOverview(pid, 7, 100 * ns, ic, text);
+
+    EXPECT_NE(text.find("Window: 100000000000 -> 150000000000 (duration: 50s) (interim snapshot, window open)"),
+              std::string::npos);
+    EXPECT_NE(text.find("Tracked: 10 allocations / 100000B allocated; 2 freed / 200B"), std::string::npos);
+    EXPECT_NE(text.find("Distinct stacks: 3 (key depth K=20, category semantics)"), std::string::npos);
+    EXPECT_NE(text.find("Unattributed: 1 blocks / 1000B (unknown bucket, 33%)"), std::string::npos);
+    EXPECT_NE(text.find("Truncated: block table full (allocations -> overflow channel) | "
+                        "stack table (dead-stack recycling active, no reclaimable stack at full) | "
+                        "overflow channel full (recording stopped at 7 live blocks) "
+                        "[window data incomplete: not a leak conclusion]"),
+              std::string::npos);
+    EXPECT_NE(text.find("Snapshot degraded: block-table read (prefix data) | stack-table read (partial attribution) | "
+                        "series/pre-window read (partial) (this snapshot only; window continues recording)"),
+              std::string::npos);
+    EXPECT_NE(text.find("Evicted: 3 stacks recycled (30 allocs / 3000B folded to unknown bucket)"), std::string::npos);
+    EXPECT_NE(text.find("Overflow channel: 5 allocations / 500B diverted; 2 freed / 200B (reverse-corrected)"),
+              std::string::npos);
+    EXPECT_NE(text.find("Pre-window frees: 4 / 65536B (allocated before window, not in ledger)"), std::string::npos);
+    EXPECT_NE(text.find("Sampling: 1/4 (sampled view)"), std::string::npos);
+    EXPECT_NE(text.find("Size threshold: 128B (untracked: 2 allocations / 64B)"), std::string::npos);
+    EXPECT_NE(text.find("Symbolized: 1/2 stacks (unresolved: 1)"), std::string::npos);
+    EXPECT_NE(text.find(SizeDistRow("[1M, +inf)", 4, 65536)), std::string::npos);
+    // 常驻子块(未知桶+未符号化栈均满足early判据,总1.46KiB)
+    EXPECT_NE(text.find("Resident baselines (2 shown of 2 stacks, 1.46KiB;"), std::string::npos);
+    EXPECT_NE(text.find("NOTE: 64KiB pre-window allocations were freed within this window (cache turnover pattern); "
+                        "resident classification includes the unfreed/alloc turnover criterion"),
+              std::string::npos);
+    EXPECT_EQ(text.find("§3.1.4"), std::string::npos) << "interim NOTE must not cite closed-report section ids";
+    EXPECT_NE(text.find("Series: top-k=256, max-stacks=1024, beats=51(50s, 1s/beat; interim snapshot at "),
+              std::string::npos);
+}
+
+// COV-H19: 中间概览退化形态(白盒直调渲染)——snapTs不可得时Window行标注快照
+// 不可用;序列锚点缺失时拍数按已交付序列最大拍号回推;空桶/空开窗前free桶/
+// 无候选栈分别输出占位行
+TEST_F(HostLeakAnalyzerTest, interim_render_series_fallback_and_empty_rows)
+{
+    const uint64_t pid = 1234;
+    HostLeakAnalyzer::InterimCollector ic;
+    ic.statsAvailable = true;
+    ic.stats.totalAllocCount = 1;
+    ic.stats.totalAllocBytes = 100;
+    ic.stats.snapTsNs = 0;  // 快照时刻不可得
+    ic.stats.seriesStartTsNs = 0;
+    ic.stats.seriesBeatIntervalNs = 0;
+    StackSeries series;
+    series.stackId = 9;
+    SeriesPoint p0;
+    p0.beat = 0;
+    p0.liveBytes = 10;
+    series.points.push_back(p0);
+    SeriesPoint p3;
+    p3.beat = 3;
+    p3.liveBytes = 20;
+    series.points.push_back(p3);
+    SeriesPoint p7;
+    p7.beat = 7;
+    p7.liveBytes = 30;
+    series.points.push_back(p7);
+    ic.series.push_back(series);
+
+    std::string text;
+    HostLeakAnalyzer::GetInstance().RenderInterimOverview(pid, 8, 100, ic, text);
+    EXPECT_NE(text.find("Window: 100 -> unknown (interim snapshot, window open; snapshot unavailable)"),
+              std::string::npos);
+    // 序列锚点缺失:拍数按已交付序列最大拍号回推(7+1)
+    EXPECT_NE(text.find("Series: top-k=256, max-stacks=1024, beats=8(0s, 1s/beat; interim snapshot at 0)"),
+              std::string::npos);
+    // 无候选栈:TOP占位行;空桶:大小排布占位行;空开窗前free桶:无数据标注
+    EXPECT_NE(text.find("(no unfreed blocks in this window)"), std::string::npos);
+    EXPECT_NE(text.find("(no unfreed blocks)\n"), std::string::npos);
+    EXPECT_NE(text.find("(no pre-window frees)"), std::string::npos);
+    EXPECT_NE(text.find("Total unfreed: 0 bytes in 0 blocks (avg 0B, max 0B)"), std::string::npos);
+}
+
+// COV-H20: 中间概览常驻子块——未释放量相同走stackId次键(平局),不同走字节
+// 降序分支;TOP N截断常驻子块并提示剩余数量
+TEST_F(HostLeakAnalyzerTest, interim_render_resident_sort_and_topn_cap)
+{
+    const uint64_t pid = 1234;
+    const uint64_t ns = 1000000000ULL;
+    const uint64_t startTs = 100 * ns;
+    const uint64_t snapTs = 150 * ns;
+    auto addResident = [startTs](HostLeakAnalyzer::InterimCollector& collector, uint64_t stackId, uint64_t bytes)
+    {
+        HostLeakAnalyzer::StackRow row;
+        row.stackId = stackId;
+        row.allocCount = 1;
+        row.allocBytes = bytes;
+        row.unfreedCount = 1;
+        row.unfreedBytes = bytes;
+        row.maxBlockSize = bytes;
+        row.maxAllocTsNs = startTs + ns;  // 窗口前1s(≤起始+0.2×时长)→early常驻
+        row.frameDesc = "pool\n";
+        collector.stacks.push_back(row);
+        StackSeries series;
+        series.stackId = stackId;
+        for (uint32_t beat = 0; beat <= 10; ++beat)
+        {
+            SeriesPoint point;
+            point.beat = beat;
+            point.liveBytes = bytes;
+            point.liveCount = 1;
+            series.points.push_back(point);
+        }
+        collector.series.push_back(series);
+    };
+    auto initStats = [startTs, snapTs](HostLeakAnalyzer::InterimCollector& collector)
+    {
+        collector.statsAvailable = true;
+        collector.stats.snapTsNs = snapTs;
+        collector.stats.seriesStartTsNs = startTs;
+        collector.stats.seriesBeatIntervalNs = ns;
+        collector.stats.totalAllocCount = 2;
+        collector.stats.totalAllocBytes = 2 * 1048576;
+    };
+
+    // 平局:两个1MiB常驻栈未释放量相同→stackId升序
+    HostLeakAnalyzer::InterimCollector tieCollector;
+    initStats(tieCollector);
+    addResident(tieCollector, 5, 1048576);
+    addResident(tieCollector, 6, 1048576);
+    std::string text;
+    HostLeakAnalyzer::GetInstance().RenderInterimOverview(pid, 9, startTs, tieCollector, text);
+    EXPECT_NE(text.find("Resident baselines (2 shown of 2 stacks, 2MiB;"), std::string::npos);
+    EXPECT_NE(text.find("stack 0x5"), std::string::npos);
+    EXPECT_NE(text.find("stack 0x6"), std::string::npos);
+
+    // TOP N=1:常驻子块截断并提示剩余数量
+    setenv("MSMEMSCOPE_HOSTMEM_TOP_N", "1", 1);
+    text.clear();
+    HostLeakAnalyzer::GetInstance().RenderInterimOverview(pid, 9, startTs, tieCollector, text);
+    EXPECT_NE(text.find("Resident baselines (1 shown of 2 stacks, 2MiB;"), std::string::npos);
+    EXPECT_NE(text.find("... and 1 more resident stacks (see leak_overview report after window close)"),
+              std::string::npos);
+    unsetenv("MSMEMSCOPE_HOSTMEM_TOP_N");
+
+    // 非平局:1MiB与2MiB常驻栈→字节降序比较
+    HostLeakAnalyzer::InterimCollector byteCollector;
+    initStats(byteCollector);
+    addResident(byteCollector, 5, 1048576);
+    addResident(byteCollector, 7, 2097152);
+    text.clear();
+    HostLeakAnalyzer::GetInstance().RenderInterimOverview(pid, 9, startTs, byteCollector, text);
+    EXPECT_NE(text.find("Resident baselines (2 shown of 2 stacks, 3MiB;"), std::string::npos);
+}
+

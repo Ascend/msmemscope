@@ -16,8 +16,15 @@
  */
 
 #include <gtest/gtest.h>
+#include <sys/socket.h>
+#include <sys/un.h>
+#include <unistd.h>
 #include <cstdlib>
 #include <cstring>
+#include <iostream>
+#include <sstream>
+#include <string>
+#include <vector>
 // 先引入 nlohmann/json，避免后续 private public 宏污染第三方库
 #include "nlohmann/json.hpp"
 #define private public
@@ -248,8 +255,163 @@ TEST_F(JsonManagerTest, read_json_config_file_not_exist_fail)
     auto& jsonConfig = JsonConfig::GetInstance();
     std::string nonExistPath = "./testmsmemscope/not_exist_config.json";
     setenv(MSMEMSCOPE_CONFIG_ENV, nonExistPath.c_str(), 1);
-    
+
     MemScope::Config config = {};
     bool ret = jsonConfig.ReadJsonConfig(config);
     ASSERT_FALSE(ret);
+}
+
+// ==================== SaveToFile/LoadFromFile 失败分支补充 ====================
+
+// SaveToFile：待序列化内容含非法 UTF-8 字节，dump() 抛异常被 catch 捕获并返回 false
+TEST_F(JsonManagerTest, save_to_file_dump_exception_expect_false)
+{
+    auto& jsonMgr = JsonManager::GetInstance();
+    jsonMgr.SetValue("invalidUtf8", std::string("\xff\xfe", 2));
+
+    std::ostringstream oss;
+    std::streambuf* oldBuf = std::cout.rdbuf(oss.rdbuf());
+    bool ret = jsonMgr.SaveToFile("./testmsmemscope");
+    std::cout.rdbuf(oldBuf);
+
+    EXPECT_FALSE(ret);
+    EXPECT_NE(oss.str().find("Exception during dump"), std::string::npos);
+    // 配置文件已由 CreateConfigFile 创建，异常发生在序列化阶段
+    EXPECT_FALSE(jsonMgr.jsonFilePath_.empty());
+    EXPECT_TRUE(Utility::FileExists(jsonMgr.jsonFilePath_));
+    // 清理本次落盘的配置文件，保证 fixture 能删除临时目录
+    remove(jsonMgr.jsonFilePath_.c_str());
+}
+
+// LoadFromFile 失败分支：路径能通过输入路径校验（存在且可读），但无法按普通文件打开。
+// Unix domain socket 文件满足 stat/access 校验，open 时返回 ENXIO，从而覆盖
+// ReadJsonConfig 中 LoadFromFile 失败的日志分支。
+TEST_F(JsonManagerTest, read_json_config_unopenable_file_expect_false)
+{
+    const std::string sockPath = "./msms_json_cfg.sock";
+    unlink(sockPath.c_str());
+    int fd = socket(AF_UNIX, SOCK_STREAM, 0);
+    ASSERT_GE(fd, 0);
+    struct sockaddr_un addr {};
+    addr.sun_family = AF_UNIX;
+    ASSERT_LT(sockPath.size(), sizeof(addr.sun_path));
+    std::strncpy(addr.sun_path, sockPath.c_str(), sizeof(addr.sun_path) - 1);
+    ASSERT_EQ(bind(fd, reinterpret_cast<struct sockaddr*>(&addr), sizeof(addr)), 0);
+
+    // 前置条件：输入路径校验通过（socket 文件存在且可读），失败只发生在文件打开阶段
+    ASSERT_TRUE(Utility::CheckIsValidInputPath(sockPath));
+    setenv(MSMEMSCOPE_CONFIG_ENV, sockPath.c_str(), 1);
+
+    MemScope::Config config = {};
+    std::ostringstream oss;
+    std::streambuf* oldBuf = std::cout.rdbuf(oss.rdbuf());
+    bool ret = JsonConfig::GetInstance().ReadJsonConfig(config);
+    std::cout.rdbuf(oldBuf);
+
+    close(fd);
+    unlink(sockPath.c_str());
+
+    EXPECT_FALSE(ret);
+    EXPECT_NE(oss.str().find("Failed to load json config file"), std::string::npos);
+}
+
+// ReadJsonConfig：配置文件中的 outputDir 为空，输出路径校验失败返回 false
+TEST_F(JsonManagerTest, read_json_config_invalid_output_dir_expect_false)
+{
+    ASSERT_TRUE(Utility::MakeDir("./testmsmemscope"));
+    std::string filePath = "./testmsmemscope/config.json";
+    ASSERT_TRUE(CreateTestJsonFile(filePath, R"({"outputDir":""})"));
+    setenv(MSMEMSCOPE_CONFIG_ENV, filePath.c_str(), 1);
+
+    MemScope::Config config = {};
+    std::ostringstream oss;
+    std::streambuf* oldBuf = std::cout.rdbuf(oss.rdbuf());
+    bool ret = JsonConfig::GetInstance().ReadJsonConfig(config);
+    std::cout.rdbuf(oldBuf);
+
+    EXPECT_FALSE(ret);
+    EXPECT_EQ(config.outputDir[0], '\0');
+    EXPECT_NE(oss.str().find("Invalid output path in file"), std::string::npos);
+    // 清理配置文件，保证 fixture 能删除临时目录
+    remove(filePath.c_str());
+}
+
+// ==================== Get* 接口缺失 key / 类型不匹配 / 缓冲区边界补充 ====================
+
+// 各 Get* 接口：key 不存在时提前返回，输出参数保持原值
+TEST_F(JsonManagerTest, get_values_missing_key_keep_default)
+{
+    auto& jsonMgr = JsonManager::GetInstance();
+    uint8_t u8 = 7;
+    uint32_t u32 = 8;
+    uint64_t u64 = 9;
+    bool flag = true;
+    std::vector<int> vec{9};
+
+    jsonMgr.GetUint8Value("absentKey", u8);
+    jsonMgr.GetUint32Value("absentKey", u32);
+    jsonMgr.GetUint64Value("absentKey", u64);
+    jsonMgr.GetBoolValue("absentKey", flag);
+    jsonMgr.GetVectorIntValue("absentKey", vec);
+
+    EXPECT_EQ(u8, 7);
+    EXPECT_EQ(u32, 8u);
+    EXPECT_EQ(u64, 9u);
+    EXPECT_TRUE(flag);
+    EXPECT_EQ(vec, std::vector<int>({9}));
+}
+
+// 各 Get* 接口：JSON 节点类型不匹配时抛出的异常被捕获，输出参数保持原值
+TEST_F(JsonManagerTest, get_values_type_mismatch_keep_default)
+{
+    auto& jsonMgr = JsonManager::GetInstance();
+    jsonMgr.SetValue("numValue", 42);      // 非 string
+    jsonMgr.SetValue("textValue", "abc");  // 非数值/布尔/数组
+
+    std::string str = "keep";
+    jsonMgr.GetStringValue("numValue", str);
+    EXPECT_EQ(str, "keep");
+
+    uint8_t u8 = 1;
+    jsonMgr.GetUint8Value("textValue", u8);
+    EXPECT_EQ(u8, 1);
+
+    uint32_t u32 = 2;
+    jsonMgr.GetUint32Value("textValue", u32);
+    EXPECT_EQ(u32, 2u);
+
+    uint64_t u64 = 3;
+    jsonMgr.GetUint64Value("textValue", u64);
+    EXPECT_EQ(u64, 3u);
+
+    bool flag = false;
+    jsonMgr.GetBoolValue("textValue", flag);
+    EXPECT_FALSE(flag);
+
+    std::vector<int> vec{4};
+    jsonMgr.GetVectorIntValue("textValue", vec);
+    EXPECT_EQ(vec, std::vector<int>({4}));
+}
+
+// GetCharListValue：取到的字符串为空（key 缺失）时向 buffer 写入 '\0'
+TEST_F(JsonManagerTest, get_char_list_empty_value_expect_terminate)
+{
+    auto& jsonMgr = JsonManager::GetInstance();
+    char buffer[8] = {'x', 'x', 'x', 'x', 'x', 'x', 'x', '\0'};
+
+    jsonMgr.GetCharListValue("absentKey", buffer, sizeof(buffer));
+
+    EXPECT_EQ(buffer[0], '\0');
+}
+
+// GetUint32ListsValue：key 缺失导致取到的列表为空时提前返回，不改写输出缓冲区
+TEST_F(JsonManagerTest, get_uint32_lists_empty_value_expect_unchanged)
+{
+    auto& jsonMgr = JsonManager::GetInstance();
+    uint32_t lists[4] = {1, 2, 3, 4};
+
+    jsonMgr.GetUint32ListsValue("absentKey", lists, 4);
+
+    EXPECT_EQ(lists[0], 1u);
+    EXPECT_EQ(lists[3], 4u);
 }
