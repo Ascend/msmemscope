@@ -39,7 +39,8 @@ const std::unordered_map<PoolType, std::string> PoolTypeMap = {
 const std::unordered_map<PoolType, std::string> PoolTypeToString = {
     {PoolType::ATB, "ATB memory pool"},
     {PoolType::PTA_CACHING, "Pytorch Caching memory pool"},
-    {PoolType::MINDSPORE, "Mindspore memory pool"}};
+    {PoolType::MINDSPORE, "Mindspore memory pool"},
+    {PoolType::HAL, "HAL memory pool"}};
 
 // Module id
 const std::unordered_map<int, std::string> MODULE_HASH_TABLE = {

@@ -22,6 +22,7 @@
 #include <mutex>
 #include <set>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include "analyzer_base.h"
@@ -39,35 +40,49 @@ namespace MemScope
 /*
  * LeakAnalyzer类主要功能（统一原StepInnerAnalyzer与HalAnalyzer的泄漏检测职责）：
  * 1. 不维护内存块生命周期表，通过MemoryStateManager::QueryLiveBlocks条件查询存活块
- * 2. 通过StepTracker成员组件订阅MSTX/STEP事件，step结束回调时按时间戳区间推导分配step，
- *    判定持续duration≥阈值的NPU块并写入泄漏候选集合（不随FREE删除，累计告警语义）
- * 3. 订阅CLEAN_UP(RESIDUAL_BLOCK)还原double malloc告警；FREE事件幽灵state判定还原free无匹配告警
- * 4. HAL池泄漏在析构时按clientId分组全量检查（原HalAnalyzer语义）
- * 5. 退出时输出泄漏汇总报告（原ReportLeak格式）
+ * 2. 判定①（跨step疑似泄漏）：每个step结束回调时对存活块拍allocationId快照，与上一次step结束快照
+ *    求交集；两次结束stepId连续且配对起点为非首个step（>=2）时，交集中的块打疑似泄漏标记
+ * 3. 判定②（退出未释放）：进程退出时（~LeakAnalyzer，先于~MemoryStateManager）对存活块打标，
+ *    使PROC_EXIT落盘的MALLOC事件attr携带leak:true；无step打点时同样生效。与基线口径对齐的两个
+ *    过滤（彻底跳过）：存在step打点时仅统计首个step结束点之后分配的块；与NPU层（存活块或判定①
+ *    累计记录）同地址的HAL块不重复计入，避免同一块内存双层计数
+ * 4. 泄漏记录按allocationId全局去重（地址复用不混淆），命中后不随FREE删除（累计告警语义）；
+ *    MemoryState.isLeak为粘性标记，块生命周期内落盘均携带
+ * 5. 订阅CLEAN_UP(RESIDUAL_BLOCK)还原double malloc告警；FREE事件幽灵state判定还原free无匹配告警
+ * 6. HAL池泄漏在析构时按clientId分组全量检查（原HalAnalyzer语义）
+ * 7. 退出时输出泄漏汇总报告（每设备疑似泄漏总块数+总大小）
  */
 
-// 泄漏候选集合key：ptr+池+分配step（与现状一致，命中后不随FREE删除）
-struct LeakMemKey
+// 泄漏判定来源：①连续两个非首个step结束时都存活；②进程退出时仍未释放
+enum class LeakSource : uint8_t
 {
-    uint64_t ptr;
-    PoolType type;
-    uint64_t leakStepId;
-    LeakMemKey(uint64_t p, PoolType t, uint64_t id) : ptr(p), type(t), leakStepId(id) {}
-    bool operator==(const LeakMemKey& other) const;
+    STEP_SUSPECTED = 0,  // 判定①
+    EXIT_UNFREED = 1,    // 判定②
 };
 
-struct LeakInfo
+// 泄漏块累计记录：按allocationId全局唯一（地址会复用，allocationId不会），命中后不随FREE删除
+struct LeakRecord
 {
-    int64_t leakSize = 0;
+    uint64_t ptr = 0;
+    PoolType poolType = PoolType::INVALID;
+    uint64_t pid = 0;
+    DeviceId device = 0;
+    uint64_t leakSize = 0;
     uint64_t kernelIndex = 0;
+    uint64_t allocStep = 0;   // 分配step（GetAllocStep按边界推导，首个边界前为0）
+    StepId detectedStep = 0;  // 判定①首次命中的step结束编号；判定②为0
+    LeakSource source = LeakSource::STEP_SUSPECTED;
 };
 
-struct LeakMemKeyHash
+// step结束时刻的存活块快照（判定①求交集用）
+struct StepEndSnapshot
 {
-    std::size_t operator()(const LeakMemKey& leakKey) const;
+    StepId stepId = 0;  // 0表示尚无快照
+    std::unordered_set<uint64_t> allocationIds;
 };
 
-using LeakSumsTable = std::unordered_map<LeakMemKey, LeakInfo, LeakMemKeyHash>;
+// 判定①配对(E_{k-1},E_k)要求k-1>=2：排除首个step结束，过滤初始化期一次性加载的块
+constexpr uint64_t LEAK_CHECK_MIN_PAIR_START_STEP = 2;
 
 class LeakAnalyzer : public AnalyzerBase
 {
@@ -95,7 +110,14 @@ class LeakAnalyzer : public AnalyzerBase
     void HandleHalMemEvent(std::shared_ptr<EventBase>& event, MemoryState* state);
     void HandleResidualBlock(std::shared_ptr<EventBase>& event, MemoryState* state);
     void CheckNpuLeak(const DeviceId& deviceId, const StepId& stepId);
-    void ReportLeak(const DeviceId& deviceId);
+    // 判定②：退出时对存活块打标并记录；须在~MemoryStateManager之前调用（析构中自动满足）。
+    // 存在step打点时跳过首个step结束点之前分配的块（allocStep<2）；与NPU层（存活块或判定①
+    // 累计记录）同地址的HAL块跳过（防双层计数）；二者均为彻底跳过（不打标不记录）
+    void MarkExitUnfreedLeaks();
+    // 打标MSM的MemoryState并写入累计表（须已持有mutex_；同allocationId重复调用保留首次记录）
+    void RecordLeakLocked(const LiveBlockInfo& blk, LeakSource source, StepId detectedStep);
+    // 退出汇总：每设备输出疑似泄漏明细与总块数/总大小
+    void ReportLeak();
     void CheckHalLeak();
     const std::string& GetMemoryPoolName(const PoolType& poolType);
     bool IsGhostState(MemoryState* state, const std::shared_ptr<EventBase>& event) const;
@@ -103,12 +125,11 @@ class LeakAnalyzer : public AnalyzerBase
     uint64_t GetAllocStep(const std::vector<StepBoundary>& boundaries, const uint64_t& allocTs,
                           const uint64_t& allocId) const;
 
-    StepTracker stepTracker_;  // step边界维护组件，回调触发CheckNpuLeak
-    std::unordered_map<DeviceId, LeakSumsTable> leakMemSums_{};
+    StepTracker stepTracker_;                                 // step边界维护组件，回调触发CheckNpuLeak
+    std::unordered_map<uint64_t, LeakRecord> leakRecords_{};  // 泄漏累计表，key为allocationId
+    std::unordered_map<DeviceId, StepEndSnapshot> stepEndSnapshots_{};  // 判定①的上一次step结束快照
     std::set<ClientId> halClients_{};  // 见过的HAL事件client，析构时逐client检查（原memtables_分表语义）
-    uint64_t durationThreshold_ = 1;  // 设置警告阈值, 可由用户更改
-    uint64_t skipSteps_ = 1;
-    mutable std::mutex mutex_;  // 保护共享数据的互斥锁
+    mutable std::mutex mutex_;         // 保护共享数据的互斥锁
 };
 
 }  // namespace MemScope

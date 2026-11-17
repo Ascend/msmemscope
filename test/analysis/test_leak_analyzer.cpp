@@ -24,7 +24,7 @@
 #include "config_info.h"
 #include "event.h"
 // ConfigManager::config_为私有成员：测试需绕过SetConfig的默认化补齐（ALLOC会自动补FREE）
-// 才能构造“仅采集ALLOC”的开关门控状态，故与event_trace_manager.h一并白盒引入
+// 才能构造"仅采集ALLOC"的开关门控状态，故与event_trace_manager.h一并白盒引入
 #define private public
 #include "event_trace/trace_manager/event_trace_manager.h"
 #include "leak_analyzer.h"
@@ -50,6 +50,25 @@ void SetLeakConfig()
     config.stepList.stepCount = 0;
     config.collectMode = static_cast<uint8_t>(CollectMode::IMMEDIATE);
     ConfigManager::Instance().SetConfig(config);
+}
+
+// 生成指定stepCount/采集模式/事件位的泄漏分析配置
+Config MakeLeakConfig(uint8_t stepCount, CollectMode collectMode, bool allocOnly)
+{
+    Config config{};
+    BitField<decltype(config.analysisType)> analysisBit;
+    analysisBit.setBit(static_cast<size_t>(AnalysisType::LEAKS_ANALYSIS));
+    config.analysisType = analysisBit.getValue();
+    BitField<decltype(config.eventType)> eventBit;
+    eventBit.setBit(static_cast<size_t>(EventType::ALLOC_EVENT));
+    if (!allocOnly)
+    {
+        eventBit.setBit(static_cast<size_t>(EventType::FREE_EVENT));
+    }
+    config.eventType = eventBit.getValue();
+    config.stepList.stepCount = stepCount;
+    config.collectMode = static_cast<uint8_t>(collectMode);
+    return config;
 }
 
 std::shared_ptr<MemoryEvent> CreateNpuMalloc(uint64_t addr, int32_t device, uint64_t pid, uint64_t id,
@@ -187,7 +206,8 @@ class LeakAnalyzerTest : public ::testing::Test
         SetLeakConfig();
         LeakAnalyzer::GetInstance();
         // 清理单例跨用例残留状态
-        LeakAnalyzer::GetInstance().leakMemSums_.clear();
+        LeakAnalyzer::GetInstance().leakRecords_.clear();
+        LeakAnalyzer::GetInstance().stepEndSnapshots_.clear();
         LeakAnalyzer::GetInstance().halClients_.clear();
         LeakAnalyzer::GetInstance().stepTracker_.deviceStates_.clear();
         LeakAnalyzer::GetInstance().stepTracker_.stepSource_ = StepSource::NONE;
@@ -201,7 +221,8 @@ class LeakAnalyzerTest : public ::testing::Test
     void TearDown() override
     {
         ConfigManager::Instance().SetConfig(Config{});
-        LeakAnalyzer::GetInstance().leakMemSums_.clear();
+        LeakAnalyzer::GetInstance().leakRecords_.clear();
+        LeakAnalyzer::GetInstance().stepEndSnapshots_.clear();
         LeakAnalyzer::GetInstance().halClients_.clear();
         LeakAnalyzer::GetInstance().stepTracker_.deviceStates_.clear();
         LeakAnalyzer::GetInstance().stepTracker_.stepSource_ = StepSource::NONE;
@@ -325,7 +346,7 @@ TEST_F(LeakAnalyzerTest, query_unfreed_records_merges_npu_and_hal)
     MemoryStateManager::GetInstance().DeteleState(PoolType::HAL, MemoryStateKey{1, 0, 0x5000});
     MemoryStateManager::GetInstance().DeteleState(PoolType::PTA_CACHING, MemoryStateKey{1, 2, 0x6000});
 }
-
+// 判定①：连续两个非首个step结束时都存活的块被打标并记录
 TEST_F(LeakAnalyzerTest, mstx_step_events_drive_leak_check)
 {
     // step1 开始（boundary step1, ts=1000）
@@ -336,89 +357,358 @@ TEST_F(LeakAnalyzerTest, mstx_step_events_drive_leak_check)
     std::shared_ptr<EventBase> start2 = CreateMstxStart(2, 200, 0, 2000, 3);
     LeakAnalyzer::GetInstance().EventHandle(start2, nullptr);
 
-    // step2内分配块（ts=2100），step3结束时仍未释放 → 泄漏候选
-    // （step1内分配的块allocStep=1会被SkipCheck跳过，永不会告警）
+    // step2内分配块（ts=2100），step2/step3结束时都存活 → 判定①命中
     auto npuEvent = CreateNpuMalloc(0x7000, 0, 1, 4, 2100);
-    ASSERT_NE(MemoryStateManager::GetInstance().AddEvent(npuEvent), nullptr);
+    MemoryState* state = MemoryStateManager::GetInstance().AddEvent(npuEvent);
+    ASSERT_NE(state, nullptr);
 
-    // step2 结束 → CheckNpuLeak(device=0, stepId=2)：allocStep=2，duration=0，阈值1不告警
+    // step2 结束（首个快照，无配对不判定）
     std::shared_ptr<EventBase> end2 = CreateMstxEnd(2, 200, 0, 3000, 5);
     LeakAnalyzer::GetInstance().EventHandle(end2, nullptr);
+    EXPECT_TRUE(LeakAnalyzer::GetInstance().leakRecords_.empty());
 
     // step3 开始（boundary step3, ts=3000）
     std::shared_ptr<EventBase> start3 = CreateMstxStart(3, 300, 0, 3000, 6);
     LeakAnalyzer::GetInstance().EventHandle(start3, nullptr);
 
-    // step3 结束 → CheckNpuLeak(device=0, stepId=3)：duration=1 ≥ 阈值1 → 产生泄漏候选
+    // step3 结束：配对(E2,E3)且E2为非首个step结束 → 与E2快照求交集命中
     std::shared_ptr<EventBase> end3 = CreateMstxEnd(3, 300, 0, 4000, 7);
     LeakAnalyzer::GetInstance().EventHandle(end3, nullptr);
 
-    // 泄漏候选集合：addr=0x7000的块在device=0表中被记录
-    const auto& leakTable = LeakAnalyzer::GetInstance().leakMemSums_[0];
-    bool found = false;
-    for (const auto& pair : leakTable)
-    {
-        if (pair.first.ptr == 0x7000)
-        {
-            found = true;
-            EXPECT_EQ(pair.first.leakStepId, 2u);      // 分配step（step2内分配）
-            EXPECT_EQ(pair.second.kernelIndex, 7u);
-            EXPECT_EQ(pair.second.leakSize, static_cast<int64_t>(1024));
-        }
-    }
-    EXPECT_TRUE(found);
+    // MemoryState打标（粘性，落盘attr输出leak:true）
+    EXPECT_TRUE(state->isLeak);
 
-    MemoryStateManager::GetInstance().DeteleState(PoolType::PTA_CACHING, MemoryStateKey{1, 0, 0x7000});
+    // 累计表按allocationId记录：来源①、命中step3、分配step2
+    const auto& records = LeakAnalyzer::GetInstance().leakRecords_;
+    ASSERT_EQ(records.size(), 1u);
+    auto it = records.find(state->allocationId);
+    ASSERT_NE(it, records.end());
+    EXPECT_EQ(it->second.ptr, 0x7000u);
+    EXPECT_EQ(it->second.source, LeakSource::STEP_SUSPECTED);
+    EXPECT_EQ(it->second.detectedStep, 3u);
+    EXPECT_EQ(it->second.allocStep, 2u);
+    EXPECT_EQ(it->second.kernelIndex, 7u);
+    EXPECT_EQ(it->second.leakSize, 1024u);
+
+    MemoryStateManager::GetInstance().DeteleState(PoolType::PTA_CACHING,
+                                                   MemoryStateKey{1, 0, 0x7000});
 }
 
-TEST_F(LeakAnalyzerTest, step1_allocs_are_skipped_by_duration_check)
+// 判定①排除首个step结束：配对(E1,E2)不判定，step1内存活的块不产生候选
+TEST_F(LeakAnalyzerTest, first_step_end_pair_is_excluded_from_leak_check)
 {
     // step1开始，step1内分配
     std::shared_ptr<EventBase> start1 = CreateMstxStart(1, 100, 0, 1000, 1);
     LeakAnalyzer::GetInstance().EventHandle(start1, nullptr);
     auto npuEvent = CreateNpuMalloc(0x8000, 0, 1, 2, 1100);
-    ASSERT_NE(MemoryStateManager::GetInstance().AddEvent(npuEvent), nullptr);
+    MemoryState* state = MemoryStateManager::GetInstance().AddEvent(npuEvent);
+    ASSERT_NE(state, nullptr);
 
-    // step2开始、结束：CheckNpuLeak(stepId=2)，allocStep=1 ≤ skipSteps_=1 → 跳过
+    // step1结束（E1，首个快照）
+    std::shared_ptr<EventBase> end1 = CreateMstxEnd(1, 100, 0, 1200, 3);
+    LeakAnalyzer::GetInstance().EventHandle(end1, nullptr);
+
+    // step2开始、结束：配对(E1,E2)为首个step结束配对 → 不判定
+    std::shared_ptr<EventBase> start2 = CreateMstxStart(2, 200, 0, 2000, 4);
+    LeakAnalyzer::GetInstance().EventHandle(start2, nullptr);
+    std::shared_ptr<EventBase> end2 = CreateMstxEnd(2, 200, 0, 3000, 5);
+    LeakAnalyzer::GetInstance().EventHandle(end2, nullptr);
+
+    // 块在E1、E2结束时都存活，但配对起点为首个step结束 → 不产生候选
+    EXPECT_TRUE(LeakAnalyzer::GetInstance().leakRecords_.empty());
+    EXPECT_FALSE(state->isLeak);
+
+    MemoryStateManager::GetInstance().DeteleState(PoolType::PTA_CACHING,
+                                                  MemoryStateKey{1, 0, 0x8000});
+}
+
+// 判定①只认快照事实：两个step结束之间新分配的块（未在上次快照中）不判定
+TEST_F(LeakAnalyzerTest, block_allocated_between_step_ends_not_flagged)
+{
+    // E1、E2正常结束（本用例块尚未分配）
+    std::shared_ptr<EventBase> start1 = CreateMstxStart(1, 100, 0, 1000, 1);
+    LeakAnalyzer::GetInstance().EventHandle(start1, nullptr);
+    std::shared_ptr<EventBase> end1 = CreateMstxEnd(1, 100, 0, 1200, 2);
+    LeakAnalyzer::GetInstance().EventHandle(end1, nullptr);
     std::shared_ptr<EventBase> start2 = CreateMstxStart(2, 200, 0, 2000, 3);
     LeakAnalyzer::GetInstance().EventHandle(start2, nullptr);
     std::shared_ptr<EventBase> end2 = CreateMstxEnd(2, 200, 0, 3000, 4);
     LeakAnalyzer::GetInstance().EventHandle(end2, nullptr);
 
-    // step3开始、结束：allocStep=1仍被SkipCheck跳过
-    std::shared_ptr<EventBase> start3 = CreateMstxStart(3, 300, 0, 3000, 5);
+    // E2之后、E3之前分配：E2快照中不存在该块
+    auto npuEvent = CreateNpuMalloc(0x8800, 0, 1, 5, 3100);
+    MemoryState* state = MemoryStateManager::GetInstance().AddEvent(npuEvent);
+    ASSERT_NE(state, nullptr);
+
+    std::shared_ptr<EventBase> start3 = CreateMstxStart(3, 300, 0, 3200, 6);
     LeakAnalyzer::GetInstance().EventHandle(start3, nullptr);
-    std::shared_ptr<EventBase> end3 = CreateMstxEnd(3, 300, 0, 4000, 6);
+    std::shared_ptr<EventBase> end3 = CreateMstxEnd(3, 300, 0, 4000, 7);
     LeakAnalyzer::GetInstance().EventHandle(end3, nullptr);
 
-    // step1内分配不产生泄漏候选
-    EXPECT_TRUE(LeakAnalyzer::GetInstance().leakMemSums_[0].empty());
+    // 配对(E2,E3)虽合法，但块不在E2快照中 → 不判定（修复旧逻辑按step差近似的误判）
+    EXPECT_TRUE(LeakAnalyzer::GetInstance().leakRecords_.empty());
+    EXPECT_FALSE(state->isLeak);
 
-    MemoryStateManager::GetInstance().DeteleState(PoolType::PTA_CACHING, MemoryStateKey{1, 0, 0x8000});
+    MemoryStateManager::GetInstance().DeteleState(PoolType::PTA_CACHING,
+                                                  MemoryStateKey{1, 0, 0x8800});
 }
 
-// ==================== 增强覆盖用例（开关门控/异常事件/报告输出） ====================
-namespace
+// 判定①要求stepId连续：打点缺失（E2后直接E4）不猜测配对，后续连续配对(E4,E5)正常判定
+TEST_F(LeakAnalyzerTest, non_consecutive_step_ends_not_flagged)
 {
-// 生成指定stepCount/采集模式/事件位的泄漏分析配置
-Config MakeLeakConfig(uint8_t stepCount, CollectMode collectMode, bool allocOnly)
-{
-    Config config{};
-    BitField<decltype(config.analysisType)> analysisBit;
-    analysisBit.setBit(static_cast<size_t>(AnalysisType::LEAKS_ANALYSIS));
-    config.analysisType = analysisBit.getValue();
-    BitField<decltype(config.eventType)> eventBit;
-    eventBit.setBit(static_cast<size_t>(EventType::ALLOC_EVENT));
-    if (!allocOnly)
-    {
-        eventBit.setBit(static_cast<size_t>(EventType::FREE_EVENT));
-    }
-    config.eventType = eventBit.getValue();
-    config.stepList.stepCount = stepCount;
-    config.collectMode = static_cast<uint8_t>(collectMode);
-    return config;
+    // step2内分配的块，将存活到step5
+    std::shared_ptr<EventBase> start2 = CreateMstxStart(2, 200, 0, 1000, 1);
+    LeakAnalyzer::GetInstance().EventHandle(start2, nullptr);
+    auto npuEvent = CreateNpuMalloc(0x8900, 0, 1, 2, 1100);
+    MemoryState* state = MemoryStateManager::GetInstance().AddEvent(npuEvent);
+    ASSERT_NE(state, nullptr);
+    std::shared_ptr<EventBase> end2 = CreateMstxEnd(2, 200, 0, 1200, 3);
+    LeakAnalyzer::GetInstance().EventHandle(end2, nullptr);
+
+    // step3结束打点缺失：E2之后直接E4，stepId不连续 → 不判定
+    std::shared_ptr<EventBase> start4 = CreateMstxStart(4, 400, 0, 2000, 4);
+    LeakAnalyzer::GetInstance().EventHandle(start4, nullptr);
+    std::shared_ptr<EventBase> end4 = CreateMstxEnd(4, 400, 0, 3000, 5);
+    LeakAnalyzer::GetInstance().EventHandle(end4, nullptr);
+    EXPECT_TRUE(LeakAnalyzer::GetInstance().leakRecords_.empty());
+
+    // 连续配对(E4,E5)：块在E4、E5结束时都存活 → 判定命中，detectedStep=5
+    std::shared_ptr<EventBase> start5 = CreateMstxStart(5, 500, 0, 3100, 6);
+    LeakAnalyzer::GetInstance().EventHandle(start5, nullptr);
+    std::shared_ptr<EventBase> end5 = CreateMstxEnd(5, 500, 0, 4000, 7);
+    LeakAnalyzer::GetInstance().EventHandle(end5, nullptr);
+
+    EXPECT_TRUE(state->isLeak);
+    const auto& records = LeakAnalyzer::GetInstance().leakRecords_;
+    ASSERT_EQ(records.size(), 1u);
+    auto it = records.find(state->allocationId);
+    ASSERT_NE(it, records.end());
+    EXPECT_EQ(it->second.source, LeakSource::STEP_SUSPECTED);
+    EXPECT_EQ(it->second.detectedStep, 5u);
+
+    MemoryStateManager::GetInstance().DeteleState(PoolType::PTA_CACHING,
+                                                  MemoryStateKey{1, 0, 0x8900});
 }
-}  // namespace
+
+// 地址复用：同地址先后两个块各自独立记录（allocationId区分），不互相混淆
+TEST_F(LeakAnalyzerTest, address_reuse_creates_distinct_leak_records)
+{
+    // 块A：step2内分配，E2/E3结束时存活 → E3命中
+    std::shared_ptr<EventBase> start1 = CreateMstxStart(1, 100, 0, 1000, 1);
+    LeakAnalyzer::GetInstance().EventHandle(start1, nullptr);
+    std::shared_ptr<EventBase> end1 = CreateMstxEnd(1, 100, 0, 1200, 2);
+    LeakAnalyzer::GetInstance().EventHandle(end1, nullptr);
+    std::shared_ptr<EventBase> start2 = CreateMstxStart(2, 200, 0, 2000, 3);
+    LeakAnalyzer::GetInstance().EventHandle(start2, nullptr);
+    auto mallocA = CreateNpuMalloc(0x9000, 0, 1, 4, 2100);
+    MemoryState* stateA = MemoryStateManager::GetInstance().AddEvent(mallocA);
+    ASSERT_NE(stateA, nullptr);
+    std::shared_ptr<EventBase> end2 = CreateMstxEnd(2, 200, 0, 3000, 5);
+    LeakAnalyzer::GetInstance().EventHandle(end2, nullptr);
+    std::shared_ptr<EventBase> start3 = CreateMstxStart(3, 300, 0, 3100, 6);
+    LeakAnalyzer::GetInstance().EventHandle(start3, nullptr);
+    std::shared_ptr<EventBase> end3 = CreateMstxEnd(3, 300, 0, 4000, 7);
+    LeakAnalyzer::GetInstance().EventHandle(end3, nullptr);
+    ASSERT_EQ(LeakAnalyzer::GetInstance().leakRecords_.size(), 1u);
+
+    // 块A释放并删除state（生产管线stage-3语义）；删除前捕获allocationId（state随erase析构）
+    const uint64_t allocIdA = stateA->allocationId;
+    auto freeA = CreateNpuFree(0x9000, 0, 1, 8, 4100);
+    ASSERT_NE(MemoryStateManager::GetInstance().AddEvent(freeA), nullptr);
+    MemoryStateManager::GetInstance().DeteleState(PoolType::PTA_CACHING, MemoryStateKey{1, 0, 0x9000});
+
+    // 块B：同地址复用，step4内分配，E4/E5结束时存活 → E5命中
+    std::shared_ptr<EventBase> start4 = CreateMstxStart(4, 400, 0, 4200, 9);
+    LeakAnalyzer::GetInstance().EventHandle(start4, nullptr);
+    auto mallocB = CreateNpuMalloc(0x9000, 0, 1, 10, 4300);
+    MemoryState* stateB = MemoryStateManager::GetInstance().AddEvent(mallocB);
+    ASSERT_NE(stateB, nullptr);
+    std::shared_ptr<EventBase> end4 = CreateMstxEnd(4, 400, 0, 5000, 11);
+    LeakAnalyzer::GetInstance().EventHandle(end4, nullptr);
+    std::shared_ptr<EventBase> start5 = CreateMstxStart(5, 500, 0, 5100, 12);
+    LeakAnalyzer::GetInstance().EventHandle(start5, nullptr);
+    std::shared_ptr<EventBase> end5 = CreateMstxEnd(5, 500, 0, 6000, 13);
+    LeakAnalyzer::GetInstance().EventHandle(end5, nullptr);
+
+    // 两个块各有一条记录：allocationId不同，detectedStep不同，地址相同不混淆
+    const auto& records = LeakAnalyzer::GetInstance().leakRecords_;
+    ASSERT_EQ(records.size(), 2u);
+    EXPECT_NE(allocIdA, stateB->allocationId);
+    EXPECT_EQ(records.at(allocIdA).detectedStep, 3u);
+    EXPECT_EQ(records.at(stateB->allocationId).detectedStep, 5u);
+    EXPECT_EQ(records.at(allocIdA).ptr, 0x9000u);
+    EXPECT_EQ(records.at(stateB->allocationId).ptr, 0x9000u);
+    EXPECT_TRUE(stateB->isLeak);
+
+    MemoryStateManager::GetInstance().DeteleState(PoolType::PTA_CACHING,
+                                                  MemoryStateKey{1, 0, 0x9000});
+}
+
+// 判定②：无step打点时，退出未释放块（NPU+HAL）全部打标并记录
+TEST_F(LeakAnalyzerTest, exit_unfreed_blocks_marked_without_steps)
+{
+    auto npuEvent1 = CreateNpuMalloc(0xA000, 0, 1, 1, 1000);
+    auto npuEvent2 = CreateNpuMalloc(0xB000, 0, 1, 2, 2000);
+    auto halEvent = CreateHalMalloc(0xC000, 0, 1, 3, 3000);
+    MemoryState* state1 = MemoryStateManager::GetInstance().AddEvent(npuEvent1);
+    MemoryState* state2 = MemoryStateManager::GetInstance().AddEvent(npuEvent2);
+    MemoryState* stateHal = MemoryStateManager::GetInstance().AddEvent(halEvent);
+    ASSERT_NE(state1, nullptr);
+    ASSERT_NE(state2, nullptr);
+    ASSERT_NE(stateHal, nullptr);
+
+    LeakAnalyzer::GetInstance().MarkExitUnfreedLeaks();
+
+    // 三个退出未释放块全部标记：NPU两个 + HAL一个
+    const auto& records = LeakAnalyzer::GetInstance().leakRecords_;
+    ASSERT_EQ(records.size(), 3u);
+    EXPECT_TRUE(state1->isLeak);
+    EXPECT_TRUE(state2->isLeak);
+    EXPECT_TRUE(stateHal->isLeak);
+    EXPECT_EQ(records.at(state1->allocationId).source, LeakSource::EXIT_UNFREED);
+    EXPECT_EQ(records.at(state2->allocationId).source, LeakSource::EXIT_UNFREED);
+    EXPECT_EQ(records.at(stateHal->allocationId).source, LeakSource::EXIT_UNFREED);
+    EXPECT_EQ(records.at(stateHal->allocationId).poolType, PoolType::HAL);
+    // 无step边界时分配step为0
+    EXPECT_EQ(records.at(state1->allocationId).allocStep, 0u);
+
+    MemoryStateManager::GetInstance().DeteleState(PoolType::PTA_CACHING, MemoryStateKey{1, 0, 0xA000});
+    MemoryStateManager::GetInstance().DeteleState(PoolType::PTA_CACHING, MemoryStateKey{1, 0, 0xB000});
+    MemoryStateManager::GetInstance().DeteleState(PoolType::HAL, MemoryStateKey{1, 0, 0xC000});
+}
+
+// 判定②与判定①去重：①已命中的块退出时再次遇到，保留首次记录不重复计数
+TEST_F(LeakAnalyzerTest, exit_marking_dedups_step_flagged_blocks)
+{
+    // ①路径：E2/E3命中
+    std::shared_ptr<EventBase> start1 = CreateMstxStart(1, 100, 0, 1000, 1);
+    LeakAnalyzer::GetInstance().EventHandle(start1, nullptr);
+    std::shared_ptr<EventBase> end1 = CreateMstxEnd(1, 100, 0, 1200, 2);
+    LeakAnalyzer::GetInstance().EventHandle(end1, nullptr);
+    std::shared_ptr<EventBase> start2 = CreateMstxStart(2, 200, 0, 2000, 3);
+    LeakAnalyzer::GetInstance().EventHandle(start2, nullptr);
+    auto npuEvent = CreateNpuMalloc(0xA800, 0, 1, 4, 2100);
+    MemoryState* state = MemoryStateManager::GetInstance().AddEvent(npuEvent);
+    ASSERT_NE(state, nullptr);
+    std::shared_ptr<EventBase> end2 = CreateMstxEnd(2, 200, 0, 3000, 5);
+    LeakAnalyzer::GetInstance().EventHandle(end2, nullptr);
+    std::shared_ptr<EventBase> start3 = CreateMstxStart(3, 300, 0, 3100, 6);
+    LeakAnalyzer::GetInstance().EventHandle(start3, nullptr);
+    std::shared_ptr<EventBase> end3 = CreateMstxEnd(3, 300, 0, 4000, 7);
+    LeakAnalyzer::GetInstance().EventHandle(end3, nullptr);
+    ASSERT_EQ(LeakAnalyzer::GetInstance().leakRecords_.size(), 1u);
+
+    // ②路径：块仍存活，退出打标不新增记录、不覆盖来源
+    LeakAnalyzer::GetInstance().MarkExitUnfreedLeaks();
+    const auto& records = LeakAnalyzer::GetInstance().leakRecords_;
+    ASSERT_EQ(records.size(), 1u);
+    EXPECT_EQ(records.at(state->allocationId).source, LeakSource::STEP_SUSPECTED);
+
+    MemoryStateManager::GetInstance().DeteleState(PoolType::PTA_CACHING,
+                                                  MemoryStateKey{1, 0, 0xA800});
+}
+
+// 判定②与基线口径对齐：存在step打点时，首个step结束点之前分配的块（NPU与HAL同规）退出不统计
+TEST_F(LeakAnalyzerTest, exit_init_allocations_skipped_when_steps_exist)
+{
+    // 两个step：(E1,E2)配对被排除，无判定①记录，隔离验证判定②的step起点过滤
+    std::shared_ptr<EventBase> start1 = CreateMstxStart(1, 100, 0, 1000, 1);
+    LeakAnalyzer::GetInstance().EventHandle(start1, nullptr);
+    std::shared_ptr<EventBase> end1 = CreateMstxEnd(1, 100, 0, 1200, 2);
+    LeakAnalyzer::GetInstance().EventHandle(end1, nullptr);
+    std::shared_ptr<EventBase> start2 = CreateMstxStart(2, 200, 0, 2000, 3);
+    LeakAnalyzer::GetInstance().EventHandle(start2, nullptr);
+    std::shared_ptr<EventBase> end2 = CreateMstxEnd(2, 200, 0, 3000, 4);
+    LeakAnalyzer::GetInstance().EventHandle(end2, nullptr);
+
+    // E1前分配（allocStep=0）、step1内分配（allocStep=1）的NPU/HAL块退出时不统计；
+    // step2内分配（allocStep=2）的块统计
+    auto beforeStep = CreateNpuMalloc(0xA000, 0, 1, 5, 900);
+    auto inStepOne = CreateNpuMalloc(0xB000, 0, 1, 6, 1100);
+    auto halInStepOne = CreateHalMalloc(0xF000, 0, 1, 7, 1150);
+    auto inStepTwo = CreateNpuMalloc(0xC000, 0, 1, 8, 2500);
+    MemoryState* stateBefore = MemoryStateManager::GetInstance().AddEvent(beforeStep);
+    MemoryState* stateInOne = MemoryStateManager::GetInstance().AddEvent(inStepOne);
+    MemoryState* stateHalOne = MemoryStateManager::GetInstance().AddEvent(halInStepOne);
+    MemoryState* stateInTwo = MemoryStateManager::GetInstance().AddEvent(inStepTwo);
+    ASSERT_NE(stateBefore, nullptr);
+    ASSERT_NE(stateInOne, nullptr);
+    ASSERT_NE(stateHalOne, nullptr);
+    ASSERT_NE(stateInTwo, nullptr);
+
+    LeakAnalyzer::GetInstance().MarkExitUnfreedLeaks();
+
+    // 仅首个step结束点之后分配的块入表
+    const auto& records = LeakAnalyzer::GetInstance().leakRecords_;
+    ASSERT_EQ(records.size(), 1u);
+    EXPECT_EQ(records.at(stateInTwo->allocationId).source, LeakSource::EXIT_UNFREED);
+    EXPECT_TRUE(stateInTwo->isLeak);
+    EXPECT_FALSE(stateBefore->isLeak);
+    EXPECT_FALSE(stateInOne->isLeak);
+    EXPECT_FALSE(stateHalOne->isLeak);
+}
+
+// 判定②HAL去重（真实torch退出时序）：判定①命中且PTA region已先于分析器析构被反注册，
+// 同地址HAL块不重复入表也不打标——彻底跳过，退出统计与NPU层口径一致
+TEST_F(LeakAnalyzerTest, exit_hal_matching_npu_record_skipped)
+{
+    // ①路径：0xA800在E2/E3命中
+    std::shared_ptr<EventBase> start1 = CreateMstxStart(1, 100, 0, 1000, 1);
+    LeakAnalyzer::GetInstance().EventHandle(start1, nullptr);
+    std::shared_ptr<EventBase> end1 = CreateMstxEnd(1, 100, 0, 1200, 2);
+    LeakAnalyzer::GetInstance().EventHandle(end1, nullptr);
+    std::shared_ptr<EventBase> start2 = CreateMstxStart(2, 200, 0, 2000, 3);
+    LeakAnalyzer::GetInstance().EventHandle(start2, nullptr);
+    auto npuEvent = CreateNpuMalloc(0xA800, 0, 1, 4, 2100);
+    MemoryState* state = MemoryStateManager::GetInstance().AddEvent(npuEvent);
+    ASSERT_NE(state, nullptr);
+    std::shared_ptr<EventBase> end2 = CreateMstxEnd(2, 200, 0, 3000, 5);
+    LeakAnalyzer::GetInstance().EventHandle(end2, nullptr);
+    std::shared_ptr<EventBase> start3 = CreateMstxStart(3, 300, 0, 3100, 6);
+    LeakAnalyzer::GetInstance().EventHandle(start3, nullptr);
+    std::shared_ptr<EventBase> end3 = CreateMstxEnd(3, 300, 0, 4000, 7);
+    LeakAnalyzer::GetInstance().EventHandle(end3, nullptr);
+    const uint64_t npuAllocId = state->allocationId;  // 删除state前捕获（state随erase析构）
+    ASSERT_EQ(LeakAnalyzer::GetInstance().leakRecords_.size(), 1u);
+
+    // 模拟torch退出时序：PTA region先于分析器析构被反注册（state删除，判定①累计记录保留）
+    MemoryStateManager::GetInstance().DeteleState(PoolType::PTA_CACHING, MemoryStateKey{1, 0, 0xA800});
+
+    // 同地址HAL块存活到退出：不重复入表、不打标
+    auto halEvent = CreateHalMalloc(0xA800, 0, 1, 8, 4200);
+    MemoryState* halState = MemoryStateManager::GetInstance().AddEvent(halEvent);
+    ASSERT_NE(halState, nullptr);
+    LeakAnalyzer::GetInstance().MarkExitUnfreedLeaks();
+
+    const auto& records = LeakAnalyzer::GetInstance().leakRecords_;
+    ASSERT_EQ(records.size(), 1u);  // 仍仅判定①记录，同地址HAL块未新增
+    EXPECT_EQ(records.at(npuAllocId).source, LeakSource::STEP_SUSPECTED);
+    EXPECT_FALSE(halState->isLeak);  // 彻底跳过：HAL行不携带leak标记
+}
+
+// 判定②HAL去重（无step场景）：与存活NPU块同地址的HAL块彻底跳过，独立地址HAL块正常兜底
+TEST_F(LeakAnalyzerTest, exit_hal_shadowing_live_npu_addr_fully_skipped)
+{
+    auto npuEvent = CreateNpuMalloc(0xD000, 0, 1, 1, 1000);
+    auto halSame = CreateHalMalloc(0xD000, 0, 1, 2, 1100);
+    auto halOther = CreateHalMalloc(0xE000, 0, 1, 3, 1200);
+    MemoryState* npuState = MemoryStateManager::GetInstance().AddEvent(npuEvent);
+    MemoryState* halSameState = MemoryStateManager::GetInstance().AddEvent(halSame);
+    MemoryState* halOtherState = MemoryStateManager::GetInstance().AddEvent(halOther);
+    ASSERT_NE(npuState, nullptr);
+    ASSERT_NE(halSameState, nullptr);
+    ASSERT_NE(halOtherState, nullptr);
+
+    LeakAnalyzer::GetInstance().MarkExitUnfreedLeaks();
+
+    // 无step打点：全部兜底，但同一内存只计NPU层一次
+    const auto& records = LeakAnalyzer::GetInstance().leakRecords_;
+    ASSERT_EQ(records.size(), 2u);
+    EXPECT_TRUE(npuState->isLeak);
+    EXPECT_FALSE(halSameState->isLeak);  // 同地址HAL彻底跳过
+    EXPECT_TRUE(halOtherState->isLeak);  // 独立地址HAL正常标记
+    EXPECT_EQ(records.at(halOtherState->allocationId).poolType, PoolType::HAL);
+}
 
 // NPU/HAL分析开关门控：--steps、DEFERRED、仅ALLOC、未开启分析类型
 TEST_F(LeakAnalyzerTest, analysis_enable_gates_cover_all_conditions)
@@ -461,7 +751,7 @@ TEST_F(LeakAnalyzerTest, shadow_event_returns_before_dispatch)
     std::shared_ptr<EventBase> shadowBase = shadowFree;
     LeakAnalyzer::GetInstance().EventHandle(shadowBase, nullptr);
     EXPECT_TRUE(LeakAnalyzer::GetInstance().halClients_.empty());
-    EXPECT_TRUE(LeakAnalyzer::GetInstance().leakMemSums_.empty());
+    EXPECT_TRUE(LeakAnalyzer::GetInstance().leakRecords_.empty());
 
     // 对照：非影子HAL FREE会登记client（进程集合语义）
     auto normalFree = CreateHalFree(0x7A00, 0, 21, 2, 2000);
@@ -471,7 +761,7 @@ TEST_F(LeakAnalyzerTest, shadow_event_returns_before_dispatch)
     MemoryStateManager::GetInstance().DeteleState(PoolType::HAL, MemoryStateKey{21, 0, 0x7A00});
 }
 
-// HAL MALLOC：首次登记client；未知moduleId走告警分支，重复client不重复登记
+// HAL MALLOC携带未知moduleId时仍登记client；同client后续事件不重复登记
 TEST_F(LeakAnalyzerTest, hal_malloc_with_unknown_module_is_recorded)
 {
     LeakAnalyzer& analyzer = LeakAnalyzer::GetInstance();
@@ -491,7 +781,7 @@ TEST_F(LeakAnalyzerTest, hal_malloc_with_unknown_module_is_recorded)
     MemoryStateManager::GetInstance().DeteleState(PoolType::HAL, MemoryStateKey{41, 0, 0x7C00});
 }
 
-// 幽灵state判定：仅“单条且id相同的FREE事件”成立
+// 幽灵state判定：要求state中恰好存在一条与当前事件同id的FREE事件
 TEST_F(LeakAnalyzerTest, is_ghost_state_requires_single_matching_free_event)
 {
     LeakAnalyzer& analyzer = LeakAnalyzer::GetInstance();
@@ -525,20 +815,30 @@ TEST_F(LeakAnalyzerTest, is_ghost_state_requires_single_matching_free_event)
     EXPECT_FALSE(analyzer.IsGhostState(&mallocState, mallocBase));
 }
 
-// ReportLeak：按step升序输出每块明细与汇总
+// 退出报告：明细按allocStep升序、每设备组尾SUMMARY输出总大小/总块数
+// （记录种入leakRecords_，key为allocationId）
 TEST_F(LeakAnalyzerTest, report_leak_prints_sorted_detail_and_summary)
 {
     LeakAnalyzer& analyzer = LeakAnalyzer::GetInstance();
-    auto& table = analyzer.leakMemSums_[0];
-    auto& atbInfo = table[LeakMemKey{0x1200, PoolType::ATB, 2}];
-    atbInfo.leakSize = static_cast<int64_t>(BYTE_TO_MB) * 2;
-    atbInfo.kernelIndex = 3;
-    auto& ptaInfo = table[LeakMemKey{0x1100, PoolType::PTA_CACHING, 5}];
-    ptaInfo.leakSize = static_cast<int64_t>(BYTE_TO_MB);
-    ptaInfo.kernelIndex = 9;
+    LeakRecord atbRec;
+    atbRec.ptr = 0x1200;
+    atbRec.poolType = PoolType::ATB;
+    atbRec.device = 0;
+    atbRec.leakSize = static_cast<uint64_t>(2 * BYTE_TO_MB);
+    atbRec.kernelIndex = 3;
+    atbRec.allocStep = 2;
+    analyzer.leakRecords_[1001] = atbRec;
+    LeakRecord ptaRec;
+    ptaRec.ptr = 0x1100;
+    ptaRec.poolType = PoolType::PTA_CACHING;
+    ptaRec.device = 0;
+    ptaRec.leakSize = static_cast<uint64_t>(BYTE_TO_MB);
+    ptaRec.kernelIndex = 9;
+    ptaRec.allocStep = 5;
+    analyzer.leakRecords_[1002] = ptaRec;
 
     testing::internal::CaptureStdout();
-    analyzer.ReportLeak(0);
+    analyzer.ReportLeak();
     std::string output = testing::internal::GetCapturedStdout();
 
     EXPECT_NE(output.find("====== ERROR: Detected memory leaks on device 0 ======"), std::string::npos);
@@ -555,7 +855,7 @@ TEST_F(LeakAnalyzerTest, report_leak_prints_sorted_detail_and_summary)
     EXPECT_NE(output.find("====== SUMMARY: 3 Mb(s) leaked in 2 allocation(s) ======"), std::string::npos);
 }
 
-// CheckHalLeak：无登记client直接返回；存活块逐块告警；无块client走no leak分支
+// CheckHalLeak：无client记录与有存活块/无存活块client混合场景均不抛异常，且不改变存活块表
 TEST_F(LeakAnalyzerTest, check_hal_leak_covers_empty_and_live_block_paths)
 {
     LeakAnalyzer& analyzer = LeakAnalyzer::GetInstance();
@@ -578,7 +878,7 @@ TEST_F(LeakAnalyzerTest, check_hal_leak_covers_empty_and_live_block_paths)
     EXPECT_EQ(blocks[0].addr, 0x7B00u);
 }
 
-// 未定义池类型：返回空串（HAL等无展示名类型同样返回空）
+// GetMemoryPoolName：已映射池返回精确名，未映射池返回空
 TEST_F(LeakAnalyzerTest, undefined_pool_type_returns_empty_name)
 {
     LeakAnalyzer& analyzer = LeakAnalyzer::GetInstance();
@@ -588,7 +888,8 @@ TEST_F(LeakAnalyzerTest, undefined_pool_type_returns_empty_name)
     EXPECT_TRUE(analyzer.GetMemoryPoolName(PoolType::HOST).empty());
 }
 
-// 析构兜底：NPU泄漏表非空时逐device输出汇总，HAL client存在存活块时执行泄漏检查
+// 析构报告：NPU记录逐device输出；同地址HAL块经判定②去重（D7）不重复计入退出统计，
+// 仅经CheckHalLeak按client告警
 TEST_F(LeakAnalyzerTest, destructor_reports_npu_and_hal_leaks)
 {
     // HAL存活块：析构中CheckHalLeak按client查询到该块并逐块告警
@@ -598,13 +899,29 @@ TEST_F(LeakAnalyzerTest, destructor_reports_npu_and_hal_leaks)
     testing::internal::CaptureStdout();
     {
         LeakAnalyzer probe;
-        // 两台device各一条泄漏记录：验证析构逐device调用ReportLeak（unordered_map遍历覆盖多条）
-        probe.leakMemSums_[0][LeakMemKey{0x8100, PoolType::PTA_CACHING, 2}].leakSize =
-            static_cast<int64_t>(BYTE_TO_MB);
-        probe.leakMemSums_[1][LeakMemKey{0x8200, PoolType::ATB, 3}].leakSize =
-            static_cast<int64_t>(2 * BYTE_TO_MB);
+        // 两台device各一条泄漏记录：验证析构逐device输出明细与SUMMARY（unordered_map遍历覆盖多条）
+        // 记录pid与HAL块一致：析构中MarkExitUnfreedLeaks对同(pid,device,addr)的HAL块按D7彻底
+        // 跳过，退出统计不被HAL层重复计入
+        LeakRecord dev0Rec;
+        dev0Rec.ptr = 0x8100;
+        dev0Rec.poolType = PoolType::PTA_CACHING;
+        dev0Rec.pid = 91;
+        dev0Rec.device = 0;
+        dev0Rec.leakSize = static_cast<uint64_t>(BYTE_TO_MB);
+        dev0Rec.kernelIndex = 0;
+        dev0Rec.allocStep = 2;
+        probe.leakRecords_[1001] = dev0Rec;
+        LeakRecord dev1Rec;
+        dev1Rec.ptr = 0x8200;
+        dev1Rec.poolType = PoolType::ATB;
+        dev1Rec.pid = 91;
+        dev1Rec.device = 1;
+        dev1Rec.leakSize = static_cast<uint64_t>(2 * BYTE_TO_MB);
+        dev1Rec.kernelIndex = 0;
+        dev1Rec.allocStep = 3;
+        probe.leakRecords_[1002] = dev1Rec;
         probe.halClients_.insert(91);
-    }  // 析构：IsNpuAnalysisEnable为真→逐device ReportLeak；IsHalAnalysisEnable为真→CheckHalLeak
+    }  // 析构：UnSubscribe→MarkExitUnfreedLeaks→逐device ReportLeak→CheckHalLeak
     std::string output = testing::internal::GetCapturedStdout();
 
     EXPECT_NE(output.find("====== ERROR: Detected memory leaks on device 0 ======"), std::string::npos);

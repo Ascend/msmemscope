@@ -99,6 +99,9 @@ class MemoryState : public StateBase
     ShadowState shadowState = ShadowState::NORMAL;
     OwnerLabelManager owner;
     std::string inefficientType;
+    // 疑似泄漏标记：LeakAnalyzer判定①（跨step存活）/②（退出未释放）后写入；
+    // Dump序列化MALLOC事件attr时读取并输出leak:true，与inefficientType同构的"分析器写、Dump读"模式
+    bool isLeak = false;
 
     explicit MemoryState() {}
 
@@ -168,6 +171,9 @@ class MemoryStateManager : StateManager
     // 添加失败（poolType无效或MALLOC冲突）返回nullptr
     MemoryState* AddEvent(std::shared_ptr<MemoryEvent>& event);
     bool DeteleState(const PoolType& poolType, const MemoryStateKey& key);
+    // 疑似泄漏标记：按(poolType, key)给存活块打标（幂等，重复打标无副作用）；块不存在返回false。
+    // 由LeakAnalyzer在判定命中时调用，须与块存活期同线程调用（事件流单线程或析构阶段）
+    bool MarkLeak(const PoolType& poolType, const MemoryStateKey& key);
     MemoryState* GetState(const std::shared_ptr<EventBase>& event);
     MemoryState* GetState(const std::shared_ptr<MemoryEvent>& event);
     std::vector<std::pair<PoolType, MemoryStateKey>> GetAllStateKeys();

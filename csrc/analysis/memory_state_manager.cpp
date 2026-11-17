@@ -504,6 +504,25 @@ bool MemoryStateManager::DeteleState(const PoolType& poolType, const MemoryState
     return true;
 }
 
+bool MemoryStateManager::MarkLeak(const PoolType& poolType, const MemoryStateKey& key)
+{
+    std::lock_guard<std::mutex> lock(mtx_);
+    auto poolIt = poolsMap_.find(poolType);
+    if (poolIt == poolsMap_.end())
+    {
+        return false;
+    }
+    auto& statesMap = poolIt->second.statesMap;
+    auto it = statesMap.find(key);
+    if (it == statesMap.end())
+    {
+        return false;
+    }
+    // 粘性标记：命中后不随FREE清除，块生命周期内任何时刻落盘均携带leak:true
+    it->second.isLeak = true;
+    return true;
+}
+
 MemoryState* MemoryStateManager::GetState(const std::shared_ptr<MemoryEvent>& event)
 {
     std::lock_guard<std::mutex> lock(mtx_);

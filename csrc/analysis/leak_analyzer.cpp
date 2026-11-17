@@ -20,6 +20,7 @@
 #include <algorithm>
 #include <iomanip>
 #include <iostream>
+#include <tuple>
 
 #include "bit_field.h"
 #include "event_trace/trace_manager/event_trace_manager.h"
@@ -295,68 +296,160 @@ uint64_t LeakAnalyzer::GetAllocStep(const std::vector<StepBoundary>& boundaries,
 
 void LeakAnalyzer::CheckNpuLeak(const DeviceId& deviceId, const StepId& stepId)
 {
-    // 条件查询MSM存活块（含SHADOW_PROMOTED转正块，与原表语义差异见RFC行为对照）
+    // 条件查询MSM存活块（含SHADOW_PROMOTED转正块）作为本step结束时刻的快照
     LiveBlockFilter filter;
     filter.poolTypes = {PoolType::PTA_CACHING, PoolType::ATB, PoolType::MINDSPORE};
     filter.device = deviceId;
     auto blocks = MemoryStateManager::GetInstance().QueryLiveBlocks(filter);
-    const auto& boundaries = stepTracker_.GetStepBoundaries(deviceId);
 
+    std::lock_guard<std::mutex> lock(mutex_);
+    StepEndSnapshot& snapshot = stepEndSnapshots_[deviceId];
+    // 判定①：与上一次step结束快照求交集；要求两次结束stepId连续，且配对起点为非首个step
+    // （排除首个step结束，过滤初始化期一次性加载的块；stepId不连续说明打点缺失，不猜测配对）
+    if (snapshot.stepId != 0 && snapshot.stepId + 1 == stepId && snapshot.stepId >= LEAK_CHECK_MIN_PAIR_START_STEP)
+    {
+        for (const auto& blk : blocks)
+        {
+            if (snapshot.allocationIds.count(blk.allocationId) != 0)
+            {
+                RecordLeakLocked(blk, LeakSource::STEP_SUSPECTED, stepId);
+            }
+        }
+    }
+    // 滚动更新快照为本次step结束时刻的存活块
+    snapshot.stepId = stepId;
+    snapshot.allocationIds.clear();
     for (const auto& blk : blocks)
     {
-        const uint64_t allocStep = GetAllocStep(boundaries, blk.allocTimestamp, blk.allocEventId);
-        // stepId为0和1，即step 1及之前申请的内存，风险低暂不告警
-        if (allocStep <= skipSteps_)
-        {
-            continue;
-        }
-        // duration = 检查时的step - 分配时的step（原AddDuration逐step累加语义等价）
-        if (stepId <= allocStep || stepId - allocStep < durationThreshold_)
-        {
-            continue;
-        }
-
-        std::string memoryPoolName = GetMemoryPoolName(blk.poolType);
-        LOG_WARN("[npu %d][step %lu]: ptr: %llx has last for %lu steps. Please check if there is leaks in %s.",
-                 deviceId, stepId, blk.addr, stepId - allocStep, memoryPoolName.c_str());
-
-        // 泄漏候选集合：命中后不随FREE删除（累计告警语义）
-        LeakMemKey key{blk.addr, blk.poolType, allocStep};
-        auto& table = leakMemSums_[deviceId];
-        auto it = table.find(key);
-        if (it == table.end())
-        {
-            table.emplace(key, LeakInfo{});
-        }
-        table[key].kernelIndex = blk.kernelIndex;
-        table[key].leakSize = static_cast<int64_t>(blk.size);
+        snapshot.allocationIds.insert(blk.allocationId);
     }
 }
 
-void LeakAnalyzer::ReportLeak(const DeviceId& deviceId)
+void LeakAnalyzer::RecordLeakLocked(const LiveBlockInfo& blk, LeakSource source, StepId detectedStep)
 {
-    std::cout << "====== ERROR: Detected memory leaks on device " << deviceId << " ======" << std::endl;
-
-    // 依照step排序
-    std::vector<std::pair<LeakMemKey, LeakInfo>> leakVec(leakMemSums_[deviceId].begin(), leakMemSums_[deviceId].end());
-    auto leakCompare = [](const std::pair<LeakMemKey, LeakInfo>& a, const std::pair<LeakMemKey, LeakInfo>& b)
-    { return a.first.leakStepId < b.first.leakStepId; };
-    std::sort(leakVec.begin(), leakVec.end(), leakCompare);
-    // 输出泄漏信息总结
-    uint64_t leakInfoCounts = 0;
-    long double leakSizeSums = 0;
-    for (const auto& pair : leakVec)
+    // 粘性标记MSM的MemoryState：块生命周期内任何时刻落盘（FREE/PROC_EXIT）均携带leak:true
+    MemoryStateManager::GetInstance().MarkLeak(blk.poolType, MemoryStateKey{blk.pid, blk.device, blk.addr});
+    // 累计表按allocationId去重：①首次命中后每步重复命中、或②再次遇到同一块时保留首次记录
+    if (leakRecords_.find(blk.allocationId) != leakRecords_.end())
     {
-        const std::string poolName = GetMemoryPoolName(pair.first.type);
-        printf("Direct %s leak of %f Mb(s) at 0x%lx in kernel_%lu at step %lu.\n", poolName.c_str(),
-               (pair.second.leakSize / static_cast<double>(BYTE_TO_MB)), pair.first.ptr, pair.second.kernelIndex,
-               pair.first.leakStepId);
-        leakInfoCounts++;
-        long double leakTempSize = static_cast<long double>(pair.second.leakSize);
-        leakSizeSums = Utility::GetAddResult(leakTempSize, leakSizeSums);
+        return;
     }
-    std::cout << "====== SUMMARY: " << leakSizeSums / BYTE_TO_MB << " Mb(s) leaked in " << leakInfoCounts
-              << " allocation(s) ======" << std::endl;
+    LeakRecord rec;
+    rec.ptr = blk.addr;
+    rec.poolType = blk.poolType;
+    rec.pid = blk.pid;
+    rec.device = blk.device;
+    rec.leakSize = blk.size;
+    rec.kernelIndex = blk.kernelIndex;
+    rec.allocStep = GetAllocStep(stepTracker_.GetStepBoundaries(blk.device), blk.allocTimestamp, blk.allocEventId);
+    rec.detectedStep = detectedStep;
+    rec.source = source;
+    leakRecords_.emplace(blk.allocationId, rec);
+
+    if (source == LeakSource::STEP_SUSPECTED)
+    {
+        std::string memoryPoolName = GetMemoryPoolName(blk.poolType);
+        LOG_WARN(
+            "[npu %d][step %lu]: ptr: %llx suspected leak (alive at two consecutive step ends). "
+            "Please check if there is leaks in %s.",
+            blk.device, detectedStep, blk.addr, memoryPoolName.c_str());
+    }
+}
+
+void LeakAnalyzer::MarkExitUnfreedLeaks()
+{
+    // 判定②：进程退出时仍未释放的块标记为疑似泄漏，无step打点时同样生效，作为唯一兜底。
+    // 须在~MemoryStateManager的PROC_EXIT落盘前调用。与基线口径对齐的两个过滤（均为彻底跳过，
+    // 不打标不记录）：
+    // 1. 存在step打点时仅统计首个step结束点之后分配的块（allocStep>=2），初始化期常驻块不计入；
+    //    无step打点时不过滤（此时GetAllocStep恒为0，全部存活块兜底）
+    // 2. 与NPU层同(pid,device,addr)的HAL块跳过——NPU层（本次存活块或判定①累计记录）已覆盖该
+    //    内存，避免同一块内存双层计数。torch退出路径中PTA region常先于本函数被反注册，故除本次
+    //    存活块外，还需对照leakRecords_中判定①的累计记录
+    std::vector<LiveBlockInfo> npuBlocks;
+    if (IsNpuAnalysisEnable())
+    {
+        LiveBlockFilter filter;
+        filter.poolTypes = {PoolType::PTA_CACHING, PoolType::ATB, PoolType::MINDSPORE};
+        npuBlocks = MemoryStateManager::GetInstance().QueryLiveBlocks(filter);
+    }
+    std::vector<LiveBlockInfo> halBlocks;
+    if (IsHalAnalysisEnable())
+    {
+        LiveBlockFilter filter;
+        filter.poolTypes = {PoolType::HAL};
+        halBlocks = MemoryStateManager::GetInstance().QueryLiveBlocks(filter);
+    }
+    if (npuBlocks.empty() && halBlocks.empty())
+    {
+        return;
+    }
+    std::lock_guard<std::mutex> lock(mutex_);
+    std::set<std::tuple<uint64_t, int32_t, uint64_t>> npuAddrs;  // NPU层地址集合：(pid, device, addr)
+    for (const auto& pair : leakRecords_)
+    {
+        if (pair.second.poolType != PoolType::HAL)
+        {
+            npuAddrs.emplace(pair.second.pid, pair.second.device, pair.second.ptr);
+        }
+    }
+    for (const auto& blk : npuBlocks)
+    {
+        const auto& boundaries = stepTracker_.GetStepBoundaries(blk.device);
+        if (!boundaries.empty() && GetAllocStep(boundaries, blk.allocTimestamp, blk.allocEventId) < 2)
+        {
+            continue;
+        }
+        npuAddrs.emplace(blk.pid, blk.device, blk.addr);
+        RecordLeakLocked(blk, LeakSource::EXIT_UNFREED, 0);
+    }
+    for (const auto& blk : halBlocks)
+    {
+        const auto& boundaries = stepTracker_.GetStepBoundaries(blk.device);
+        if (!boundaries.empty() && GetAllocStep(boundaries, blk.allocTimestamp, blk.allocEventId) < 2)
+        {
+            continue;
+        }
+        if (npuAddrs.count(std::make_tuple(blk.pid, blk.device, blk.addr)) != 0)
+        {
+            continue;
+        }
+        RecordLeakLocked(blk, LeakSource::EXIT_UNFREED, 0);
+    }
+}
+
+void LeakAnalyzer::ReportLeak()
+{
+    if (leakRecords_.empty())
+    {
+        return;
+    }
+    // 按设备分组输出泄漏明细与统计（总块数+总大小）
+    std::unordered_map<DeviceId, std::vector<const LeakRecord*>> deviceRecords;
+    for (const auto& pair : leakRecords_)
+    {
+        deviceRecords[pair.second.device].push_back(&pair.second);
+    }
+    for (auto& devicePair : deviceRecords)
+    {
+        // 依照分配step排序（与原ReportLeak一致）
+        auto leakCompare = [](const LeakRecord* a, const LeakRecord* b) { return a->allocStep < b->allocStep; };
+        std::sort(devicePair.second.begin(), devicePair.second.end(), leakCompare);
+        std::cout << "====== ERROR: Detected memory leaks on device " << devicePair.first << " ======" << std::endl;
+        uint64_t leakInfoCounts = 0;
+        long double leakSizeSums = 0;
+        for (const auto* rec : devicePair.second)
+        {
+            const std::string poolName = GetMemoryPoolName(rec->poolType);
+            printf("Direct %s leak of %f Mb(s) at 0x%lx in kernel_%lu at step %lu.\n", poolName.c_str(),
+                   (rec->leakSize / static_cast<double>(BYTE_TO_MB)), rec->ptr, rec->kernelIndex, rec->allocStep);
+            leakInfoCounts++;
+            long double leakTempSize = static_cast<long double>(rec->leakSize);
+            leakSizeSums = Utility::GetAddResult(leakTempSize, leakSizeSums);
+        }
+        std::cout << "====== SUMMARY: " << leakSizeSums / BYTE_TO_MB << " Mb(s) leaked in " << leakInfoCounts
+                  << " allocation(s) ======" << std::endl;
+    }
 }
 
 void LeakAnalyzer::CheckHalLeak()
@@ -390,16 +483,14 @@ LeakAnalyzer::~LeakAnalyzer()
 {
     UnSubscribe();
 
+    // 判定②：先于~MemoryStateManager给退出未释放块打标，使后续PROC_EXIT落盘的
+    // MALLOC事件attr携带leak:true（析构顺序：~LeakAnalyzer → ~MemoryStateManager → ~Dump）
+    MarkExitUnfreedLeaks();
+
     // 原输出顺序为：NPU泄漏汇总（StepInnerAnalyzer析构）→ Gap统计（StepInnerAnalyzer析构）→
     // HAL泄漏检查（HalAnalyzer析构）；合并后NPU与HAL在此输出，Gap统计由HealthAnalyzer析构输出，
-    // 输出顺序调整为：NPU泄漏汇总 → HAL泄漏检查 → Gap统计（顺序差异见RFC行为对照）
-    if (IsNpuAnalysisEnable() && !leakMemSums_.empty())
-    {
-        for (const auto& pair : leakMemSums_)
-        {
-            ReportLeak(pair.first);
-        }
-    }
+    // 输出顺序调整为：NPU+HAL泄漏汇总 → Gap统计（顺序差异见RFC行为对照）
+    ReportLeak();
     if (IsHalAnalysisEnable())
     {
         CheckHalLeak();
@@ -457,17 +548,6 @@ const std::string& LeakAnalyzer::GetMemoryPoolName(const PoolType& poolType)
     static const std::string EMPTY_STRING;
     LOG_ERROR("Undefined memorypool type!");
     return EMPTY_STRING;
-}
-
-std::size_t LeakMemKeyHash::operator()(const LeakMemKey& leakKey) const
-{
-    return std::hash<uint64_t>()(leakKey.ptr) ^ std::hash<uint64_t>()(leakKey.leakStepId) ^
-           std::hash<PoolType>()(leakKey.type);
-}
-
-bool LeakMemKey::operator==(const LeakMemKey& other) const
-{
-    return ptr == other.ptr && leakStepId == other.leakStepId && type == other.type;
 }
 
 }  // namespace MemScope
