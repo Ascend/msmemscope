@@ -174,6 +174,11 @@ class MemoryStateManager : StateManager
     // 疑似泄漏标记：按(poolType, key)给存活块打标（幂等，重复打标无副作用）；块不存在返回false。
     // 由LeakAnalyzer在判定命中时调用，须与块存活期同线程调用（事件流单线程或析构阶段）
     bool MarkLeak(const PoolType& poolType, const MemoryStateKey& key);
+    // PROC_EXIT残留落盘：为所有存活块合成CleanUpEvent(PROC_EXIT)并经EventHandler路由，
+    // Dump订阅者写出[MALLOC+合成FREE]（携带isLeak→leak:true），路由阶段DeteleState删除状态，
+    // 重复调用为空操作（幂等）。~MemoryStateManager析构兜底调用；LeakAnalyzer析构打标后提前调用，
+    // 规避hook影子采集路径下MSM先构造、~MSM最后执行时~Dump已退订导致的落盘静默丢失
+    void FlushProcExitResiduals();
     MemoryState* GetState(const std::shared_ptr<EventBase>& event);
     MemoryState* GetState(const std::shared_ptr<MemoryEvent>& event);
     std::vector<std::pair<PoolType, MemoryStateKey>> GetAllStateKeys();

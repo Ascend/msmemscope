@@ -41,11 +41,13 @@ namespace MemScope
  * LeakAnalyzer类主要功能（统一原StepInnerAnalyzer与HalAnalyzer的泄漏检测职责）：
  * 1. 不维护内存块生命周期表，通过MemoryStateManager::QueryLiveBlocks条件查询存活块
  * 2. 判定①（跨step疑似泄漏）：每个step结束回调时对存活块拍allocationId快照，与上一次step结束快照
- *    求交集；两次结束stepId连续且配对起点为非首个step（>=2）时，交集中的块打疑似泄漏标记
- * 3. 判定②（退出未释放）：进程退出时（~LeakAnalyzer，先于~MemoryStateManager）对存活块打标，
- *    使PROC_EXIT落盘的MALLOC事件attr携带leak:true；无step打点时同样生效。与基线口径对齐的两个
- *    过滤（彻底跳过）：存在step打点时仅统计首个step结束点之后分配的块；与NPU层（存活块或判定①
- *    累计记录）同地址的HAL块不重复计入，避免同一块内存双层计数
+ *    求交集；两次结束stepId连续且配对起点为非首个step（>=2）、且块分配于首个step结束之后
+ *    （allocStep>=2，过滤初始化期/首个step内分配的常驻块）时，交集中的块打疑似泄漏标记
+ * 3. 判定②（退出未释放）：进程退出时（~LeakAnalyzer）对存活块打标，使PROC_EXIT落盘的MALLOC事件
+ *    attr携带leak:true；无step打点时同样生效。与基线口径对齐的两个过滤（彻底跳过）：存在step
+ *    打点时仅统计首个step结束点之后分配的块；与NPU层（存活块或判定①累计记录）同地址的HAL块
+ *    不重复计入，避免同一块内存双层计数。落盘由~LeakAnalyzer末尾显式调用
+ *    FlushProcExitResiduals完成，不依赖静态析构顺序（hook影子路径下~Dump可能先于~MSM析构）
  * 4. 泄漏记录按allocationId全局去重（地址复用不混淆），命中后不随FREE删除（累计告警语义）；
  *    MemoryState.isLeak为粘性标记，块生命周期内落盘均携带
  * 5. 订阅CLEAN_UP(RESIDUAL_BLOCK)还原double malloc告警；FREE事件幽灵state判定还原free无匹配告警
@@ -110,11 +112,13 @@ class LeakAnalyzer : public AnalyzerBase
     void HandleHalMemEvent(std::shared_ptr<EventBase>& event, MemoryState* state);
     void HandleResidualBlock(std::shared_ptr<EventBase>& event, MemoryState* state);
     void CheckNpuLeak(const DeviceId& deviceId, const StepId& stepId);
-    // 判定②：退出时对存活块打标并记录；须在~MemoryStateManager之前调用（析构中自动满足）。
-    // 存在step打点时跳过首个step结束点之前分配的块（allocStep<2）；与NPU层（存活块或判定①
-    // 累计记录）同地址的HAL块跳过（防双层计数）；二者均为彻底跳过（不打标不记录）
+    // 判定②：退出时对存活块打标并记录；须在PROC_EXIT残留落盘（~LeakAnalyzer末尾的
+    // FlushProcExitResiduals）之前调用。存在step打点时跳过首个step结束点之前分配的块
+    // （allocStep<2）；与NPU层（存活块或判定①累计记录）同地址的HAL块跳过（防双层计数）；
+    // 二者均为彻底跳过（不打标不记录）
     void MarkExitUnfreedLeaks();
-    // 打标MSM的MemoryState并写入累计表（须已持有mutex_；同allocationId重复调用保留首次记录）
+    // 打标MSM的MemoryState并写入累计表（须已持有mutex_，锁序约定mutex_→MSM::mtx_单向，禁止反向
+    // 嵌套；MarkLeak失败时告警留痕。同allocationId重复调用保留首次记录）
     void RecordLeakLocked(const LiveBlockInfo& blk, LeakSource source, StepId detectedStep);
     // 退出汇总：每设备输出疑似泄漏明细与总块数/总大小
     void ReportLeak();

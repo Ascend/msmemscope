@@ -734,7 +734,7 @@ void MemoryStateManager::PromoteShadowStates(const PromoteCallback& dumpFunc)
     }
 }
 
-MemoryStateManager::~MemoryStateManager()
+void MemoryStateManager::FlushProcExitResiduals()
 {
     try
     {
@@ -749,7 +749,7 @@ MemoryStateManager::~MemoryStateManager()
     }
     catch (const std::exception& e)
     {
-        // 析构阶段：各单例析构顺序不确定，Dump/FileCreateManager等可能已销毁，
+        // 析构/退出阶段：各单例析构顺序不确定，Dump/FileCreateManager等可能已销毁，
         // 异常必须在此吞掉，否则逃逸出析构函数 → std::terminate。
         // 一旦出错后续迭代必然同因失败，无需继续。
         fprintf(stderr, "[msmemscope] cleanup aborted: %s\n", e.what());
@@ -758,6 +758,12 @@ MemoryStateManager::~MemoryStateManager()
     {
         fprintf(stderr, "[msmemscope] cleanup aborted: unknown error\n");
     }
+}
+
+MemoryStateManager::~MemoryStateManager()
+{
+    // PROC_EXIT兜底落盘：正常路径下LeakAnalyzer析构中已显式调用过（状态已删除，此处为空操作）
+    FlushProcExitResiduals();
 }
 
 }  // namespace MemScope

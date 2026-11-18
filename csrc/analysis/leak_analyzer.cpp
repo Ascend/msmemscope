@@ -23,6 +23,7 @@
 #include <tuple>
 
 #include "bit_field.h"
+#include "dump.h"
 #include "event_trace/trace_manager/event_trace_manager.h"
 #include "utility/log.h"
 #include "utility/utils.h"
@@ -32,8 +33,10 @@ namespace MemScope
 
 LeakAnalyzer& LeakAnalyzer::GetInstance()
 {
-    // 确保依赖的单例先于LeakAnalyzer构造（MemoryStateManager内部已触发EventDispatcher/FileWriteManager），
-    // 利用C++静态对象析构逆序规则，使~LeakAnalyzer中QueryLiveBlocks与LOG宏安全
+    // 确保依赖的单例先于LeakAnalyzer构造（Dump内部触发FileWriteManager，MemoryStateManager内部
+    // 已触发EventDispatcher/FileWriteManager），利用C++静态对象析构逆序规则，
+    // 使~LeakAnalyzer中QueryLiveBlocks/显式落盘与LOG宏安全
+    (void)Dump::GetInstance();
     MemoryStateManager::GetInstance();
     Utility::Log::GetLog();
     static LeakAnalyzer analyzer;
@@ -301,16 +304,20 @@ void LeakAnalyzer::CheckNpuLeak(const DeviceId& deviceId, const StepId& stepId)
     filter.poolTypes = {PoolType::PTA_CACHING, PoolType::ATB, PoolType::MINDSPORE};
     filter.device = deviceId;
     auto blocks = MemoryStateManager::GetInstance().QueryLiveBlocks(filter);
+    const auto& boundaries = stepTracker_.GetStepBoundaries(deviceId);
 
     std::lock_guard<std::mutex> lock(mutex_);
     StepEndSnapshot& snapshot = stepEndSnapshots_[deviceId];
     // 判定①：与上一次step结束快照求交集；要求两次结束stepId连续，且配对起点为非首个step
-    // （排除首个step结束，过滤初始化期一次性加载的块；stepId不连续说明打点缺失，不猜测配对）
+    // （排除首个step结束，过滤初始化期一次性加载的块；stepId不连续说明打点缺失，不猜测配对）。
+    // 交集命中后还须按分配时刻过滤：初始化期或首个step内分配的常驻块（allocStep<2，如模型权重、
+    // 框架常驻资源）不判疑似泄漏，与判定②及基线skipSteps口径对齐，避免常驻块淹没真实泄漏信号
     if (snapshot.stepId != 0 && snapshot.stepId + 1 == stepId && snapshot.stepId >= LEAK_CHECK_MIN_PAIR_START_STEP)
     {
         for (const auto& blk : blocks)
         {
-            if (snapshot.allocationIds.count(blk.allocationId) != 0)
+            if (snapshot.allocationIds.count(blk.allocationId) != 0 &&
+                GetAllocStep(boundaries, blk.allocTimestamp, blk.allocEventId) >= LEAK_CHECK_MIN_PAIR_START_STEP)
             {
                 RecordLeakLocked(blk, LeakSource::STEP_SUSPECTED, stepId);
             }
@@ -327,8 +334,14 @@ void LeakAnalyzer::CheckNpuLeak(const DeviceId& deviceId, const StepId& stepId)
 
 void LeakAnalyzer::RecordLeakLocked(const LiveBlockInfo& blk, LeakSource source, StepId detectedStep)
 {
-    // 粘性标记MSM的MemoryState：块生命周期内任何时刻落盘（FREE/PROC_EXIT）均携带leak:true
-    MemoryStateManager::GetInstance().MarkLeak(blk.poolType, MemoryStateKey{blk.pid, blk.device, blk.addr});
+    // 锁序约定：持有mutex_时仅允许再获取MSM::mtx_（mutex_→mtx_单向），禁止反向嵌套。
+    // 粘性标记MSM的MemoryState：块生命周期内任何时刻落盘（FREE/PROC_EXIT）均携带leak:true；
+    // 块不存在（幽灵或已删除）时MarkLeak返回false，告警留痕避免打标失败被静默吞掉
+    if (!MemoryStateManager::GetInstance().MarkLeak(blk.poolType, MemoryStateKey{blk.pid, blk.device, blk.addr}))
+    {
+        LOG_WARN("[npu %d]: MarkLeak failed for ptr: %llx, state may be ghost or already removed.", blk.device,
+                 blk.addr);
+    }
     // 累计表按allocationId去重：①首次命中后每步重复命中、或②再次遇到同一块时保留首次记录
     if (leakRecords_.find(blk.allocationId) != leakRecords_.end())
     {
@@ -359,8 +372,8 @@ void LeakAnalyzer::RecordLeakLocked(const LiveBlockInfo& blk, LeakSource source,
 void LeakAnalyzer::MarkExitUnfreedLeaks()
 {
     // 判定②：进程退出时仍未释放的块标记为疑似泄漏，无step打点时同样生效，作为唯一兜底。
-    // 须在~MemoryStateManager的PROC_EXIT落盘前调用。与基线口径对齐的两个过滤（均为彻底跳过，
-    // 不打标不记录）：
+    // 打标后由~LeakAnalyzer末尾显式调用FlushProcExitResiduals落盘（不依赖静态析构顺序）。
+    // 与基线口径对齐的两个过滤（均为彻底跳过，不打标不记录）：
     // 1. 存在step打点时仅统计首个step结束点之后分配的块（allocStep>=2），初始化期常驻块不计入；
     //    无step打点时不过滤（此时GetAllocStep恒为0，全部存活块兜底）
     // 2. 与NPU层同(pid,device,addr)的HAL块跳过——NPU层（本次存活块或判定①累计记录）已覆盖该
@@ -384,6 +397,28 @@ void LeakAnalyzer::MarkExitUnfreedLeaks()
     {
         return;
     }
+    // 锁外：NPU/HAL通用的step起点过滤（同一逻辑提取为一处，避免两份拷贝后续漂移不一致）。
+    // GetStepBoundaries/GetAllocStep均为纯计算，提前到临界区外，锁内只做纯内存操作
+    auto filterByAllocStep = [this](const std::vector<LiveBlockInfo>& blocks)
+    {
+        std::vector<LiveBlockInfo> result;
+        for (const auto& blk : blocks)
+        {
+            const auto& boundaries = stepTracker_.GetStepBoundaries(blk.device);
+            if (boundaries.empty() ||
+                GetAllocStep(boundaries, blk.allocTimestamp, blk.allocEventId) >= LEAK_CHECK_MIN_PAIR_START_STEP)
+            {
+                result.push_back(blk);
+            }
+        }
+        return result;
+    };
+    npuBlocks = filterByAllocStep(npuBlocks);
+    halBlocks = filterByAllocStep(halBlocks);
+    if (npuBlocks.empty() && halBlocks.empty())
+    {
+        return;
+    }
     std::lock_guard<std::mutex> lock(mutex_);
     std::set<std::tuple<uint64_t, int32_t, uint64_t>> npuAddrs;  // NPU层地址集合：(pid, device, addr)
     for (const auto& pair : leakRecords_)
@@ -395,21 +430,11 @@ void LeakAnalyzer::MarkExitUnfreedLeaks()
     }
     for (const auto& blk : npuBlocks)
     {
-        const auto& boundaries = stepTracker_.GetStepBoundaries(blk.device);
-        if (!boundaries.empty() && GetAllocStep(boundaries, blk.allocTimestamp, blk.allocEventId) < 2)
-        {
-            continue;
-        }
         npuAddrs.emplace(blk.pid, blk.device, blk.addr);
         RecordLeakLocked(blk, LeakSource::EXIT_UNFREED, 0);
     }
     for (const auto& blk : halBlocks)
     {
-        const auto& boundaries = stepTracker_.GetStepBoundaries(blk.device);
-        if (!boundaries.empty() && GetAllocStep(boundaries, blk.allocTimestamp, blk.allocEventId) < 2)
-        {
-            continue;
-        }
         if (npuAddrs.count(std::make_tuple(blk.pid, blk.device, blk.addr)) != 0)
         {
             continue;
@@ -483,8 +508,7 @@ LeakAnalyzer::~LeakAnalyzer()
 {
     UnSubscribe();
 
-    // 判定②：先于~MemoryStateManager给退出未释放块打标，使后续PROC_EXIT落盘的
-    // MALLOC事件attr携带leak:true（析构顺序：~LeakAnalyzer → ~MemoryStateManager → ~Dump）
+    // 判定②：给退出未释放块打标，使其PROC_EXIT落盘的MALLOC事件attr携带leak:true
     MarkExitUnfreedLeaks();
 
     // 原输出顺序为：NPU泄漏汇总（StepInnerAnalyzer析构）→ Gap统计（StepInnerAnalyzer析构）→
@@ -495,6 +519,13 @@ LeakAnalyzer::~LeakAnalyzer()
     {
         CheckHalLeak();
     }
+
+    // 显式触发PROC_EXIT残留落盘：所有构造路径下LeakAnalyzer均晚于Dump/MemoryStateManager构造
+    // （初始化流程Dump先构造；hook影子采集路径MSM虽最先构造，仍早于LeakAnalyzer），此刻两者必然
+    // 存活。不再依赖~MemoryStateManager析构中的静态析构顺序重放——hook路径下MSM先构造、~MSM最后
+    // 执行，那时~Dump已析构退订，leak:true会静默丢失。状态经路由DeteleState删除，
+    // ~MemoryStateManager析构中的兜底重放为空操作（幂等）
+    MemoryStateManager::GetInstance().FlushProcExitResiduals();
 }
 
 std::vector<OOMMemRecord> LeakAnalyzer::QueryUnfreedRecords(int32_t deviceId, uint32_t clientId) const

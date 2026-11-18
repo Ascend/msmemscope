@@ -450,7 +450,51 @@ TEST_F(LeakAnalyzerTest, block_allocated_between_step_ends_not_flagged)
     EXPECT_FALSE(state->isLeak);
 
     MemoryStateManager::GetInstance().DeteleState(PoolType::PTA_CACHING,
-                                                  MemoryStateKey{1, 0, 0x8800});
+                                                   MemoryStateKey{1, 0, 0x8800});
+}
+
+// 判定①按分配时刻过滤初始化常驻块：初始化期（allocStep=0）与step1内（allocStep=1）分配且
+// 一直存活的块（模型权重/框架常驻资源形态）不因后续配对(E2,E3)命中而误报，与判定②及基线
+// skipSteps口径对齐；step2内分配的同形态块（allocStep=2）仍正常判定（正向对照）
+TEST_F(LeakAnalyzerTest, init_resident_blocks_not_flagged_by_step_pair_check)
+{
+    // 初始化期分配（ts早于step1边界）与step1内分配的常驻块，之后一直不释放
+    auto initBlock = CreateNpuMalloc(0x9000, 0, 1, 1, 500);
+    MemoryState* initState = MemoryStateManager::GetInstance().AddEvent(initBlock);
+    ASSERT_NE(initState, nullptr);
+    std::shared_ptr<EventBase> start1 = CreateMstxStart(1, 100, 0, 1000, 2);
+    LeakAnalyzer::GetInstance().EventHandle(start1, nullptr);
+    auto step1Block = CreateNpuMalloc(0x9100, 0, 1, 3, 1100);
+    MemoryState* step1State = MemoryStateManager::GetInstance().AddEvent(step1Block);
+    ASSERT_NE(step1State, nullptr);
+    std::shared_ptr<EventBase> end1 = CreateMstxEnd(1, 100, 0, 1200, 4);
+    LeakAnalyzer::GetInstance().EventHandle(end1, nullptr);
+
+    // step2内分配的正向对照块及E2快照
+    std::shared_ptr<EventBase> start2 = CreateMstxStart(2, 200, 0, 2000, 5);
+    LeakAnalyzer::GetInstance().EventHandle(start2, nullptr);
+    auto step2Block = CreateNpuMalloc(0x9200, 0, 1, 6, 2100);
+    MemoryState* step2State = MemoryStateManager::GetInstance().AddEvent(step2Block);
+    ASSERT_NE(step2State, nullptr);
+    std::shared_ptr<EventBase> end2 = CreateMstxEnd(2, 200, 0, 3000, 7);
+    LeakAnalyzer::GetInstance().EventHandle(end2, nullptr);
+
+    // 配对(E2,E3)起点合法，三个块在两次step结束时都存活、均交集命中：
+    // 仅step2内分配的块（allocStep=2）打标，初始化期与step1内分配的常驻块被过滤
+    std::shared_ptr<EventBase> start3 = CreateMstxStart(3, 300, 0, 3100, 8);
+    LeakAnalyzer::GetInstance().EventHandle(start3, nullptr);
+    std::shared_ptr<EventBase> end3 = CreateMstxEnd(3, 300, 0, 4000, 9);
+    LeakAnalyzer::GetInstance().EventHandle(end3, nullptr);
+
+    EXPECT_FALSE(initState->isLeak);
+    EXPECT_FALSE(step1State->isLeak);
+    EXPECT_TRUE(step2State->isLeak);
+    const auto& records = LeakAnalyzer::GetInstance().leakRecords_;
+    ASSERT_EQ(records.size(), 1u);
+    auto recordIt = records.find(step2State->allocationId);
+    ASSERT_NE(recordIt, records.end());
+    EXPECT_EQ(recordIt->second.source, LeakSource::STEP_SUSPECTED);
+    EXPECT_EQ(recordIt->second.allocStep, 2u);
 }
 
 // 判定①要求stepId连续：打点缺失（E2后直接E4）不猜测配对，后续连续配对(E4,E5)正常判定
@@ -921,7 +965,7 @@ TEST_F(LeakAnalyzerTest, destructor_reports_npu_and_hal_leaks)
         dev1Rec.allocStep = 3;
         probe.leakRecords_[1002] = dev1Rec;
         probe.halClients_.insert(91);
-    }  // 析构：UnSubscribe→MarkExitUnfreedLeaks→逐device ReportLeak→CheckHalLeak
+    }  // 析构：UnSubscribe→MarkExitUnfreedLeaks→逐device ReportLeak→CheckHalLeak→FlushProcExitResiduals
     std::string output = testing::internal::GetCapturedStdout();
 
     EXPECT_NE(output.find("====== ERROR: Detected memory leaks on device 0 ======"), std::string::npos);
@@ -933,7 +977,13 @@ TEST_F(LeakAnalyzerTest, destructor_reports_npu_and_hal_leaks)
     EXPECT_NE(output.find("====== SUMMARY: 1 Mb(s) leaked in 1 allocation(s) ======"), std::string::npos);
     EXPECT_NE(output.find("====== SUMMARY: 2 Mb(s) leaked in 1 allocation(s) ======"), std::string::npos);
 
+    // 显式落盘链路：probe析构中FlushProcExitResiduals已把存活块（含上述HAL块）经PROC_EXIT路由
+    // 落盘并删除状态，leak:true的落盘不依赖~MemoryStateManager的静态析构顺序；
+    // 重复调用幂等（状态已删，空操作不崩溃）
+    EXPECT_TRUE(MemoryStateManager::GetInstance().GetAllStateKeys().empty());
+    MemoryStateManager::GetInstance().FlushProcExitResiduals();
+    EXPECT_TRUE(MemoryStateManager::GetInstance().GetAllStateKeys().empty());
+
     // 局部实例析构已UnSubscribe同一SubscriberId，恢复单例订阅
     LeakAnalyzer::GetInstance().Subscribe();
-    MemoryStateManager::GetInstance().DeteleState(PoolType::HAL, MemoryStateKey{91, 0, 0x8100});
 }
