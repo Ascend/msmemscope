@@ -48,7 +48,7 @@ During memory analysis, use the mstx instrumentation function to locate issues. 
     ```
 
 2. Check the command output after the command is executed.
-    - If the information shown in [Figure 1 Memory leak](#leak) is displayed, a memory leak occurs. The command output displays the summary information about memory leaks of each device, including the number of steps where memory leak occurs, associated kernel, address, and leak size, and summarizes the total number of leaked blocks and the total leak size at the end of each device. A memory block is determined to be a suspected leak if it is alive at the end of two consecutive steps (excluding the first step) and is allocated after the first step ends, or is still not released when the process exits (when step marks exist, only blocks allocated after the end time of the first step are counted at process exit; HAL blocks at the same address as an already-recorded NPU memory pool block are not counted again, to avoid double counting of the same memory). In addition, the **MALLOC** event of a suspected leaked memory block in the dump file is marked with **leak:true** in **Attr**, facilitating quick filtering and locating. Note that the leak report generated at process exit may contain a small amount of framework runtime resources (such as CANN stream buffers). Such blocks are not leaks in user code; check the call stack for verification.
+    - If the information shown in [Figure 1 Memory leak](#leak) is displayed, a memory leak occurs. The command output displays the summary information about memory leaks of each device, including the number of steps where memory leak occurs, associated kernel, address, and leak size.
 
         Figure 1 Memory leak<a id="leak"></a>
 
