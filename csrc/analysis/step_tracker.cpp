@@ -88,6 +88,12 @@ bool StepTracker::HandleMstxRangeStart(const std::shared_ptr<MstxEvent>& mstxEve
         state.boundaries.begin(), state.boundaries.end(), boundary, [](const StepBoundary& lhs, const StepBoundary& rhs)
         { return std::tie(lhs.timestamp, lhs.eventId) < std::tie(rhs.timestamp, rhs.eventId); });
     state.boundaries.insert(pos, boundary);
+    // 首个stepId>=2开始边界记录（泄漏过滤的基线口径截止点，见GetFirstStep2Start注释）
+    if (stepId >= 2 && state.step2StartTimestamp == 0)
+    {
+        state.step2StartTimestamp = mstxEvent->timestamp;
+        state.step2StartEventId = mstxEvent->id;
+    }
     if (onStepStart_)
     {
         onStepStart_(deviceId, stepId);
@@ -119,6 +125,11 @@ bool StepTracker::HandleMstxRangeEnd(const std::shared_ptr<MstxEvent>& mstxEvent
     {
         return false;
     }
+    // 记录该device首个step结束时间戳（泄漏过滤口径"首个step结束点之后分配"的数据来源）
+    if (it->second.firstEndTimestamp == 0)
+    {
+        it->second.firstEndTimestamp = mstxEvent->timestamp;
+    }
     if (onStepEnd_)
     {
         onStepEnd_(deviceId, stepId);
@@ -141,18 +152,29 @@ bool StepTracker::HandlePyStep(const std::shared_ptr<EventBase>& event)
 
     // msmemcope.step()同时标识了上一个step的结束和(step+1)的开始，这里先处理上一个step结束，检测泄漏与gap
     // 如果是第一次msmemcope.step()的调用，即step=1，表中此时没有不处理
+    // 先记录该device首个step结束时间戳（泄漏过滤口径"首个step结束点之后分配"的数据来源）
+    auto& state = deviceStates_[deviceId];
+    if (state.firstEndTimestamp == 0)
+    {
+        state.firstEndTimestamp = event->timestamp;
+    }
     if (onStepEnd_)
     {
         onStepEnd_(deviceId, stepId);
     }
 
     // 处理(step+1)的开始（与MSTX路径一致，按(timestamp, eventId)升序插入）
-    auto& state = deviceStates_[deviceId];
     StepBoundary boundary{stepId + 1, event->timestamp, event->id, 0};
     auto pos = std::lower_bound(
         state.boundaries.begin(), state.boundaries.end(), boundary, [](const StepBoundary& lhs, const StepBoundary& rhs)
         { return std::tie(lhs.timestamp, lhs.eventId) < std::tie(rhs.timestamp, rhs.eventId); });
     state.boundaries.insert(pos, boundary);
+    // 首个stepId>=2开始边界记录（泄漏过滤的基线口径截止点，见GetFirstStep2Start注释）
+    if (stepId + 1 >= 2 && state.step2StartTimestamp == 0)
+    {
+        state.step2StartTimestamp = event->timestamp;
+        state.step2StartEventId = event->id;
+    }
     if (onStepStart_)
     {
         onStepStart_(deviceId, stepId + 1);
@@ -180,6 +202,29 @@ StepId StepTracker::GetCurrentStep(const DeviceId& deviceId) const
         return 0;
     }
     return it->second.currentStep;
+}
+
+uint64_t StepTracker::GetFirstStepEndTimestamp(const DeviceId& deviceId) const
+{
+    auto it = deviceStates_.find(deviceId);
+    if (it == deviceStates_.end())
+    {
+        return 0;
+    }
+    return it->second.firstEndTimestamp;
+}
+
+void StepTracker::GetFirstStep2Start(const DeviceId& deviceId, uint64_t& timestamp, uint64_t& eventId) const
+{
+    timestamp = 0;
+    eventId = 0;
+    auto it = deviceStates_.find(deviceId);
+    if (it == deviceStates_.end())
+    {
+        return;
+    }
+    timestamp = it->second.step2StartTimestamp;
+    eventId = it->second.step2StartEventId;
 }
 
 }  // namespace MemScope

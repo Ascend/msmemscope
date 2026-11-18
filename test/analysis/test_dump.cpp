@@ -299,6 +299,36 @@ TEST_F(DumpTest, ShouldDumpEvent_all_enabled)
     EXPECT_TRUE(dumper->ShouldDumpEvent(EventBaseType::MSTX, globalConfig));
 }
 
+TEST_F(DumpTest, DumpMemoryEvent_leak_attr)
+{
+    // dumpEventType=0：WriteToFile在ShouldDumpEvent处提前返回，仅验证attr组装不产生文件
+    Config config = Config{};
+    config.dumpEventType = 0;
+    ConfigManager::Instance().SetConfig(config);
+
+    auto memoryEvent = std::make_shared<MemoryEvent>();
+    memoryEvent->eventType = EventBaseType::MALLOC;
+    memoryEvent->eventSubType = EventSubType::PTA_CACHING;
+    memoryEvent->poolType = PoolType::PTA_CACHING;
+    memoryEvent->addr = 0x3039;
+    memoryEvent->device = 0;
+    memoryEvent->id = 1;
+    memoryEvent->timestamp = 1000;
+    memoryEvent->size = 10;
+
+    // 未打标块：attr不含leak键
+    auto stateNormal = std::make_shared<MemoryState>();
+    dumper->DumpMemoryEvent(memoryEvent, stateNormal.get());
+    EXPECT_EQ(memoryEvent->attr.find("leak:true"), std::string::npos);
+    EXPECT_NE(memoryEvent->attr.find("allocation_id:"), std::string::npos);
+
+    // 疑似泄漏块（LeakAnalyzer判定①/②后置位）：MALLOC事件attr追加leak:true
+    auto stateLeak = std::make_shared<MemoryState>();
+    stateLeak->isLeak = true;
+    dumper->DumpMemoryEvent(memoryEvent, stateLeak.get());
+    EXPECT_NE(memoryEvent->attr.find("leak:true"), std::string::npos);
+}
+
 // ==================== 事件属性组装 / 快照 / OOM / 落盘链路补充 ====================
 
 // HAL 池：输出 used/process_used/device_used；MALLOC 且 inefficientType 非空时输出分级低效标签

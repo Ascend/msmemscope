@@ -71,6 +71,16 @@ class StepTracker
     // 当前step编号（step start后推进；无step记录返回0）
     StepId GetCurrentStep(const DeviceId& deviceId) const;
 
+    // 指定device首个step结束事件的时间戳（0表示该device尚无step结束）。
+    // 泄漏判定过滤口径为"分配于首个step结束点之后"，须用结束时刻而非step start边界推导，
+    // 否则step k结束~step k+1开始间隙分配的块会被误归属到step k而漏判
+    uint64_t GetFirstStepEndTimestamp(const DeviceId& deviceId) const;
+
+    // 指定device首个stepId>=2的开始边界(timestamp, eventId)（timestamp为0表示尚无）。
+    // 泄漏过滤的基线口径截止点：打点自step 2起（无step1）或step结束点缺失（mstx range_end
+    // 丢失）时，仍按"第2个step开始之后"过滤，与基线allocStep>=2行为一致
+    void GetFirstStep2Start(const DeviceId& deviceId, uint64_t& timestamp, uint64_t& eventId) const;
+
     StepSource GetStepSource() const { return stepSource_; }
 
    private:
@@ -78,6 +88,9 @@ class StepTracker
     {
         StepId currentStep = 0;
         std::vector<StepBoundary> boundaries;
+        uint64_t firstEndTimestamp = 0;    // 首个step结束事件的时间戳，0表示尚无结束
+        uint64_t step2StartTimestamp = 0;  // 首个stepId>=2开始边界的时间戳，0表示尚无
+        uint64_t step2StartEventId = 0;    // 与step2StartTimestamp构成字典序截止点
     };
 
     bool HandleMstxRangeStart(const std::shared_ptr<MstxEvent>& mstxEvent);

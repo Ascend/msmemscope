@@ -209,6 +209,11 @@ void Dump::DumpMemoryEvent(std::shared_ptr<MemoryEvent>& event, MemoryState* sta
     {
         attr += "inefficient_type:" + state->inefficientType + ",";
     }
+    if (event->eventType == EventBaseType::MALLOC && state->isLeak)
+    {
+        // 疑似泄漏标记（LeakAnalyzer判定①跨step存活/②退出未释放写入），与pinned/shadow同风格的布尔标记
+        attr += "leak:true,";
+    }
     if (event->eventType == EventBaseType::MALLOC && event->eventSubType == EventSubType::HAL)
     {
         std::string pageType = event->pageType == MemPageType::MEM_GIANT_PAGE_TYPE  ? "giant"
