@@ -44,6 +44,7 @@ constexpr const char *WATCH_DUMP_DIR = "watch_dump";
 constexpr const char *LOG_DIR = "msmemscope_logs";
 constexpr const char *CONFIG_FILE = "config";
 constexpr const char *COMPARE_DIR = "compare";
+constexpr uint64_t DEFAULT_MEMORY_COMPARE_TIMEOUT_SEC = 60;  // 内存对比默认超时时间(秒,0=不限制)
 constexpr uint16_t WATCH_OP_DIR_MAX_LENGTH = 255;
 constexpr const char *CSV_FILE_PREFIX = "memscope_dump_";
 constexpr const char *PYTHON_TRACE_FILE_PREFIX = "python_trace_";
@@ -175,6 +176,9 @@ struct UserCommand
     std::vector<std::string> cmd;
     std::vector<std::string> inputPaths;
     std::string outputPath;
+    // 内存对比超时时间(秒,0=不限制),仅--compare有效
+    uint64_t compareTimeoutSeconds{DEFAULT_MEMORY_COMPARE_TIMEOUT_SEC};
+    bool timeoutExplicitSet{false};
     // 进程外控制通道:-c/--command单发控制字(非空=单发模式)
     std::string attachCommand;
     /* 日志等级冲突裁决的解析状态：

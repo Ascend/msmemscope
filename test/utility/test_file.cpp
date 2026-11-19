@@ -285,6 +285,22 @@ TEST_F(FileTest, is_file_size_safe_exceed_max_size_expect_false)
     remove(overSizeFile.c_str());
 }
 
+// 测试IsFileSizeSafe：通过环境变量调整上限后，超过新上限的文件被拒绝
+TEST_F(FileTest, is_file_size_safe_env_override_expect_false)
+{
+    setenv(MAX_INPUT_FILE_SIZE_ENV, "1", 1);
+    std::string overSizeFile = "./env_over_max_size_file.txt";
+    FILE* fp = fopen(overSizeFile.c_str(), "w");
+    ASSERT_NE(fp, nullptr);
+    ASSERT_EQ(ftruncate(fileno(fp), static_cast<off_t>((1ULL << 30) + 1)), 0);
+    fclose(fp);
+
+    EXPECT_FALSE(Utility::IsFileSizeSafe(overSizeFile));
+
+    remove(overSizeFile.c_str());
+    unsetenv(MAX_INPUT_FILE_SIZE_ENV);
+}
+
 // 测试SetDirPath：第一个分支（dirPath长度超过PATH_MAX，触发异常）
 TEST_F(FileTest, set_dir_path_exceed_path_max_expect_no_change)
 {

@@ -52,6 +52,7 @@ void ParseHostLeakMode(const std::string &param, Config &config, bool &printHelp
 void ParseBlockSizeThreshold(const std::string &param, Config &config, bool &printHelpInfo);
 void ParseSampleRate(const std::string &param, Config &config, bool &printHelpInfo);
 void ParseOutputPath(const std::string param, Config &config, bool &printHelpInfo);
+void ParseTimeout(const std::string &param, UserCommand &userCommand);
 void SetEventDefaultConfig(Config &config);
 void SetAnalysisDefaultConfig(Config &config);
 void SetEffectiveConfig(Config &config);

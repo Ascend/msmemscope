@@ -77,6 +77,8 @@ enum class OptVal : int32_t
     SAMPLE_RATE,
     // 进程外控制通道:attach目标pid(--pid)
     ATTACH_PID,
+    // 内存对比超时时间(秒,0=不限制)
+    TIMEOUT,
 };
 constexpr uint16_t INPUT_STR_MAX_LEN = 4096;
 
@@ -129,6 +131,8 @@ void ShowHelpInfo()
         << "                                host-leaks: host heap leak detection (interval-unfreed);" << std::endl
         << "                                mutually exclusive with leaks/decompose/inefficient/oom" << std::endl
         << "      --compare                 Enable memory comparison mode" << std::endl
+        << "      --timeout <SECONDS>       Per-device time limit for comparison phases [default: "
+        << DEFAULT_MEMORY_COMPARE_TIMEOUT_SEC << "; 0 = unlimited]" << std::endl
         << "      --watch <CONFIG>          Watch mode: start[:outid],end[,full-content]" << std::endl
         << std::endl
         << "Host leak options (with --analysis=host-leaks):" << std::endl
@@ -187,6 +191,12 @@ bool UserCommandPrecheck(const UserCommand &userCommand)
     if (!userCommand.config.outputCorrectPaths)
     {
         std::cout << "Please use correct output path!" << std::endl;
+        return false;
+    }
+
+    if (userCommand.timeoutExplicitSet && !userCommand.config.enableCompare)
+    {
+        std::cout << "[msmemscope] Error: --timeout is only valid with --compare." << std::endl;
         return false;
     }
     // 进程外控制通道互斥校验:attach模式独立于采集/对比/分析
@@ -335,6 +345,7 @@ std::vector<option> GetLongOptArray()
         {"call-stack", required_argument, nullptr, static_cast<int32_t>(OptVal::CALL_STACK)},
         {"analysis", required_argument, nullptr, static_cast<int32_t>(OptVal::ANALYSIS)},
         {"compare", no_argument, nullptr, static_cast<int32_t>(OptVal::COMPARE)},
+        {"timeout", required_argument, nullptr, static_cast<int32_t>(OptVal::TIMEOUT)},
         {"watch", required_argument, nullptr, static_cast<int32_t>(OptVal::WATCH)},
         // 路径参数：新标准名注册短选项，旧名保留为隐藏别名
         {"input-path", required_argument, nullptr, 'i'},
@@ -588,6 +599,19 @@ void ParseCallstack(const std::string &param, Config &config, bool &printHelpInf
     return;
 }
 
+void ParseTimeout(const std::string &param, UserCommand &userCommand)
+{
+    uint32_t seconds = 0;
+    if (!Utility::IsValidInteger(param) || !Utility::StrToUint32(seconds, param))
+    {
+        std::cout << "[msmemscope] Error: --timeout requires a non-negative integer (unit: seconds)." << std::endl;
+        userCommand.printHelpInfo = true;
+        return;
+    }
+    userCommand.compareTimeoutSeconds = seconds;
+    userCommand.timeoutExplicitSet = true;
+}
+
 static void ParseInputPaths(const std::string param, UserCommand &userCommand)
 {
     if (param.length() > INPUT_STR_MAX_LEN)
@@ -614,7 +638,9 @@ static void ParseInputPaths(const std::string param, UserCommand &userCommand)
 
     if (userCommand.inputPaths.size() != PATHSIZE)
     {
-        std::cout << "[msmemscope] Error: invalid paths input." << std::endl;
+        userCommand.inputPaths.clear();
+        std::cout << "[msmemscope] Error: --input-path requires exactly two valid files within the size limit."
+                  << std::endl;
         userCommand.printHelpInfo = true;
     }
     else
@@ -1157,6 +1183,9 @@ void ParseUserCommand(const int32_t &opt, const std::string &param, UserCommand 
             break;
         case static_cast<int32_t>(OptVal::COMPARE):
             userCommand.config.enableCompare = true;
+            break;
+        case static_cast<int32_t>(OptVal::TIMEOUT):
+            ParseTimeout(param, userCommand);
             break;
         case static_cast<int32_t>(OptVal::WATCH):
             ParseWatchConfig(param, userCommand.config, userCommand.printHelpInfo);

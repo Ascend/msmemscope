@@ -286,6 +286,16 @@ void MemoryCompare::GetMemoryUsage(size_t index, const ORIGINAL_FILE_DATA &data,
     }
 }
 
+void MemoryCompare::ReportTimeout()
+{
+    if (timedOut_)
+    {
+        return;
+    }
+    timedOut_ = true;
+    std::cerr << "[msmemscope] Error: Memory comparison timed out; results may be incomplete." << std::endl;
+}
+
 bool MemoryCompare::WriteCompareDataToCsv()
 {
     LOG_DEBUG("Write compare result data to csv file.");
@@ -378,13 +388,15 @@ std::shared_ptr<PathNode> MemoryCompare::BuildPath(const NAME_WITH_INDEX &baseLi
     std::vector<std::shared_ptr<PathNode>> diagonal(size, nullptr);  // 存储每一步的最优路径位置
     diagonal[middle + 1] = std::make_shared<Snake>(0, -1);
     auto start_time = Utility::GetTimeMicroseconds();
+    const uint64_t timeoutUs = compareTimeoutUs_;
     for (int64_t d = 0; d < max; ++d)
     {
         for (int64_t k = -d; k <= d; k += KSTEPSIZE)
         {
             auto end_time = Utility::GetTimeMicroseconds();
-            if ((end_time - start_time) >= MAXLOOPTIME)
+            if (timeoutUs != 0 && (end_time - start_time) >= timeoutUs)
             {
+                ReportTimeout();
                 LOG_ERROR("Memory comparison build path failed! Reaching maximum loop time limit!");
                 break;
             }
@@ -436,11 +448,13 @@ void MemoryCompare::BuildDiff(std::shared_ptr<PathNode> path, const DEVICEID dev
         return;
     }
     auto start_time = Utility::GetTimeMicroseconds();
+    const uint64_t timeoutUs = compareTimeoutUs_;
     while (path && path->prev && path->prev->j >= 0)
     {
         auto end_time = Utility::GetTimeMicroseconds();
-        if ((end_time - start_time) >= MAXLOOPTIME)
+        if (timeoutUs != 0 && (end_time - start_time) >= timeoutUs)
         {
+            ReportTimeout();
             LOG_ERROR("Memory compare build diff failed! Reaching maximum loop time limit!");
             break;
         }
@@ -489,9 +503,11 @@ void MemoryCompare::MyersDiff(const DEVICEID deviceId, const NAME_WITH_INDEX &ba
     }
 }
 
-void MemoryCompare::RunComparison(const std::vector<std::string> &paths)
+void MemoryCompare::RunComparison(const std::vector<std::string> &paths, uint64_t timeoutSeconds)
 {
     LOG_INFO("Start to compare memory data.");
+    compareTimeoutUs_ = timeoutSeconds * 1000000ULL;  // 0 表示不限制
+    timedOut_ = false;
     auto start_time = Utility::GetTimeMicroseconds();
     // 已在命令行输入处校验path长度
     std::string pathBase = paths[0];

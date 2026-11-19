@@ -18,8 +18,25 @@ from abc import ABC, abstractmethod
 from pathlib import Path
 import os
 
-MAX_FILE_SIZE = 8 * 1024 * 1024 * 1024  # 支持最大文件大小为8G
+MAX_FILE_SIZE_GB = 8
+MAX_FILE_SIZE_ENV = "MSMEMSCOPE_MAX_INPUT_FILE_SIZE_GB"
+MAX_FILE_SIZE = MAX_FILE_SIZE_GB * 1024**3  # 默认最大文件大小8GiB
 INPUT_STR_MAX_LEN = 4096  # 支持的最大文件路径长度
+
+
+def _get_max_file_size_bytes() -> int:
+    """读取环境变量配置的输入文件上限（字节），非法时回退默认值。"""
+    value = os.environ.get(MAX_FILE_SIZE_ENV)
+    if value is None or value.strip() == "":
+        return MAX_FILE_SIZE
+    try:
+        limit_gb = int(value)
+    except ValueError:
+        limit_gb = 0
+    if limit_gb <= 0 or limit_gb > (1 << 20):
+        print(f"WARN: Invalid {MAX_FILE_SIZE_ENV} value {value!r}. Using the default {MAX_FILE_SIZE_GB}GiB.")
+        return MAX_FILE_SIZE
+    return limit_gb * 1024**3
 
 
 class AnalysisConfig:
@@ -42,8 +59,12 @@ class AnalysisConfig:
             raise FileNotFoundError(f"File not found: {path} or not a regular file")
         if not os.access(str(path), os.R_OK):
             raise PermissionError(f"Read permission denied: {path}")
-        if file_stat.st_size > MAX_FILE_SIZE:
-            raise ValueError(f"Max allowed size is {MAX_FILE_SIZE / (1024 * 1024 * 1024):.2f}GB")
+        max_file_size = _get_max_file_size_bytes()
+        if file_stat.st_size > max_file_size:
+            raise ValueError(
+                f"File {path} is {file_stat.st_size} bytes, exceeding the maximum allowed size of "
+                f"{max_file_size} bytes. Set {MAX_FILE_SIZE_ENV} to a larger value (unit: GiB) to raise the limit."
+            )
         if len(str(path)) > INPUT_STR_MAX_LEN:
             raise ValueError(f"Max allowed length is {INPUT_STR_MAX_LEN} characters")
         # 目前只涉及csv和db文件的操作

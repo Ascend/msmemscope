@@ -38,7 +38,7 @@
 namespace MemScope
 {
 constexpr uint32_t KSTEPSIZE = 2;
-constexpr uint32_t MAXLOOPTIME = 60 * 1000000;  // 最大处理时间1分钟
+constexpr uint64_t MAXLOOPTIME = DEFAULT_MEMORY_COMPARE_TIMEOUT_SEC * 1000000ULL;  // 默认单阶段处理时间
 constexpr double MICROSEC = 1000000.0;
 
 using DEVICEID = uint64_t;
@@ -90,7 +90,8 @@ class MemoryCompare
 {
    public:
     static MemoryCompare &GetInstance();
-    void RunComparison(const std::vector<std::string> &paths);
+    void RunComparison(const std::vector<std::string> &paths,
+                       uint64_t timeoutSeconds = DEFAULT_MEMORY_COMPARE_TIMEOUT_SEC);
 
    private:
     explicit MemoryCompare();
@@ -106,6 +107,7 @@ class MemoryCompare
     void MyersDiff(const DEVICEID deviceId, const NAME_WITH_INDEX &baseLists, const NAME_WITH_INDEX &compareLists);
     void ReadNameIndexData(const ORIGINAL_FILE_DATA &data, NAME_WITH_INDEX &dataLists);
     void GetMemoryUsage(size_t index, const ORIGINAL_FILE_DATA &data, int64_t &memDiff);
+    void ReportTimeout();
     void CalcuMemoryDiff(const DEVICEID deviceId, const std::tuple<std::string, std::string, size_t> &baseData,
                          const std::tuple<std::string, std::string, size_t> &compareData);
     void ReadFile(std::string &path, std::unordered_map<DEVICEID, ORIGINAL_FILE_DATA> &data);
@@ -120,6 +122,8 @@ class MemoryCompare
     std::unordered_set<DEVICEID> deviceIdSet_;
     std::string fileNamePrefix_ = "memory_compare_";
     std::string framework_;
+    uint64_t compareTimeoutUs_{MAXLOOPTIME};
+    bool timedOut_{false};
     std::mutex fileMutex_;
 };
 

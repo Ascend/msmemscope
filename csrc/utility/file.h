@@ -41,7 +41,30 @@ constexpr uint32_t DEFAULT_UMASK_FOR_DB_FILE = 0177;
 constexpr uint32_t DEFAULT_UMASK_FOR_BIN_FILE = 0177;
 constexpr uint32_t DEFAULT_UMASK_FOR_LOG_FILE = 0177;
 constexpr uint32_t DEFAULT_UMASK_FOR_CONFIG_FILE = 0137;
-constexpr uint64_t MAX_INPUT_FILE_SIZE = 1UL << 33;  // 8GB
+constexpr uint64_t DEFAULT_MAX_INPUT_FILE_SIZE_GB = 8;
+constexpr const char* MAX_INPUT_FILE_SIZE_ENV = "MSMEMSCOPE_MAX_INPUT_FILE_SIZE_GB";
+constexpr uint64_t MAX_INPUT_FILE_SIZE = DEFAULT_MAX_INPUT_FILE_SIZE_GB << 30;  // 默认 8GiB
+
+/// 读取输入文件大小上限（字节）；未配置或配置非法时回退默认值
+inline uint64_t GetMaxInputFileSize()
+{
+    const char* envValue = std::getenv(MAX_INPUT_FILE_SIZE_ENV);
+    if (envValue == nullptr || envValue[0] == '\0')
+    {
+        return MAX_INPUT_FILE_SIZE;
+    }
+
+    char* end = nullptr;
+    const unsigned long long limitGb = std::strtoull(envValue, &end, 10);
+    constexpr unsigned long long MAX_LIMIT_GB = 1ULL << 20;  // 1PiB
+    if (end == envValue || *end != '\0' || limitGb == 0 || limitGb > MAX_LIMIT_GB)
+    {
+        std::cout << "[msmemscope] Warn: Invalid " << MAX_INPUT_FILE_SIZE_ENV << " value \"" << envValue
+                  << "\". Using the default " << DEFAULT_MAX_INPUT_FILE_SIZE_GB << "GiB." << std::endl;
+        return MAX_INPUT_FILE_SIZE;
+    }
+    return static_cast<uint64_t>(limitGb) << 30;
+}
 
 class FileCreateManager
 {
@@ -192,10 +215,12 @@ inline bool IsFileSizeSafe(const std::string& path)
         return false;
     }
 
-    if (buffer.st_size > static_cast<int64_t>(MAX_INPUT_FILE_SIZE))
+    const uint64_t maxFileSize = GetMaxInputFileSize();
+    if (buffer.st_size > static_cast<int64_t>(maxFileSize))
     {
-        std::cout << "[msmemscope] Error: File " << path << " exceeds maximum size (" << MAX_INPUT_FILE_SIZE
-                  << " bytes)." << std::endl;
+        std::cout << "[msmemscope] Error: File " << path << " is " << buffer.st_size
+                  << " bytes, exceeding the maximum allowed size of " << maxFileSize << " bytes. Set "
+                  << MAX_INPUT_FILE_SIZE_ENV << " to a larger value (unit: GiB) to raise the limit." << std::endl;
         return false;
     }
     return true;

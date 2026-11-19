@@ -37,7 +37,7 @@ void Command::Exec() const
 
     if (userCommand_.config.enableCompare)
     {
-        MemoryCompare::GetInstance().RunComparison(userCommand_.inputPaths);
+        MemoryCompare::GetInstance().RunComparison(userCommand_.inputPaths, userCommand_.compareTimeoutSeconds);
         return;
     }
 
