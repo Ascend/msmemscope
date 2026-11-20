@@ -203,7 +203,7 @@ check_leaks(input_path: str, mstx_info: str, start_index: int)
 
 |参数名|输入/输出|说明|
 |--|--|--|
-|input_path|输入|使用msMemScope采集的csv文件所在路径，需使用绝对路径。|
+|input_path|输入|使用msMemScope采集的csv文件所在路径，需使用绝对路径。单个文件默认最大为8GiB，可通过环境变量`MSMEMSCOPE_MAX_INPUT_FILE_SIZE_GB`调整（单位GiB）。|
 |mstx_info|输入|mark打点使用的mstx文本信息，用于标识泄漏分析的范围。|
 |start_index|输入|开始进行泄漏分析的mstx打点索引。|
 
@@ -239,7 +239,7 @@ check_inefficient(input_path: str, mem_size: int = 0, inefficient_type: List[str
 
 |参数名|输入/输出|说明|
 |--|--|--|
-|input_path|输入|需要进行离线自定义低效内存识别处理的csv或者db文件路径。|
+|input_path|输入|需要进行离线自定义低效内存识别处理的csv或者db文件路径。单个文件默认最大为8GiB，可通过环境变量`MSMEMSCOPE_MAX_INPUT_FILE_SIZE_GB`调整（单位GiB）。|
 |mem_size|输入|低效内存阈值，单位：Byte，低于该阈值的内存块不会输出结果。|
 |inefficient_type|输入|低效类型分类，确定判断策略，仅输出用户关注的低效内存类型。当前支持的类型如下：<br> - 过早申请：early_allocation <br> - 过迟释放：late_deallocation <br> - 临时闲置：temporary_idleness|
 |idle_threshold|输入|临时闲置阈值，决定临时闲置低效内存的API阈值，可以灵活设置阈值大小。|

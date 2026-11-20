@@ -319,6 +319,10 @@ Host堆内存泄漏检测的输出文件保存在`{output}/msmemscope_{*PID*}_{_
 
     其中--compare和--input-path参数必须一起使用，单个使用无效，同时--input-path输入的两个文件路径需要逗号（全角半角逗号均可）隔开，--level也可选为op。
 
+    > **说明：**
+    > - 单个输入文件默认最大为8GiB，可通过环境变量`MSMEMSCOPE_MAX_INPUT_FILE_SIZE_GB`调整（单位GiB）。
+    > - 内存对比默认单阶段超时60秒，可通过`--timeout <SECONDS>`调整（单位秒，`0`表示不限制）；超时时命令会提示结果可能不完整。
+
 5. Step间对比生成的结果目录如下。
 
     ```text

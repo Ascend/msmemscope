@@ -1983,6 +1983,21 @@ TEST(ClientParser, usercommand_precheck_valid_commands_expect_true)
     EXPECT_TRUE(UserCommandPrecheck(compareCmd));
 }
 
+// UserCommandPrecheck：--timeout仅可与--compare一起使用
+TEST(ClientParser, usercommand_precheck_timeout_without_compare_expect_false)
+{
+    ClientParser cliParser;
+    UserCommand cmd{};
+    cliParser.InitialConfig(cmd.config);
+    cmd.timeoutExplicitSet = true;
+    cmd.compareTimeoutSeconds = 5;
+
+    testing::internal::CaptureStdout();
+    EXPECT_FALSE(UserCommandPrecheck(cmd));
+    const std::string capture = testing::internal::GetCapturedStdout();
+    EXPECT_NE(capture.find("--timeout is only valid with --compare"), std::string::npos) << capture;
+}
+
 // GetShortOptString(L364-385)：标准表结果 + 自定义表(flag非空/不可打印val/终止项截断)
 TEST(ClientParser, get_short_opt_string_expect_short_options)
 {
@@ -2077,6 +2092,72 @@ TEST(ClientParser, parse_input_path_too_long_expect_early_return)
     EXPECT_TRUE(cmd.inputPaths.empty());
     EXPECT_FALSE(cmd.config.inputCorrectPaths);
     EXPECT_NE(capture.find("Parameter --input length exceeds the maximum length:4096"), std::string::npos) << capture;
+}
+
+// ParseInputPaths：超过大小上限时给出具体原因和明确的最终提示
+TEST(ClientParser, parse_input_path_oversize_expect_specific_error)
+{
+    const char* smallFile = "cli_size_ok_tmp.csv";
+    const char* bigFile = "cli_size_big_tmp.csv";
+    {
+        std::ofstream ofs(smallFile);
+        ofs << "x\n";
+    }
+    FILE* fp = fopen(bigFile, "w");
+    ASSERT_NE(fp, nullptr);
+    ASSERT_EQ(ftruncate(fileno(fp), static_cast<off_t>((1ULL << 30) + 1)), 0);
+    fclose(fp);
+    setenv(Utility::MAX_INPUT_FILE_SIZE_ENV, "1", 1);
+
+    UserCommand cmd{};
+    testing::internal::CaptureStdout();
+    ParseUserCommand('i', std::string(bigFile) + "," + smallFile, cmd);
+    const std::string capture = testing::internal::GetCapturedStdout();
+
+    EXPECT_TRUE(cmd.printHelpInfo);
+    EXPECT_TRUE(cmd.inputPaths.empty());
+    EXPECT_NE(capture.find("exceeding the maximum allowed size"), std::string::npos) << capture;
+    EXPECT_NE(capture.find("within the size limit"), std::string::npos) << capture;
+
+    unsetenv(Utility::MAX_INPUT_FILE_SIZE_ENV);
+    std::remove(smallFile);
+    std::remove(bigFile);
+}
+
+// ParseTimeout：--timeout 单位为秒，0表示不限制，非法值提示
+TEST(ClientParser, parse_timeout_expect_seconds)
+{
+    struct Case
+    {
+        const char *arg;
+        bool explicitSet;
+        uint64_t seconds;
+        bool printHelp;
+    };
+    const Case cases[] = {{"--timeout=5", true, 5, false},
+                          {"--timeout=0", true, 0, false},
+                          {nullptr, false, DEFAULT_MEMORY_COMPARE_TIMEOUT_SEC, false},
+                          {"--timeout=abc", false, DEFAULT_MEMORY_COMPARE_TIMEOUT_SEC, true}};
+    for (const auto &testCase : cases)
+    {
+        std::vector<const char *> argv = {"msmemscope"};
+        if (testCase.arg != nullptr)
+        {
+            argv.push_back(testCase.arg);
+        }
+        optind = 1;
+        ClientParser cliParser;
+        testing::internal::CaptureStdout();
+        UserCommand cmd = cliParser.Parse(static_cast<int32_t>(argv.size()), const_cast<char **>(argv.data()));
+        const std::string capture = testing::internal::GetCapturedStdout();
+        EXPECT_EQ(cmd.timeoutExplicitSet, testCase.explicitSet);
+        EXPECT_EQ(cmd.compareTimeoutSeconds, testCase.seconds);
+        EXPECT_EQ(cmd.printHelpInfo, testCase.printHelp);
+        if (testCase.printHelp)
+        {
+            EXPECT_NE(capture.find("--timeout requires a non-negative integer"), std::string::npos) << capture;
+        }
+    }
 }
 
 // ParseOutputPath(L626-633)：参数长度超过PATH_MAX提前返回，保留默认输出目录
