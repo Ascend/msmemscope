@@ -194,6 +194,14 @@ bool UserCommandPrecheck(const UserCommand &userCommand)
         return false;
     }
 
+    if (userCommand.hostLeakOptionExplicitSet &&
+        !BitPresent(userCommand.config.analysisType, static_cast<size_t>(AnalysisType::HOST_LEAK_ANALYSIS)))
+    {
+        std::cout << "[msmemscope] Error: --host-leak-mode/--block-size-threshold/--sample-rate "
+                  << "require --analysis=host-leaks." << std::endl;
+        return false;
+    }
+
     if (userCommand.timeoutExplicitSet && !userCommand.config.enableCompare)
     {
         std::cout << "[msmemscope] Error: --timeout is only valid with --compare." << std::endl;
@@ -707,6 +715,7 @@ void ParseDataLevel(const std::string param, Config &config, bool &printHelpInfo
     };
 
     BitField<decltype(config.levelType)> levelBit;
+    bool hasValidLevel = false;
 
     while (it != end)
     {
@@ -717,6 +726,7 @@ void ParseDataLevel(const std::string param, Config &config, bool &printHelpInfo
             {
                 return parseFailed();
             }
+            hasValidLevel = true;
             if (level == "0" || level == "1")
             {
                 // 兼容旧值：0→op, 1→kernel，命中时触发弃用告警
@@ -732,6 +742,11 @@ void ParseDataLevel(const std::string param, Config &config, bool &printHelpInfo
             }
         }
         it++;
+    }
+
+    if (!hasValidLevel)
+    {
+        return parseFailed();
     }
 
     config.levelType = levelBit.getValue();
@@ -965,8 +980,8 @@ void ParseDataFormat(const std::string &param, Config &config, bool &printHelpIn
     };
     auto parseFailedFormat = [&printHelpInfo](void)
     {
-        std::cout << "[msmemscope] Error: --data-format param is invalid. "
-                  << "DATA_FORMAT can only be set csv,db." << std::endl;
+        std::cout << "[msmemscope] Error: --format param is invalid. "
+                  << "FORMAT can only be set csv,db." << std::endl;
         printHelpInfo = true;
     };
     auto it = dataFormatMap.find(param);
@@ -1237,12 +1252,15 @@ void ParseUserCommand(const int32_t &opt, const std::string &param, UserCommand 
             ParseCollectMode(param, userCommand.config, userCommand.printHelpInfo);
             break;
         case static_cast<int32_t>(OptVal::HOST_LEAK_MODE):
+            userCommand.hostLeakOptionExplicitSet = true;
             ParseHostLeakMode(param, userCommand.config, userCommand.printHelpInfo);
             break;
         case static_cast<int32_t>(OptVal::BLOCK_SIZE_THRESHOLD):
+            userCommand.hostLeakOptionExplicitSet = true;
             ParseBlockSizeThreshold(param, userCommand.config, userCommand.printHelpInfo);
             break;
         case static_cast<int32_t>(OptVal::SAMPLE_RATE):
+            userCommand.hostLeakOptionExplicitSet = true;
             ParseSampleRate(param, userCommand.config, userCommand.printHelpInfo);
             break;
         case 'p':  // for --pid(进程外控制通道attach目标)

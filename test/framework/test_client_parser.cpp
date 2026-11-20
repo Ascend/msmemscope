@@ -1998,6 +1998,27 @@ TEST(ClientParser, usercommand_precheck_timeout_without_compare_expect_false)
     EXPECT_NE(capture.find("--timeout is only valid with --compare"), std::string::npos) << capture;
 }
 
+// UserCommandPrecheck：host-leak专属参数必须与--analysis=host-leaks一起使用
+TEST(ClientParser, usercommand_precheck_host_leak_options_require_host_leaks)
+{
+    ClientParser cliParser;
+    UserCommand withoutHostLeaks{};
+    cliParser.InitialConfig(withoutHostLeaks.config);
+    withoutHostLeaks.hostLeakOptionExplicitSet = true;
+    testing::internal::CaptureStdout();
+    EXPECT_FALSE(UserCommandPrecheck(withoutHostLeaks));
+    const std::string capture = testing::internal::GetCapturedStdout();
+    EXPECT_NE(capture.find("require --analysis=host-leaks"), std::string::npos) << capture;
+
+    UserCommand withHostLeaks{};
+    cliParser.InitialConfig(withHostLeaks.config);
+    BitField<decltype(withHostLeaks.config.analysisType)> analysisBit;
+    analysisBit.setBit(static_cast<size_t>(AnalysisType::HOST_LEAK_ANALYSIS));
+    withHostLeaks.config.analysisType = analysisBit.getValue();
+    withHostLeaks.hostLeakOptionExplicitSet = true;
+    EXPECT_TRUE(UserCommandPrecheck(withHostLeaks));
+}
+
 // GetShortOptString(L364-385)：标准表结果 + 自定义表(flag非空/不可打印val/终止项截断)
 TEST(ClientParser, get_short_opt_string_expect_short_options)
 {
@@ -2232,14 +2253,38 @@ TEST(ClientParser, parse_data_format_invalid_value_rejected)
     const std::string capture = testing::internal::GetCapturedStdout();
     EXPECT_TRUE(printHelp);
     EXPECT_EQ(config.dataFormat, static_cast<uint8_t>(DataFormat::CSV));
-    EXPECT_NE(capture.find("--data-format param is invalid"), std::string::npos) << capture;
-    EXPECT_NE(capture.find("DATA_FORMAT can only be set csv,db"), std::string::npos) << capture;
+    EXPECT_NE(capture.find("--format param is invalid"), std::string::npos) << capture;
+    EXPECT_NE(capture.find("FORMAT can only be set csv,db"), std::string::npos) << capture;
 
     printHelp = false;
     Config dbConfig{};
     ParseDataFormat("db", dbConfig, printHelp);
     EXPECT_FALSE(printHelp);
     EXPECT_EQ(dbConfig.dataFormat, static_cast<uint8_t>(DataFormat::DB));
+}
+
+// ParseDataLevel：空值或仅空 token 时拒绝，避免 levelType 被写成 0
+TEST(ClientParser, parse_data_level_empty_expect_rejected)
+{
+    bool printHelp = false;
+    Config config{};
+    config.levelType = 1;  // 默认 op
+    testing::internal::CaptureStdout();
+    ParseDataLevel("", config, printHelp);
+    const std::string capture = testing::internal::GetCapturedStdout();
+    EXPECT_TRUE(printHelp);
+    EXPECT_EQ(config.levelType, 1u);
+    EXPECT_NE(capture.find("invalid data trace level input"), std::string::npos) << capture;
+
+    printHelp = false;
+    Config commaConfig{};
+    commaConfig.levelType = 1;
+    testing::internal::CaptureStdout();
+    ParseDataLevel(",,", commaConfig, printHelp);
+    const std::string commaCapture = testing::internal::GetCapturedStdout();
+    EXPECT_TRUE(printHelp);
+    EXPECT_EQ(commaConfig.levelType, 1u);
+    EXPECT_NE(commaCapture.find("invalid data trace level input"), std::string::npos) << commaCapture;
 }
 
 // ParseDevice(L977-1016)：空token跳过，npu/cpu标志仍正确
@@ -2343,12 +2388,13 @@ TEST(ClientParser, parse_sample_rate_values)
 // ParseUserCommand的HOST_LEAK_MODE/BLOCK_SIZE_THRESHOLD/SAMPLE_RATE分支(L1210-1218)
 TEST(ClientParser, parse_host_leak_options_via_cli)
 {
-    std::vector<const char *> argv = {"msmemscope", "--host-leak-mode=event", "--block-size-threshold=4096",
-                                      "--sample-rate=2"};
+    std::vector<const char *> argv = {"msmemscope", "--analysis=host-leaks", "--host-leak-mode=event",
+                                      "--block-size-threshold=4096", "--sample-rate=2"};
     optind = 1;
     ClientParser cliParser;
     UserCommand cmd = cliParser.Parse(static_cast<int32_t>(argv.size()), const_cast<char **>(argv.data()));
     ASSERT_FALSE(cmd.printHelpInfo);
+    EXPECT_TRUE(cmd.hostLeakOptionExplicitSet);
     EXPECT_EQ(cmd.config.hostLeakMode, static_cast<uint8_t>(HostLeakMode::EVENT));
     EXPECT_EQ(cmd.config.blockSizeThreshold, 4096u);
     EXPECT_EQ(cmd.config.sampleRate, 2u);

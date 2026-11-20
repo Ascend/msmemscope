@@ -181,6 +181,8 @@ struct UserCommand
     bool timeoutExplicitSet{false};
     // 进程外控制通道:-c/--command单发控制字(非空=单发模式)
     std::string attachCommand;
+    // 是否显式指定了host-leaks专属参数(--host-leak-mode/--block-size-threshold/--sample-rate)
+    bool hostLeakOptionExplicitSet{false};
     /* 日志等级冲突裁决的解析状态：
      * 显式 --log-level 优先于快捷开关；多个快捷开关并存时按"可见度最高者生效" */
     bool logLevelExplicitSet{false};  // 是否显式指定 --log-level
