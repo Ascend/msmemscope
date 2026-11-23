@@ -17,7 +17,7 @@ msMemScope工具提供快速分析接口和基于analyzer类的离线分析两�
     |接口|说明|
     |--|--|
     |list_analyzers|该接口输出msMemScope工具当前支持的所有内存分析类型。|
-    |get_analyzer_config|该接口查看运行相应内存分析类型需要输入的参数。|
+    |get_analyzer_config|该接口查看运行对应内存分析类型需要输入的参数。|
     |analyze|msMemScope工具提供的快速分析接口，支持内存泄漏分析和自定义低效内存识别。|
     |check_leaks|msMemScope工具提供的内存泄漏快速分析接口。|
     |check_inefficient|msMemScope工具提供的自定义低效内存识别快速分析接口。|
