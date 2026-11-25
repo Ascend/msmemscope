@@ -209,7 +209,7 @@ class KernelLaunchEvent : public EventBase
    public:
     std::string streamId;
     std::string taskId;
-    uint64_t kernelIndex;
+    uint64_t kernelIndex = 0;
 
     KernelLaunchEvent() {}
 };

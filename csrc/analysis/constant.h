@@ -149,8 +149,10 @@ const std::unordered_map<EventSubType, std::string> EVENT_SUB_TYPE_MAP = {
     {EventSubType::ATEN_START, "ATEN_START"},
     {EventSubType::ATEN_END, "ATEN_END"},
     {EventSubType::KERNEL_LAUNCH, "KERNEL_LAUNCH"},
-    {EventSubType::KERNEL_EXECUTE_START, "KERNEL_EXECUTE_START"},
-    {EventSubType::KERNEL_EXECUTE_END, "KERNEL_EXECUTE_END"},
+    // runtime 路径的 kernel 执行事件与 ATB 路径统一按对外文档的 Event Type 展示
+    // （KERNEL_START/KERNEL_END），枚举值保留以区分 attr 的组装方式
+    {EventSubType::KERNEL_EXECUTE_START, "KERNEL_START"},
+    {EventSubType::KERNEL_EXECUTE_END, "KERNEL_END"},
     {EventSubType::ATB_KERNEL_START, "KERNEL_START"},
     {EventSubType::ATB_KERNEL_END, "KERNEL_END"},
     {EventSubType::ACL_INIT, "ACL_INIT"},

@@ -1304,7 +1304,7 @@ TEST_F(EventReportCoverageTest, launch_and_access_reporting)
     // KernelLaunch / KernelExcute
     const uint64_t kernelIndexBefore = report_->kernelLaunchRecordIndex_.load();
     TaskKey key = std::make_tuple(static_cast<uint16_t>(0), static_cast<uint16_t>(1), static_cast<uint16_t>(2));
-    AclnnKernelMapInfo kernelInfo{0, key, "kernel_add"};
+    AclnnKernelMapInfo kernelInfo{1234, key, "kernel_add"};
     EXPECT_TRUE(report_->ReportKernelLaunch(kernelInfo));
     kernelEvent = captor_.LastAs<KernelLaunchEvent>(EventBaseType::KERNEL_LAUNCH);
     ASSERT_NE(kernelEvent, nullptr);
@@ -1312,17 +1312,25 @@ TEST_F(EventReportCoverageTest, launch_and_access_reporting)
     EXPECT_EQ(kernelEvent->name, "kernel_add");
     EXPECT_EQ(kernelEvent->streamId, "1");
     EXPECT_EQ(kernelEvent->taskId, "2");
+    EXPECT_EQ(kernelEvent->timestamp, 1234U);
     EXPECT_EQ(kernelEvent->kernelIndex, kernelIndexBefore + 1);
     EXPECT_EQ(report_->kernelLaunchRecordIndex_.load(), kernelIndexBefore + 1);
 
     std::string kernelName = "kernel_add";
-    EXPECT_TRUE(report_->ReportKernelExcute(key, kernelName, 123, RecordSubType::KERNEL_START));
+    EXPECT_TRUE(report_->ReportKernelExcute(key, kernelName, 456, RecordSubType::KERNEL_START));
     kernelEvent = captor_.LastAs<KernelLaunchEvent>(EventBaseType::KERNEL_LAUNCH);
     ASSERT_NE(kernelEvent, nullptr);
     EXPECT_EQ(kernelEvent->eventSubType, EventSubType::KERNEL_EXECUTE_START);
-    EXPECT_TRUE(report_->ReportKernelExcute(key, kernelName, 456, RecordSubType::KERNEL_END));
+    EXPECT_EQ(kernelEvent->timestamp, 456U);
+    EXPECT_EQ(kernelEvent->pid, INVALID_PROCESSID);
+    EXPECT_EQ(kernelEvent->tid, INVALID_THREADID);
+    EXPECT_TRUE(report_->ReportKernelExcute(key, kernelName, 789, RecordSubType::KERNEL_END));
     EXPECT_EQ(captor_.LastAs<KernelLaunchEvent>(EventBaseType::KERNEL_LAUNCH)->eventSubType,
               EventSubType::KERNEL_EXECUTE_END);
+
+    // 频率未就绪时驱动时间换算返回0：时间戳回退为上报时刻，不产生1970时间戳
+    EXPECT_TRUE(report_->ReportKernelExcute(key, kernelName, 0, RecordSubType::KERNEL_START));
+    EXPECT_NE(captor_.LastAs<KernelLaunchEvent>(EventBaseType::KERNEL_LAUNCH)->timestamp, 0U);
 
     // ACL 初始化事件（FINALIZE 会触达驱动符号解析，放到子进程用例）
     EXPECT_TRUE(report_->ReportAclItf(RecordSubType::INIT));

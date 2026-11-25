@@ -946,8 +946,8 @@ TEST_F(TestProcess, process_kernel_event)
     std::string result = "ID,Event,Event Type,Name,Timestamp(ns),Process Id,Thread Id,Device Id,Ptr,Attr"
 ",Call Stack(Python),Call Stack(C)\n"
 "1,KERNEL_LAUNCH,KERNEL_LAUNCH,add01,12,123,1234,0,N/A,\"{streamId:111,taskId:222}\",,\n"
-"2,KERNEL_LAUNCH,KERNEL_EXECUTE_START,add01,13,N/A,N/A,0,N/A,\"{streamId:111,taskId:222}\",,\n"
-"3,KERNEL_LAUNCH,KERNEL_EXECUTE_END,add01,14,N/A,N/A,0,N/A,\"{streamId:111,taskId:222}\",,\n"
+"2,KERNEL_LAUNCH,KERNEL_START,add01,13,N/A,N/A,0,N/A,\"{streamId:111,taskId:222}\",,\n"
+"3,KERNEL_LAUNCH,KERNEL_END,add01,14,N/A,N/A,0,N/A,\"{streamId:111,taskId:222}\",,\n"
 "1,KERNEL_LAUNCH,KERNEL_START,add01,12,123,1234,0,N/A,\"{path:0/0_123/add}\",,\n"
 "2,KERNEL_LAUNCH,KERNEL_END,add01,13,123,1234,0,N/A,\"{path:0/0_123/add}\",,\n";
     std::string fileContent;

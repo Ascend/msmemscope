@@ -20,7 +20,9 @@
 #include "bit_field.h"
 #include "driver_prof_api.h"
 #include "event_report.h"
+#include "log.h"
 #include "memory_watch/memory_watch.h"
+#include "runtime_prof_api.h"
 #include "securec.h"
 #include "stars_common.h"
 #include "utils.h"
@@ -212,6 +214,9 @@ void KernelEventTrace::CreateReadDataChannel(uint32_t devId)
 
 void KernelEventTrace::StartKernelEventTrace()
 {
+    // 先构造EventReport（内部注册prof回调），再开启驱动prof通道：
+    // 部分场景首个kernel下发前未经过aclInit，晚注册会错过runtime的hash/compact回调
+    EventReport::Instance(MemScopeCommType::SHARED_MEMORY);
     GetDeviceSocType();  // trigger SoC type detection early
     int32_t devId = GD_INVALID_NUM;
     if (!GetDeviceInfo::Instance().GetDeviceId(devId) || devId == GD_INVALID_NUM)
@@ -240,6 +245,13 @@ std::string RuntimeKernelLinker::GetLastKernelName(uint64_t tid)
     return currentNameMap_[tid];
 }
 
+size_t RuntimeKernelLinker::GetTaskMapSizeForTest()
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto iter = kernelNameMp_.find(Utility::GetTid());
+    return iter == kernelNameMp_.end() ? 0 : iter->second.size();
+}
+
 void RuntimeKernelLinker::RuntimeTaskInfoLaunch(const TaskKey& key, uint64_t hashId)
 {
     if (hashId == 0)
@@ -256,9 +268,32 @@ void RuntimeKernelLinker::RuntimeTaskInfoLaunch(const TaskKey& key, uint64_t has
     if (!vec.empty())
     {
         vec.back().taskKey = key;
-        vec.back().kernelName = GetHashInfo(hashId);
-        std::string name =
-            std::to_string(std::get<0>(key)) + "_" + std::to_string(iter->first) + "/" + vec.back().kernelName;
+        std::string kernelName = GetHashInfo(hashId);
+        if (kernelName.empty())
+        {
+            // 部分CANN版本的MsprofGetHashId不回调工具注册的hash回调（hash由libmsprof自行计算），
+            // 但名字仍保存在libmsprof内部，经MsprofId2Str反查取回并缓存
+            kernelName = GetKernelNameByHashId(hashId);
+            if (!kernelName.empty())
+            {
+                hashInfo_map_[hashId] = kernelName;  // 已持有mutex_，缓存后后续下发不再反查
+            }
+        }
+        if (kernelName.empty())
+        {
+            // hash回调未生效且无法反查时不能用空名，否则执行事件会被丢弃；
+            // 用hash生成占位名保证kernel_launch/start/end都能落盘且可相互关联
+            uint64_t unresolvedCount = ++unresolvedNameCount_;
+            if (unresolvedCount == 1 || unresolvedCount % KERNEL_TASK_LOG_INTERVAL == 0)
+            {
+                LOG_WARN("kernel name unresolved: hashId=%llu, knownHashNames=%zu, use placeholder (count=%llu)",
+                         static_cast<unsigned long long>(hashId), hashInfo_map_.size(),
+                         static_cast<unsigned long long>(unresolvedCount));
+            }
+            kernelName = "unknown_kernel_" + std::to_string(hashId);
+        }
+        vec.back().kernelName = kernelName;
+        std::string name = std::to_string(std::get<0>(key)) + "_" + std::to_string(iter->first) + "/" + kernelName;
         currentNameMap_[iter->first] = name;
         bool isKernelLevel = BitPresent(GetConfig().levelType, static_cast<size_t>(LevelType::LEVEL_KERNEL));
         if ((GetConfig().watchConfig.isWatched || TensorMonitor::GetInstance().IsInMonitoring()) && isKernelLevel)
@@ -287,6 +322,17 @@ void RuntimeKernelLinker::KernelLaunch()
     else
     {
         auto& vec = iter->second;
+        // SOC日志通道异常时KERNEL_END不会到达，关联表会按launch次数无界增长；
+        // 达到上限时先批量淘汰最旧记录再push（均摊O(1)，且避免vector容量继续翻倍）
+        if (vec.size() >= KERNEL_TASK_MAP_MAX_PER_THREAD)
+        {
+            vec.erase(vec.begin(), vec.begin() + static_cast<std::ptrdiff_t>(KERNEL_TASK_MAP_EVICT_BATCH));
+            overflowEvictCount_ += KERNEL_TASK_MAP_EVICT_BATCH;
+            // 每 KERNEL_TASK_MAP_EVICT_BATCH 次下发才触发一轮淘汰，无需再限频
+            LOG_WARN("kernel task map reached %zu entries, evicted oldest %zu entries (evicted total=%llu)",
+                     KERNEL_TASK_MAP_MAX_PER_THREAD, KERNEL_TASK_MAP_EVICT_BATCH,
+                     static_cast<unsigned long long>(overflowEvictCount_));
+        }
         vec.push_back(value);
     }
 
@@ -299,47 +345,133 @@ std::string RuntimeKernelLinker::GetKernelName(TaskKey& key, RecordSubType type)
     DeviceSocType socType = GetDeviceSocType();
     bool isNewSoc = (socType == DeviceSocType::SOC_A5 || socType == DeviceSocType::SOC_A6);
 
+    // A5/A6的SOC日志key不含streamId，只比较deviceId+taskId；A2/A3先比较完整key
+    auto exactMatched = [&key, isNewSoc](const TaskKey& candidate)
+    {
+        if (isNewSoc)
+        {
+            return std::get<0>(candidate) == std::get<0>(key) && std::get<2>(candidate) == std::get<2>(key);
+        }
+        return candidate == key;
+    };
+
+    for (auto& pair : kernelNameMp_)
+    {
+        auto& vec = pair.second;
+        for (auto it = vec.begin(); it != vec.end(); ++it)
+        {
+            if (!exactMatched(it->taskKey))
+            {
+                continue;
+            }
+            std::string name = it->kernelName;
+            if (name.empty())
+            {
+                uint64_t emptyCount = ++emptyNameCount_;
+                if (emptyCount == 1 || emptyCount % KERNEL_TASK_LOG_INTERVAL == 0)
+                {
+                    LOG_WARN("kernel task matched but name is empty (device=%u, stream=%u, task=%u, count=%llu)",
+                             static_cast<unsigned>(std::get<0>(key)), static_cast<unsigned>(std::get<1>(key)),
+                             static_cast<unsigned>(std::get<2>(key)), static_cast<unsigned long long>(emptyCount));
+                }
+            }
+            // backfill streamId into key for subsequent data reporting
+            std::get<1>(key) = std::get<1>(it->taskKey);
+            if (type == RecordSubType::KERNEL_END)
+            {
+                vec.erase(it);  // 使用完删除
+            }
+            return name;
+        }
+    }
+
     if (isNewSoc)
     {
-        // A5/A6: only compare deviceId and taskId (streamId is always 0 in key)
-        for (auto& pair : kernelNameMp_)
+        // A5/A6只按device+taskId匹配，无更宽松的键可用；失配时仅计数并限频告警
+        uint64_t missCount = ++unmatchedCount_;
+        if (missCount == 1 || missCount % KERNEL_TASK_LOG_INTERVAL == 0)
         {
-            auto& vec = pair.second;
-            for (auto it = vec.begin(); it != vec.end(); ++it)
+            LOG_WARN("kernel execution event dropped: no task matched by device+taskId (device=%u, task=%u, miss=%llu)",
+                     static_cast<unsigned>(std::get<0>(key)), static_cast<unsigned>(std::get<2>(key)),
+                     static_cast<unsigned long long>(missCount));
+        }
+        return "";
+    }
+
+    // A2/A3精确key失配时回退为deviceId+taskId匹配：不同CANN版本的stream编码规则可能不一致，
+    // 精确失配不代表不是同一个任务；仅当候选唯一时采用，避免把执行区间配到错误的kernel。
+    // 记录时间为host时钟、事件时间为设备sysCnt按标称频率换算，长时间运行存在频偏漂移，
+    // 不能用"记录时间<=事件时间"过滤，改用"每条记录只被一次START回退命中"约束重复误配
+    size_t matchCount = 0;
+    std::vector<AclnnKernelMapInfo>* matchedVec = nullptr;
+    std::vector<AclnnKernelMapInfo>::iterator matchedIt;
+    for (auto& pair : kernelNameMp_)
+    {
+        auto& vec = pair.second;
+        for (auto it = vec.begin(); it != vec.end(); ++it)
+        {
+            if (std::get<0>(it->taskKey) != std::get<0>(key) || std::get<2>(it->taskKey) != std::get<2>(key))
             {
-                if (std::get<0>(it->taskKey) != std::get<0>(key) || std::get<2>(it->taskKey) != std::get<2>(key))
-                {
-                    continue;
-                }
-                std::string name = it->kernelName;
-                // backfill streamId into key for subsequent data reporting
-                std::get<1>(key) = std::get<1>(it->taskKey);
-                if (type == RecordSubType::KERNEL_END)
-                {
-                    vec.erase(it);  // 使用完删除
-                }
-                return name;
+                continue;
             }
+            // 回退匹配可靠性低于精确匹配：同一条记录只允许被一次KERNEL_START回退命中，
+            // 避免END丢失的残留记录持续吸收后续同taskId的执行事件；END仍可命中同一记录完成配对
+            if (type != RecordSubType::KERNEL_END && it->fallbackUsed)
+            {
+                continue;
+            }
+            ++matchCount;
+            matchedVec = &vec;
+            matchedIt = it;
+        }
+    }
+
+    if (matchCount == 1 && matchedVec != nullptr)
+    {
+        std::string name = matchedIt->kernelName;
+        uint16_t matchedStream = std::get<1>(matchedIt->taskKey);
+        uint64_t hitCount = ++fallbackMatchCount_;
+        if (hitCount == 1 || hitCount % KERNEL_TASK_LOG_INTERVAL == 0)
+        {
+            LOG_WARN(
+                "kernel task key exact match failed, fallback by device+taskId hit "
+                "(device=%u, soc stream=%u, task=%u, matched stream=%u, hit=%llu)",
+                static_cast<unsigned>(std::get<0>(key)), static_cast<unsigned>(std::get<1>(key)),
+                static_cast<unsigned>(std::get<2>(key)), static_cast<unsigned>(matchedStream),
+                static_cast<unsigned long long>(hitCount));
+        }
+        std::get<1>(key) = matchedStream;
+        if (type == RecordSubType::KERNEL_END)
+        {
+            matchedVec->erase(matchedIt);  // 使用完删除
+        }
+        else
+        {
+            matchedIt->fallbackUsed = true;  // 标记已消费，防止残留记录重复吸收
+        }
+        return name;
+    }
+
+    if (matchCount > 1)
+    {
+        uint64_t ambiguousCount = ++ambiguousMatchCount_;
+        if (ambiguousCount == 1 || ambiguousCount % KERNEL_TASK_LOG_INTERVAL == 0)
+        {
+            LOG_WARN(
+                "kernel task key exact match failed, fallback matched %zu candidates, skip "
+                "(device=%u, soc stream=%u, task=%u, ambiguous=%llu)",
+                matchCount, static_cast<unsigned>(std::get<0>(key)), static_cast<unsigned>(std::get<1>(key)),
+                static_cast<unsigned>(std::get<2>(key)), static_cast<unsigned long long>(ambiguousCount));
         }
     }
     else
     {
-        for (auto& pair : kernelNameMp_)
+        uint64_t missCount = ++unmatchedCount_;
+        if (missCount == 1 || missCount % KERNEL_TASK_LOG_INTERVAL == 0)
         {
-            auto& vec = pair.second;
-            for (auto it = vec.begin(); it != vec.end(); ++it)
-            {
-                if (it->taskKey != key)
-                {
-                    continue;
-                }
-                std::string name = it->kernelName;
-                if (type == RecordSubType::KERNEL_END)
-                {
-                    vec.erase(it);  // 使用完删除
-                }
-                return name;
-            }
+            LOG_WARN("kernel execution event dropped: no task matched (device=%u, soc stream=%u, task=%u, miss=%llu)",
+                     static_cast<unsigned>(std::get<0>(key)), static_cast<unsigned>(std::get<1>(key)),
+                     static_cast<unsigned>(std::get<2>(key)), static_cast<unsigned long long>(missCount));
         }
     }
     return "";

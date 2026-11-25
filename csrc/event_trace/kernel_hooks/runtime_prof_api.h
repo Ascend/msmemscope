@@ -18,22 +18,23 @@
 #ifndef RUNTIME_PROF_API_H
 #define RUNTIME_PROF_API_H
 
+#include <cstddef>
 #include <cstdint>
-#include <cstddef> 
+#include <string>
 
-#include "vallina_symbol.h"
 #include "log.h"
+#include "vallina_symbol.h"
 
-namespace MemScope {
+namespace MemScope
+{
 // 和获取驱动上报信息接口配套使用
-struct RtProfApiLoader {
-    static void *Load(void)
-    {
-        return MemScope::LibLoad("libprofapi.so");
-    }
+struct RtProfApiLoader
+{
+    static void *Load(void) { return MemScope::LibLoad("libprofapi.so"); }
 };
 
-enum ProfilerCallbackType {
+enum ProfilerCallbackType
+{
     PROFILE_CTRL_CALLBACK = 0,
     PROFILE_DEVICE_STATE_CALLBACK,
     PROFILE_REPORT_API_CALLBACK,
@@ -64,7 +65,8 @@ constexpr uint16_t MSPROF_REPORT_RUNTIME_LEVEL = 5000U;
 constexpr uint16_t MSPROF_REPORT_NNOPBASE_LEVEL = 10000U;
 constexpr uint16_t MSPROF_REPORT_ACL_LEVEL = 20000U;
 
-struct MsprofApi { // for MsprofReportApi
+struct MsprofApi
+{  // for MsprofReportApi
     uint16_t magicNumber = MSPROF_DATA_HEAD_MAGIC_NUM;
     uint16_t level;
     uint32_t type;
@@ -75,18 +77,20 @@ struct MsprofApi { // for MsprofReportApi
     uint64_t itemId;
 };
 
-struct MsprofEvent {  // for MsprofReportEvent
+struct MsprofEvent
+{  // for MsprofReportEvent
     uint16_t magicNumber = MSPROF_DATA_HEAD_MAGIC_NUM;
     uint16_t level;
     uint32_t type;
     uint32_t threadId;
-    uint32_t requestId; // 0xFFFF means single event
+    uint32_t requestId;  // 0xFFFF means single event
     uint64_t timestamp;
     uint64_t reserve = MSPROF_EVENT_FLAG;
     uint64_t itemId;
 };
 
-struct MsprofRuntimeTrack {
+struct MsprofRuntimeTrack
+{
     uint16_t deviceId;
     uint16_t streamId;
     uint32_t taskInfo;
@@ -94,7 +98,8 @@ struct MsprofRuntimeTrack {
     uint64_t kernelName;
 };
 
-struct MsprofNodeBasicInfo {
+struct MsprofNodeBasicInfo
+{
     uint64_t opName;
     uint32_t taskType;
     uint64_t opType;
@@ -103,32 +108,36 @@ struct MsprofNodeBasicInfo {
     uint8_t opState;
 };
 
-struct MsprofAttrInfo {
+struct MsprofAttrInfo
+{
     uint64_t opName;
     uint32_t attrType;
     uint64_t hashId;
 };
 
 #pragma pack(1)
-struct MsprofHcclOPInfo {  // for MsprofReportCompactInfo buffer data
+struct MsprofHcclOPInfo
+{  // for MsprofReportCompactInfo buffer data
     uint8_t relay : 1;
     uint8_t retry : 1;
     uint8_t dataType;
-    uint64_t algType;     // 通信算子使用的算法,hash的key,其值是以"-"分隔的字符串
+    uint64_t algType;  // 通信算子使用的算法,hash的key,其值是以"-"分隔的字符串
     uint64_t count;
     uint64_t groupName;
 };
 #pragma pack()
 
 #pragma pack(1)
-struct MsprofStreamExpandSpecInfo {  // for MsprofReportCompactInfo buffer data
-    uint8_t expandStatus; // 1: 扩容场景 0: 非扩容场景
+struct MsprofStreamExpandSpecInfo
+{                          // for MsprofReportCompactInfo buffer data
+    uint8_t expandStatus;  // 1: 扩容场景 0: 非扩容场景
     uint8_t reserved1;
     uint16_t reserved2;
 };
 #pragma pack()
 
-enum TsTaskType {
+enum TsTaskType
+{
     TS_TASK_TYPE_KERNEL_AICORE = 0,
     TS_TASK_TYPE_KERNEL_AICPU = 1,
     TS_TASK_TYPE_KERNEL_AIVEC = 66,
@@ -138,7 +147,8 @@ enum TsTaskType {
     TS_TASK_TYPE_RESERVED,
 };
 
-enum RtProfileDataType {
+enum RtProfileDataType
+{
     RT_PROFILE_TYPE_TASK_BEGIN = 0,
     RT_PROFILE_TYPE_TASK_END = 800,
     RT_PROFILE_TYPE_MEMCPY_INFO = 801,
@@ -149,14 +159,16 @@ enum RtProfileDataType {
 };
 
 const uint16_t MSPROF_COMPACT_INFO_DATA_LENGTH = 40;
-struct MsprofCompactInfo {
+struct MsprofCompactInfo
+{
     uint16_t magicNumber = MSPROF_DATA_HEAD_MAGIC_NUM;
     uint16_t level;
     uint32_t type;
     uint32_t threadId;
     uint32_t dataLen;
     uint64_t timestamp;
-    union {
+    union
+    {
         uint8_t info[MSPROF_COMPACT_INFO_DATA_LENGTH];
         MsprofRuntimeTrack runtimeTrack;
         MsprofNodeBasicInfo nodeBasicInfo;
@@ -169,7 +181,8 @@ struct MsprofCompactInfo {
 constexpr size_t PATH_LEN_MAX = 1023;
 constexpr size_t PARAM_LEN_MAX = 4095;
 
-struct CommandHandleParams {
+struct CommandHandleParams
+{
     uint32_t pathLen;
     uint32_t storageLimit;  // MB
     uint32_t profDataLen;
@@ -177,7 +190,8 @@ struct CommandHandleParams {
     char profData[PARAM_LEN_MAX + 1];
 };
 
-struct CommandHandle {
+struct CommandHandle
+{
     uint64_t profSwitch;
     uint64_t profSwitchHi;
     uint32_t devNums;
@@ -188,14 +202,16 @@ struct CommandHandle {
     struct CommandHandleParams params;
 };
 
-enum CommandHandleType {
+enum CommandHandleType
+{
     PROF_COMMANDHANDLE_TYPE_INIT = 0,
     PROF_COMMANDHANDLE_TYPE_START,
     PROF_COMMANDHANDLE_TYPE_STOP,
     PROF_COMMANDHANDLE_TYPE_FINALIZE,
 };
 
-enum ProfApiErrorCode {
+enum ProfApiErrorCode
+{
     PROFAPI_ERROR_NONE = 0,
     PROFAPI_ERROR_MEM_NOT_ENOUGH,
     PROFAPI_ERROR_GET_ENV,
@@ -207,7 +223,13 @@ enum ProfApiErrorCode {
 
 void RegisterRtProfileCallback();
 int32_t CompactInfoReporterCallbackImpl(uint32_t agingFlag, const void *data, uint32_t length);
-uint64_t GetHashIdCallBackImply(const char* hashInfo, size_t len);
+uint64_t GetHashIdCallBackImply(const char *hashInfo, size_t len);
 void SetProfCommand(uint32_t devId);
-}
+// 通过libprofapi的MsprofId2Str反查hashId对应的kernel名：
+// 部分CANN版本的MsprofGetHashId不回调工具注册的GET_HASH_ID回调，但会由libmsprof
+// 用同一套DoubleHash算法算出hash并保存名字，此时可经该接口取回；符号缺失时返回空串
+std::string GetKernelNameByHashId(uint64_t hashId);
+// 仅测试用：清除MsprofId2Str符号解析缓存，便于按用例重新注入桩
+void ResetKernelNameReverseLookupForTest();
+}  // namespace MemScope
 #endif

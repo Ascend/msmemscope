@@ -1889,8 +1889,9 @@ bool EventReport::ReportKernelLaunch(const AclnnKernelMapInfo& kernelLaunchInfo)
         return true;
     }
 
+    // TaskKey的设备号是uint16_t：未填写的占位key为make_tuple(-1,-1,-1)，取值为65535而非GD_INVALID_NUM
     int32_t devId = std::get<0>(kernelLaunchInfo.taskKey);
-    if (devId < 0)
+    if (devId == static_cast<int32_t>(std::numeric_limits<uint16_t>::max()))
     {
         if (!GetDeviceInfo::Instance().GetDeviceId(devId) || devId == GD_INVALID_NUM)
         {
@@ -1911,6 +1912,11 @@ bool EventReport::ReportKernelLaunch(const AclnnKernelMapInfo& kernelLaunchInfo)
     event->taskId = std::to_string(std::get<2>(kernelLaunchInfo.taskKey));
     event->name = kernelLaunchInfo.kernelName;
     event->kernelIndex = ++kernelLaunchRecordIndex_;
+    // 下发时间戳取钩子登记时刻；缺失时保留 EventBase 构造时的当前时间
+    if (kernelLaunchInfo.timestamp != 0)
+    {
+        event->timestamp = kernelLaunchInfo.timestamp;
+    }
 
     Process::GetInstance().SendEvent(event);
 
@@ -1937,6 +1943,15 @@ bool EventReport::ReportKernelExcute(const TaskKey& key, std::string& name, uint
     event->streamId = std::to_string(std::get<1>(key));
     event->taskId = std::to_string(std::get<2>(key));
     event->name = name;
+    // 时间戳取驱动SOC日志换算出的设备侧起止时间；频率未就绪时GetRealTimeFromSysCnt返回0，
+    // 此时保留 EventBase 构造时的当前时间，避免产生1970年时间戳
+    if (time != 0)
+    {
+        event->timestamp = time;
+    }
+    // 执行事件由设备侧产生，上报线程不是下发线程，pid/tid 无意义（与26.0.0行为一致）
+    event->pid = INVALID_PROCESSID;
+    event->tid = INVALID_THREADID;
 
     Process::GetInstance().SendEvent(event);
 
