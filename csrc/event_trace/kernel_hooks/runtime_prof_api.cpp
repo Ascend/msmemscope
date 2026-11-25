@@ -16,10 +16,9 @@
  */
 #include "runtime_prof_api.h"
 
-#include <iostream>
+#include <cstring>
 
 #include "kernel_event_trace.h"
-#include "kernel_hooks/kernel_event_trace.h"
 #include "securec.h"
 #include "stars_common.h"
 namespace MemScope
@@ -69,9 +68,44 @@ uint64_t GetHashIdCallBackImply(const char *hashInfo, size_t len)
         return 0;
     }
 
-    uint64_t hashId = GetHashIdImple(hashInfo);
-    RuntimeKernelLinker::GetInstance().SetHashInfo(hashId, std::string(hashInfo, len));
+    // 部分CANN版本回调的len为0，此时按NUL结尾字符串取长度，避免把空名字写入映射表；
+    // len非0时按显式长度构造，避免hash计算越过回调给出的缓冲区
+    size_t nameLen = len == 0 ? std::strlen(hashInfo) : len;
+    std::string kernelName(hashInfo, nameLen);
+    uint64_t hashId = GetHashIdImple(kernelName);
+    RuntimeKernelLinker::GetInstance().SetHashInfo(hashId, kernelName);
     return hashId;
+}
+
+namespace
+{
+using Id2StrFunc = char *(*)(uint64_t);
+// MsprofId2Str符号只解析一次：未导出该符号的CANN版本若每次kernel下发都dlsym，
+// 会在RuntimeKernelLinker持锁路径上放大开销。生产路径的调用均由该锁串行化，
+// 测试通过ResetKernelNameReverseLookupForTest恢复初始状态后重新注入桩。
+Id2StrFunc g_id2StrFunc = nullptr;
+bool g_id2StrResolved = false;
+}  // namespace
+
+std::string GetKernelNameByHashId(uint64_t hashId)
+{
+    if (!g_id2StrResolved)
+    {
+        g_id2StrFunc = VallinaSymbol<RtProfApiLoader>::Instance().Get<Id2StrFunc>("MsprofId2Str");
+        g_id2StrResolved = true;
+    }
+    if (g_id2StrFunc == nullptr)
+    {
+        return "";
+    }
+    const char *name = g_id2StrFunc(hashId);
+    return name == nullptr ? "" : std::string(name);
+}
+
+void ResetKernelNameReverseLookupForTest()
+{
+    g_id2StrFunc = nullptr;
+    g_id2StrResolved = false;
 }
 
 int32_t ApiReporterCallbackImpl(uint32_t agingFlag, const MsprofApi *const data) { return 0; }

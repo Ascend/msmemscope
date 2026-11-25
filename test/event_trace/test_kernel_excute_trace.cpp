@@ -94,6 +94,10 @@ TEST(TestKernelExcuteTrace, TestGetHashIdCallBackImply)
     const char* hashInfo  = nullptr;
     uint32_t length = sizeof(struct MsprofCompactInfo);
     GetHashIdCallBackImply(hashInfo, length);
+
+    // len为0时按NUL结尾字符串存储名字，避免空名字进入映射表
+    uint64_t hashId = GetHashIdCallBackImply("len_zero_kernel", 0);
+    EXPECT_EQ(RuntimeKernelLinker::GetInstance().GetHashInfo(hashId), "len_zero_kernel");
 }
 
 TEST(TestKernelExcuteTrace, TestGetStreamIdFuncAbnormalInput)
@@ -145,6 +149,9 @@ constexpr uint16_t SOC_LOG_RAW_STREAM_ID = 1;
 constexpr uint16_t SOC_LOG_RAW_TASK_ID = 2;
 constexpr uint32_t SOC_LOG_BEGIN_SYS_CNT = 3000;
 constexpr uint32_t SOC_LOG_END_SYS_CNT = 4000;
+// hash回调未生效时经MsprofId2Str反查的hash（由桩返回真实名）
+constexpr uint64_t REVERSE_LOOKUP_HASH_ID = 424242;
+const char *g_reverseKernelName = nullptr;
 
 size_t SocLogSize()
 {
@@ -194,6 +201,16 @@ aclError MockAclrtGetDevice(int32_t *deviceId)
         *deviceId = MockDeviceIdForRestrictedView();
     }
     return ACL_SUCCESS;
+}
+
+// libprofapi反查桩：仅对约定的hash返回名字，其余返回nullptr（模拟libmsprof未记录该hash）
+const char *MockMsprofId2Str(uint64_t hashId)
+{
+    if (hashId == REVERSE_LOOKUP_HASH_ID && g_reverseKernelName != nullptr)
+    {
+        return g_reverseKernelName;
+    }
+    return nullptr;
 }
 
 // 驱动信息桩：提供振荡器频率与系统计数，供 InitDevTimeInfo 计算设备时间基准
@@ -273,6 +290,7 @@ void InstallKernelDriverMocks()
     g_funcMocks["prof_drv_start"] = reinterpret_cast<void *>(&MockProfDrvStart);
     g_funcMocks["prof_stop"] = reinterpret_cast<void *>(&MockProfStop);
     g_funcMocks["prof_channel_read"] = reinterpret_cast<void *>(&MockProfChannelRead);
+    g_funcMocks["MsprofId2Str"] = reinterpret_cast<void *>(&MockMsprofId2Str);
 }
 
 Config MakeKernelTraceConfig(uint8_t collectMode)
@@ -380,7 +398,14 @@ void RunKernelSocLogFlow(bool isA5)
     }
     else
     {
-        // A2/A3按完整键比较：streamId不一致时跳过
+        // A2/A3先按完整键比较：streamId不一致时精确失配，但device+taskId唯一时回退命中并回填streamId
+        TaskKey streamProbe = std::make_tuple(keyDev, static_cast<uint16_t>(9), static_cast<uint16_t>(2));
+        EXPECT_EQ(linker.GetKernelName(streamProbe, RecordSubType::KERNEL_START), "kernel_add");
+        EXPECT_EQ(std::get<1>(streamProbe), static_cast<uint16_t>(1));
+        // 回退命中的记录已被消费：同一记录不再参与后续START回退匹配，避免残留记录重复吸收执行事件
+        TaskKey streamProbe2 = std::make_tuple(keyDev, static_cast<uint16_t>(9), static_cast<uint16_t>(2));
+        EXPECT_EQ(linker.GetKernelName(streamProbe2, RecordSubType::KERNEL_START), "");
+        // taskId不一致：精确与回退均不命中
         TaskKey mismatchProbe = std::make_tuple(keyDev, static_cast<uint16_t>(1), static_cast<uint16_t>(3));
         EXPECT_EQ(linker.GetKernelName(mismatchProbe, RecordSubType::KERNEL_START), "");
     }
@@ -402,6 +427,34 @@ void RunKernelSocLogFlow(bool isA5)
 
     TaskKey erasedProbe = key;
     EXPECT_EQ(linker.GetKernelName(erasedProbe, RecordSubType::KERNEL_START), "");
+
+    // A2/A3回退匹配存在多个候选（同device+taskId、不同stream）时不做猜测
+    if (!isA5)
+    {
+        TaskKey dupKeyA = std::make_tuple(keyDev, static_cast<uint16_t>(1), static_cast<uint16_t>(7));
+        TaskKey dupKeyB = std::make_tuple(keyDev, static_cast<uint16_t>(2), static_cast<uint16_t>(7));
+        linker.KernelLaunch();
+        linker.RuntimeTaskInfoLaunch(dupKeyA, 2026);
+        linker.KernelLaunch();
+        linker.RuntimeTaskInfoLaunch(dupKeyB, 2026);
+        TaskKey dupProbe = std::make_tuple(keyDev, static_cast<uint16_t>(9), static_cast<uint16_t>(7));
+        EXPECT_EQ(linker.GetKernelName(dupProbe, RecordSubType::KERNEL_START), "");
+    }
+
+    // hash回调未生效/未命中：使用hash占位名，保证kernel执行事件不被丢弃
+    TaskKey unknownKey = std::make_tuple(keyDev, static_cast<uint16_t>(1), static_cast<uint16_t>(11));
+    linker.KernelLaunch();
+    linker.RuntimeTaskInfoLaunch(unknownKey, 999999);
+    TaskKey unknownProbe = unknownKey;
+    EXPECT_EQ(linker.GetKernelName(unknownProbe, RecordSubType::KERNEL_END), "unknown_kernel_999999");
+
+    // hash回调未生效但libprofapi导出MsprofId2Str：反查取回真实名，并缓存避免重复反查
+    g_reverseKernelName = "reverse_add";
+    linker.KernelLaunch();
+    linker.RuntimeTaskInfoLaunch(unknownKey, REVERSE_LOOKUP_HASH_ID);
+    TaskKey reverseProbe = unknownKey;
+    EXPECT_EQ(linker.GetHashInfo(REVERSE_LOOKUP_HASH_ID), "reverse_add");
+    EXPECT_EQ(linker.GetKernelName(reverseProbe, RecordSubType::KERNEL_END), "reverse_add");
 
     trace.EndKernelEventTrace();
     EXPECT_GE(g_profStopCalls.load(), 1);
@@ -428,6 +481,24 @@ TEST(KernelExcuteChild, SocA5A6)
     RunKernelSocLogFlow(true);
 }
 
+// 子进程用例：单线程关联表达到上限后批量淘汰最旧记录（逻辑依赖两个常量的相对大小）
+TEST(KernelExcuteChild, TaskMapEviction)
+{
+    if (getenv("MSMEMSCOPE_UT_CHILD") == nullptr)
+    {
+        GTEST_SKIP() << "仅在RunMemScopeTestChild拉起的子进程中执行";
+    }
+    RuntimeKernelLinker &linker = RuntimeKernelLinker::GetInstance();
+    for (size_t i = 0; i < KERNEL_TASK_MAP_MAX_PER_THREAD; ++i)
+    {
+        linker.KernelLaunch();
+    }
+    EXPECT_EQ(linker.GetTaskMapSizeForTest(), KERNEL_TASK_MAP_MAX_PER_THREAD);
+    // 再次下发触发淘汰：先删除最旧的一批再push
+    linker.KernelLaunch();
+    EXPECT_EQ(linker.GetTaskMapSizeForTest(), KERNEL_TASK_MAP_MAX_PER_THREAD - KERNEL_TASK_MAP_EVICT_BATCH + 1);
+}
+
 // 父进程驱动用例：拉起隔离子进程并断言其正常退出（退出码非0说明子用例失败）
 TEST(KernelExcuteTraceIsolation, SocA2A3ChildProcess)
 {
@@ -437,4 +508,9 @@ TEST(KernelExcuteTraceIsolation, SocA2A3ChildProcess)
 TEST(KernelExcuteTraceIsolation, SocA5A6ChildProcess)
 {
     EXPECT_TRUE(RunMemScopeTestChild("KernelExcuteChild.SocA5A6"));
+}
+
+TEST(KernelExcuteTraceIsolation, TaskMapEvictionChildProcess)
+{
+    EXPECT_TRUE(RunMemScopeTestChild("KernelExcuteChild.TaskMapEviction"));
 }

@@ -16,12 +16,14 @@
  */
 
 #include <cstdint>
+#include <cstring>
 #include <string>
 #include <unordered_map>
 #include <vector>
 
 #include <gtest/gtest.h>
 
+#include "event_trace/kernel_hooks/kernel_event_trace.h"
 #include "event_trace/kernel_hooks/runtime_prof_api.h"
 #include "event_trace/kernel_hooks/stars_common.h"
 
@@ -40,6 +42,7 @@ int32_t AdditionalInfoCallbackImpl(uint32_t agingFlag, const void *data, uint32_
 namespace {
 constexpr char REGISTER_CALLBACK_SYMBOL[] = "MsprofRegisterProfileCallback";
 constexpr char SET_PROF_COMMAND_SYMBOL[] = "profSetProfCommand";
+constexpr char ID2STR_SYMBOL[] = "MsprofId2Str";
 
 struct RegisterCall {
     int32_t type;
@@ -68,6 +71,17 @@ int32_t MockProfSetProfCommand(void *data, uint32_t len)
     return g_setCommandRet;
 }
 
+char g_id2StrResult[64] = "kernel_reverse";
+
+// MsprofId2Str桩：仅对hash=7且结果非空时返回名字，其余返回nullptr
+char *MockMsprofId2Str(uint64_t hashId)
+{
+    if (hashId == 7U && g_id2StrResult[0] != '\0') {
+        return g_id2StrResult;
+    }
+    return nullptr;
+}
+
 // 注入/恢复dlsym桩，避免影响其他用例
 class ProfApiMockGuard {
 public:
@@ -76,14 +90,19 @@ public:
           oldRegister_(hadRegister_ ? g_funcMocks[REGISTER_CALLBACK_SYMBOL] : nullptr),
           hadCommand_(g_funcMocks.count(SET_PROF_COMMAND_SYMBOL) != 0),
           oldCommand_(hadCommand_ ? g_funcMocks[SET_PROF_COMMAND_SYMBOL] : nullptr),
+          hadId2Str_(g_funcMocks.count(ID2STR_SYMBOL) != 0),
+          oldId2Str_(hadId2Str_ ? g_funcMocks[ID2STR_SYMBOL] : nullptr),
           oldDlsymNull_(g_isDlsymNullptr)
     {
         g_isDlsymNullptr = false;
+        ResetKernelNameReverseLookupForTest();
     }
     ~ProfApiMockGuard()
     {
         Restore(REGISTER_CALLBACK_SYMBOL, hadRegister_, oldRegister_);
         Restore(SET_PROF_COMMAND_SYMBOL, hadCommand_, oldCommand_);
+        Restore(ID2STR_SYMBOL, hadId2Str_, oldId2Str_);
+        ResetKernelNameReverseLookupForTest();
         g_isDlsymNullptr = oldDlsymNull_;
     }
     ProfApiMockGuard(const ProfApiMockGuard &) = delete;
@@ -103,6 +122,8 @@ private:
     void *oldRegister_;
     bool hadCommand_;
     void *oldCommand_;
+    bool hadId2Str_;
+    void *oldId2Str_;
     bool oldDlsymNull_;
 };
 }  // namespace
@@ -176,6 +197,46 @@ TEST(RuntimeProfApiTest, compact_callback_updates_stream_expand_status)
     // 数据为空或长度不匹配：直接返回错误，状态保持不变
     EXPECT_EQ(CompactInfoReporterCallbackImpl(0, &info, sizeof(info) - 1), PROFAPI_ERROR);
     EXPECT_EQ(CompactInfoReporterCallbackImpl(0, nullptr, sizeof(info)), PROFAPI_ERROR);
+}
+
+// hash回调：显式len与NUL结尾字符串应得到同一hashId，且名字写入映射表
+TEST(RuntimeProfApiTest, get_hash_id_callback_accepts_zero_and_explicit_len)
+{
+    uint64_t hashByNul = GetHashIdCallBackImply("len_check_kernel", 0);
+    uint64_t hashByLen = GetHashIdCallBackImply("len_check_kernel", std::strlen("len_check_kernel"));
+    EXPECT_NE(hashByNul, 0U);
+    EXPECT_EQ(hashByNul, hashByLen);
+    EXPECT_EQ(RuntimeKernelLinker::GetInstance().GetHashInfo(hashByNul), "len_check_kernel");
+
+    // 空指针：返回0且不写入映射表
+    EXPECT_EQ(GetHashIdCallBackImply(nullptr, 0), 0U);
+}
+
+// MsprofId2Str反查：符号存在时取回名字，未命中/空串返回空
+TEST(RuntimeProfApiTest, get_kernel_name_by_hash_id_uses_reverse_lookup_symbol)
+{
+    ProfApiMockGuard guard;
+    g_funcMocks[ID2STR_SYMBOL] = reinterpret_cast<void *>(&MockMsprofId2Str);
+    std::memcpy(g_id2StrResult, "kernel_reverse", sizeof("kernel_reverse"));
+
+    EXPECT_EQ(GetKernelNameByHashId(7U), "kernel_reverse");
+    // 反查未命中（桩返回nullptr）
+    EXPECT_EQ(GetKernelNameByHashId(8U), "");
+    // 符号只解析一次：擦除桩后仍走已缓存的函数指针，避免每次下发重复dlsym
+    g_funcMocks.erase(ID2STR_SYMBOL);
+    EXPECT_EQ(GetKernelNameByHashId(7U), "kernel_reverse");
+    // 反查返回空串按未命中处理
+    g_id2StrResult[0] = '\0';
+    EXPECT_EQ(GetKernelNameByHashId(7U), "");
+}
+
+// MsprofId2Str符号缺失（老版本CANN不导出）：返回空串，不崩溃
+TEST(RuntimeProfApiTest, get_kernel_name_by_hash_id_missing_symbol_returns_empty)
+{
+    ProfApiMockGuard guard;
+    g_funcMocks.erase(ID2STR_SYMBOL);
+
+    EXPECT_EQ(GetKernelNameByHashId(7U), "");
 }
 
 // SetProfCommand：按devId组装启动命令并下发
