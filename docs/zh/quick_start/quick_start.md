@@ -4,12 +4,12 @@
 
 **简介**
 
-msMemScope工具提供内存事件采集功能，基于采集事件开展内存泄漏检测、内存对比、内存块监测、内存拆解和低效内存识别等分析功能。本文档通过一个简单的PyTorch脚本介绍msMemScope工具的使用方法以及功能。
+msMemScope工具提供内存事件采集功能，基于采集事件提供内存泄漏检测、内存对比、内存块监测、内存拆解和低效内存识别等分析功能。本文档通过一个简单的PyTorch脚本介绍msMemScope工具的使用方法以及功能。
 
 **环境准备**
 
 请根据[msMemScope安装指南](../install_guide/install_guide.md)完成msMemScope工具安装。<br>
-本示例基于PyTorch框架和Ascend for PyTorch插件，请根据[Ascend for PyTorch 下载](https://www.hiascend.com/developer/software/ai-frameworks/pytorch/download)完成安装。
+本示例基于PyTorch框架和Ascend for PyTorch插件，请根据[Ascend for PyTorch下载](https://www.hiascend.com/developer/software/ai-frameworks/pytorch/download)完成安装。
 
 ## 操作步骤
 
@@ -73,7 +73,9 @@ msMemScope工具提供内存事件采集功能，基于采集事件开展内存�
      python example_api.py
      ```
 
-   - 命令行使用方式。通过以下命令，使用msMemScope执行脚本：
+   - 命令行使用方式。
+   
+     通过以下命令，使用msMemScope执行脚本：
 
      ```bash
      msmemscope --events=alloc,free,access,launch --level=kernel,op --call-stack=c,python --analysis=leaks,inefficient,decompose --output-path=./output --format=csv python ./example_cmd.py

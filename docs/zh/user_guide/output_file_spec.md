@@ -2,9 +2,9 @@
 
 ## 简介
 
-msMemScope工具进行内存分析后，输出的文件如[**表 1**  输出文件说明](#输出文件说明-1)。
+msMemScope工具进行内存分析后，输出的文件如[**表 1** 输出文件说明](#输出文件说明-1)。
 
-**表 1**  输出文件说明<a id="输出文件说明-1"></a>
+**表 1** 输出文件说明<a id="输出文件说明-1"></a>
 
 |输出文件名称|说明|
 |--|--|
@@ -18,9 +18,9 @@ msMemScope工具进行内存分析后，输出的文件如[**表 1**  输出文�
 
 ## memscope_dump_{_timestamp_}.csv文件说明
 
-内存泄漏检测的结果文件字段解释如[**表 2**  memscope_dump_{_timestamp_}.csv文件字段及含义](#memscope_dump_{_timestamp_}.csv文件字段及含义)所示。
+内存泄漏检测的结果文件字段解释如[**表 2** memscope_dump_{_timestamp_}.csv文件字段及含义](#memscope_dump_{_timestamp_}.csv文件字段及含义)所示。
 
-**表 2**  memscope_dump_{_timestamp_}.csv文件字段及含义 <a id="memscope_dump_{_timestamp_}.csv文件字段及含义"></a>
+**表 2** memscope_dump_{_timestamp_}.csv文件字段及含义 <a id="memscope_dump_{_timestamp_}.csv文件字段及含义"></a>
 
 |字段|说明|
 |--|--|
@@ -39,9 +39,9 @@ msMemScope工具进行内存分析后，输出的文件如[**表 1**  输出文�
 
 ## memory_compare_{_timestamp_}.csv文件说明
 
-内存对比的结果文件字段解释如[**表 3**  memory_compare_{_timestamp_}.csv文件字段说明](#memory_compare_{_timestamp_}.csv文件字段说明)所示。
+内存对比的结果文件字段解释如[**表 3** memory_compare_{_timestamp_}.csv文件字段说明](#memory_compare_{_timestamp_}.csv文件字段说明)所示。
 
-**表 3**  memory_compare_{_timestamp_}.csv文件字段说明 <a id="memory_compare_{_timestamp_}.csv文件字段说明"></a>
+**表 3** memory_compare_{_timestamp_}.csv文件字段说明 <a id="memory_compare_{_timestamp_}.csv文件字段说明"></a>
 
 |字段|说明|
 |--|--|
@@ -55,9 +55,9 @@ msMemScope工具进行内存分析后，输出的文件如[**表 1**  输出文�
 
 ## python_trace_{_TID_}_{_timestamp_}.csv文件说明
 
-Python Trace采集结果文件的字段解释如[**表 4**  python_trace_{_TID_}_{_timestamp_}.csv文件字段说明](#python_trace_{_TID_}_{_timestamp_}.csv文件字段说明)所示。
+Python Trace采集结果文件的字段解释如[**表 4** python_trace_{_TID_}_{_timestamp_}.csv文件字段说明](#python_trace_{_TID_}_{_timestamp_}.csv文件字段说明)所示。
 
-**表 4**  python_trace_{_TID_}_{_timestamp_}.csv文件字段说明 <a id="python_trace_{_TID_}_{_timestamp_}.csv文件字段说明"></a>
+**表 4** python_trace_{_TID_}_{_timestamp_}.csv文件字段说明 <a id="python_trace_{_TID_}_{_timestamp_}.csv文件字段说明"></a>
 
 |字段|说明|
 |--|--|
@@ -71,9 +71,9 @@ Python Trace采集结果文件的字段解释如[**表 4**  python_trace_{_TID_}
 
 Host堆内存泄漏检测的泄漏概览报告文件，检测窗口关闭后生成（summary与event模式均输出）。文件保存在`msmemscope_{*PID*}_{_timestamp_}_ascend/host_leak`目录下，`{stage}`为窗口序号。
 
-报告按章节组织，如[**表 5**  leak_overview_{_stage_}.txt报告章节说明](#leak_overview_stagetxt报告章节说明)所示。
+报告按章节组织，如[**表 5** leak_overview_{_stage_}.txt报告章节说明](#leak_overview_stagetxt报告章节说明)所示。
 
-**表 5**  leak_overview_{_stage_}.txt报告章节说明<a id="leak_overview_stagetxt报告章节说明"></a>
+**表 5** leak_overview_{_stage_}.txt报告章节说明<a id="leak_overview_stagetxt报告章节说明"></a>
 
 |章节|内容|
 |--|--|
@@ -159,9 +159,9 @@ Resident baselines (1 stacks, 1MiB; G≈0 & early-allocated, or turnover (low un
 
 Host堆内存泄漏检测的泄漏代码块详情文件，仅在`--host-leak-mode=event`且窗口内存在未释放块时生成。文件保存在`msmemscope_{*PID*}_{_timestamp_}_ascend/host_leak`目录下，与同窗号概览报告对应。
 
-文件为CSV格式，表头为首行`addr,size,alloc_ts,Call Stack(C),Call Stack(Python)`，逐块一行、块大小降序（相同大小按地址升序），字段如[**表 6**  block_detail_{_stage_}.csv文件字段及含义](#block_detail_stagecsv文件字段及含义)所示。
+文件为CSV格式，表头为首行`addr,size,alloc_ts,Call Stack(C),Call Stack(Python)`，逐块一行、块大小降序（相同大小按地址升序），字段如[**表 6** block_detail_{_stage_}.csv文件字段及含义](#block_detail_stagecsv文件字段及含义)所示。
 
-**表 6**  block_detail_{_stage_}.csv文件字段及含义<a id="block_detail_stagecsv文件字段及含义"></a>
+**表 6** block_detail_{_stage_}.csv文件字段及含义<a id="block_detail_stagecsv文件字段及含义"></a>
 
 |字段|含义|格式|
 |--|--|--|

@@ -26,16 +26,16 @@
 
 #### 2.3.1 环境准备
 
-源码编译统一使用 MindStudio 标准构建环境。
+源码编译统一使用MindStudio标准构建环境。
 
 - 日常开发或使用已发布镜像，请参考《[MindStudio工具开发环境安装指导](https://gitcode.com/Ascend/msot/blob/master/docs/zh/common/dev_env_setup.md)》。
 - 需要从基础操作系统复现环境、执行源码构建验证或单元测试验证时，必须参考《[MindStudio统一构建镜像制作指南](https://gitcode.com/Ascend/msot/blob/master/docs/zh/common/docker_image_build_guide.md)》，从openEuler基础镜像现场构建环境镜像。
 
-本文档后续的源码编译和单元测试命令，均在上述指定镜像容器或现场构建的环境镜像的容器中执行，CANN 软件包版本、GCC 版本和 Python 版本以统一镜像制作指南为准，本仓库不重复维护。
+本文档后续的源码编译和单元测试命令，均在上述指定镜像容器或现场构建的环境镜像的容器中执行，CANN软件包版本、GCC版本和Python版本以统一镜像制作指南为准，本仓库不重复维护。
 
-镜像构建完成后，必须使用统一镜像制作指南第 7 章给出的 `ctr_in.py` 命令，在交互式终端中启动并进入容器。不得使用普通 `docker run` 创建容器，也不得使用 `docker exec <容器名> bash -c '<命令>'` 替代交互式环境；否则可能跳过 Python、GCC 和 CANN 环境初始化。
+镜像构建完成后，必须使用统一镜像制作指南第7章给出的 `ctr_in.py` 命令，在交互式终端中启动并进入容器。不得使用普通 `docker run` 创建容器，也不得使用 `docker exec <容器名> bash -c '<命令>'` 替代交互式环境；否则可能跳过 Python、GCC 和 CANN 环境初始化。
 
-进入 `ctr_in.py` 打开的交互式容器 Shell 后，执行如下命令克隆本仓库：
+进入 `ctr_in.py` 打开的交互式容器Shell后，执行如下命令克隆本仓库：
 
 ```bash
 cd <path>/memscope   # 进入到memscope代码仓目录，path为代码仓项目所在路径
@@ -44,7 +44,7 @@ git clone https://gitcode.com/Ascend/msmemscope.git
 
 #### 2.3.2 执行编译
 
-保持在 `ctr_in.py` 打开的同一个交互式容器 Shell 中，在仓库根目录执行以下命令，自动完成依赖下载与构建：
+保持在 `ctr_in.py` 打开的同一个交互式容器Shell中，在仓库根目录执行以下命令，自动完成依赖下载与构建：
 
 ```bash
 cd <path>/memscope   # 进入到memscope代码仓目录，path为代码仓项目所在路径
@@ -62,11 +62,11 @@ cd ~/msmemscope
 python3 build.py test
 ```
 
-命令返回码为 0，且测试用例均无失败，表示单元测试通过。
+命令返回码为0，且测试用例均无失败，表示单元测试通过。
 
 #### 2.3.4 安装
 
-##### 2.3.4.1 准备 run 包
+##### 2.3.4.1 准备run包
 
 安装软件包前需给run包添加可执行权限。进入run包保存路径，执行如下命令，增加可执行权限。
 
@@ -97,7 +97,7 @@ source <path>/msmemscope/set_env.sh
 
 #### 2.3.5 安装后检查
 
-请检查并确认安装目录：`<path>/msmemscope`下已生成`set_env.sh`文件。
+请检查并确认安装目录：`<path>/msmemscope`下是否已生成`set_env.sh`文件。
 
 #### 2.3.6 安装后配置
 
@@ -168,9 +168,9 @@ msmemscope --help
 
 ## 6. 附录
 
-### 参数说明
+### 6.1 参数说明
 
-本章节介绍了run格式（.run）软件包相关参数说明，run格式软件包支持通过命令行参数进行一键安装，各个参数之间可以配合使用，用户根据安装需要选择对应参数。
+本章节介绍了run格式（.run）软件包相关参数，run格式软件包支持通过命令行参数进行一键安装，各个参数之间可以配合使用，用户根据安装需要选择对应参数。
 
 安装命令格式：`./mindstudio-memscope_<version>_linux-<arch>.run [options]`
 

@@ -48,25 +48,25 @@ msMemScope工具的安装，请参见《[msMemScope工具安装说明](../instal
     ```
 
 2. 执行完成后，会出现如下两种回显信息。
-    - 如果出现如[**图 1**  memory leak](#leak)的回显信息，表示存在内存泄漏问题。回显信息中分别展示了每张卡内存泄漏的汇总信息，包括泄漏发生的Step数、关联的kernel、地址以及泄漏大小等信息，并在每张卡最后汇总输出泄漏的总块数和总大小。疑似泄漏内存块的判定条件：在同一张卡上相邻两次Step结束（不含首个Step结束；多卡训练时各卡的Step编号在进程内交错递增，按相邻的Step结束事件判定、不要求编号连续）时均存活、且在第一个Step结束后分配的内存块，或进程退出时仍未释放的内存块（若存在Step打点，退出时仅统计从第一个Step结束时间点之后分配的内存块；与NPU内存池存活块或未释放的已有记录同地址的HAL内存块不重复计入，避免同一块内存双层统计）。同时，dump文件中疑似泄漏内存块的MALLOC事件Attr中会标记leak:true，便于快速筛选与定位。退出时的泄漏汇总报告按卡有序输出：每条明细标注判定来源（跨Step存活疑似/退出未释放）与首次命中Step；报告为累计语义，判定①命中后又被释放的块也会保留在报告中（"曾经疑似泄漏"同样是定位信号）；每张卡明细至多打印50条，超出部分折叠提示改用dump文件leak:true筛选查看，泄漏总块数与总大小统计始终完整输出。此外，进程退出时还会对HAL内存池按client逐块输出存活告警（沿用原有HAL泄漏检查口径，不应用上述过滤与去重，两者口径差异请结合场景研判）。需要说明的是，退出时的泄漏报告中可能包含少量框架运行时资源（如CANN stream缓冲），此类块并非用户代码泄漏，请结合调用栈甄别。
+    - 如果出现如[**图 1** memory leak](#leak)的回显信息，表示存在内存泄漏问题。回显信息中分别展示了每张卡内存泄漏的汇总信息，包括泄漏发生的Step数、关联的kernel、地址以及泄漏大小等信息，并在每张卡最后汇总输出泄漏的总块数和总大小。疑似泄漏内存块的判定条件：在同一张卡上相邻两次Step结束（不含首个Step结束；多卡训练时各卡的Step编号在进程内交错递增，按相邻的Step结束事件判定、不要求编号连续）时均存活、且在第一个Step结束后分配的内存块，或进程退出时仍未释放的内存块（若存在Step打点，退出时仅统计从第一个Step结束时间点之后分配的内存块；与NPU内存池存活块或未释放的已有记录同地址的HAL内存块不重复计入，避免同一块内存双层统计）。同时，dump文件中疑似泄漏内存块的MALLOC事件Attr中会标记leak:true，便于快速筛选与定位。退出时的泄漏汇总报告按卡有序输出：每条明细标注判定来源（跨Step存活疑似/退出未释放）与首次命中Step；报告为累计语义，判定①命中后又被释放的块也会保留在报告中（“曾经疑似泄漏”同样是定位信号）；每张卡明细至多打印50条，超出部分折叠提示改用dump文件leak:true筛选查看，泄漏总块数与总大小统计始终完整输出。此外，进程退出时还会对HAL内存池按client逐块输出存活告警（沿用原有HAL泄漏检查口径，不应用上述过滤与去重，两者口径差异请结合场景研判）。需要说明的是，退出时的泄漏报告中可能包含少量框架运行时资源（如CANN stream缓冲），此类块并非用户代码泄漏，请结合调用栈甄别。
 
-        **图 1**  memory leak<a id="leak"></a>
+        **图 1** memory leak<a id="leak"></a>
 
-        ![](../figures/memory_leak.png)
+        ![内存泄漏回显信息：逐卡输出泄漏Step数、关联kernel、地址与泄漏大小，并汇总泄漏总块数与总大小](../figures/memory_leak.png)
 
-    - 如果出现如[**图 2**  memory fluctuation](#fluctuation)的回显信息，表示存在内存波动。回显信息中展示了单个Step内的内存波动（用最小和最大的内存池分配占用比值定义）以及最小的内存池分配占用，同时给出最小比值和最大比值作为参考，用户可根据该值判断是否存在内存泄漏风险。
+    - 如果出现如[**图 2** memory fluctuation](#fluctuation)的回显信息，表示存在内存波动。回显信息中展示了单个Step内的内存波动（用最小和最大的内存池分配占用比值定义）以及最小的内存池分配占用，同时给出最小比值和最大比值作为参考，用户可根据该值判断是否存在内存泄漏风险。
 
         > [!NOTE]
         >
         > 在第一个Step时，内存尚未稳定，所以只支持分析从第二个Step开始的内存波动，第一个Step内存波动可忽略。
 
-        **图 2**  memory fluctuation <a id="fluctuation"></a>
+        **图 2** memory fluctuation <a id="fluctuation"></a>
 
-        ![](../figures/memory_fluctuation.png)
+        ![内存波动回显信息：单个Step内内存池最小与最大占用比值及最小占用，并给出最小与最大比值供判断泄漏风险](../figures/memory_fluctuation.png)
 
 **离线方式**
 
-msMemScope支持对指定范围内的内存事件进行离线泄漏分析。使用mstx标识好泄漏分析的范围后，可以使用该功能对落盘文件进行分析。
+msMemScope支持对指定范围内的内存事件进行离线泄漏分析。使用mstx标记好泄漏分析的范围后，可以使用该功能对落盘文件进行分析。
 
 1. 对需要检测泄漏的范围进行mstx的mark打点。mstx打点详情参考[MindStudio Tools Extension Library接口](https://gitcode.com/Ascend/mstx/blob/master/docs/zh/api_reference/README.md)。
 
@@ -83,7 +83,7 @@ msMemScope支持对指定范围内的内存事件进行离线泄漏分析。使�
 
 3. 执行以下命令，调用Python接口，对输出文件中的csv文件进行离线泄漏分析。
 
-    ```Python
+    ```python
     import msmemscope
     msmemscope.check_leaks(input_path="user/memscope.csv",mstx_info="test",start_index=0)
     ```
@@ -94,11 +94,11 @@ msMemScope支持对指定范围内的内存事件进行离线泄漏分析。使�
     - mstx_info：mark打点使用的mstx文本信息，用于标识泄漏分析的范围。
     - start_index：内存泄漏分析开始的打点位置编号，即从第几个符合条件的mstx打点位置开始分析。
 
-    如果出现[**图 3**  offline leakage analysis](#analysis)的回显信息，表示存在内存泄漏问题。
+    如果出现[**图 3** offline leakage analysis](#analysis)的回显信息，表示存在内存泄漏问题。
 
-    **图 3**  offline leakage analysis <a id="analysis"></a>
+    **图 3** offline leakage analysis <a id="analysis"></a>
 
-    ![](../figures/offline_leakage_analysis.png)
+    ![离线泄漏分析结果回显：按mstx打点范围分析落盘csv后，逐卡输出泄漏汇总信息与明细](../figures/offline_leakage_analysis.png)
 
 ## Host堆内存泄漏检测功能介绍
 
@@ -195,9 +195,9 @@ Host堆内存泄漏检测与显存（Device侧）内存泄漏分析相互独立�
 
 ### 参数说明
 
-Host堆内存泄漏检测参数如[**表 1**  Host堆内存泄漏检测CLI参数说明](#host堆内存泄漏检测cli参数说明)所示。
+Host堆内存泄漏检测参数如[**表 1** Host堆内存泄漏检测CLI参数说明](#host堆内存泄漏检测cli参数说明)所示。
 
-**表 1**  Host堆内存泄漏检测CLI参数说明<a id="host堆内存泄漏检测cli参数说明"></a>
+**表 1** Host堆内存泄漏检测CLI参数说明<a id="host堆内存泄漏检测cli参数说明"></a>
 
 |参数|默认值|说明|
 |--|--|--|
@@ -208,9 +208,9 @@ Host堆内存泄漏检测参数如[**表 1**  Host堆内存泄漏检测CLI参数
 
 阈值与采样率在窗口开启时快照生效，窗口期内修改不生效（对当前窗口无影响，自下一窗口起生效）。
 
-Python接口方式通过`msmemscope.config(**kwargs)`下发相同配置，对应键如[**表 2**  Host堆内存泄漏检测Python config键说明](#host堆内存泄漏检测python-config键说明)所示（值须为字符串）。
+Python接口方式通过`msmemscope.config(**kwargs)`下发相同配置，对应键如[**表 2** Host堆内存泄漏检测Python config键说明](#host堆内存泄漏检测python-config键说明)所示（值须为字符串）。
 
-**表 2**  Host堆内存泄漏检测Python config键说明<a id="host堆内存泄漏检测python-config键说明"></a>
+**表 2** Host堆内存泄漏检测Python config键说明<a id="host堆内存泄漏检测python-config键说明"></a>
 
 |config键|默认值|说明|
 |--|--|--|
@@ -221,9 +221,9 @@ Python接口方式通过`msmemscope.config(**kwargs)`下发相同配置，对应
 
 ### 输出说明<a id="host堆内存泄漏检测输出说明"></a>
 
-Host堆内存泄漏检测的输出文件保存在`{output}/msmemscope_{*PID*}_{_timestamp_}_ascend/host_leak/`目录下（`{output}`为`--output-path`指定的输出目录，默认为`./memscopeDumpResults`），如[**表 3**  Host堆内存泄漏检测输出文件说明](#host堆内存泄漏检测输出文件明细表)所示。
+Host堆内存泄漏检测的输出文件保存在`{output}/msmemscope_{*PID*}_{_timestamp_}_ascend/host_leak/`目录下（`{output}`为`--output-path`指定的输出目录，默认为`./memscopeDumpResults`），如[**表 3** Host堆内存泄漏检测输出文件说明](#host堆内存泄漏检测输出文件明细表)所示。
 
-**表 3**  Host堆内存泄漏检测输出文件说明<a id="host堆内存泄漏检测输出文件明细表"></a>
+**表 3** Host堆内存泄漏检测输出文件说明<a id="host堆内存泄漏检测输出文件明细表"></a>
 
 |输出文件|存在条件|内容|
 |--|--|--|
@@ -243,7 +243,7 @@ Host堆内存泄漏检测的输出文件保存在`{output}/msmemscope_{*PID*}_{_
 |Unfreed Block Size Distribution（泄漏块大小排布）|未释放块按大小分桶的块数/字节/占比（默认7桶：0~256Byte、256Byte~1kB、1kB~4kB、4kB~32kB、32kB~256kB、256kB~1MB、1MB以上）。|
 |Pre-Window Free Size Distribution（开窗前free大小排布）|开窗前申请、窗口期间释放的内存按大小归桶统计（独立通道，不参与泄漏判定，供缓存老化场景分析）。|
 |TOP N Leak Sites（TOP N泄漏点）|按泄漏怀疑指数（LSI，Leak Suspicion Index，0~100，越高越可能为真泄漏）降序的泄漏点列表（默认N=10，上限1024），每行含：状态分类（`suspected_leak`=疑似泄漏、`growth_watch`=增长观察，满足周转占比判据但尾部仍涨时追加`/turnover`）、LSI值、Growth/Release/Lifetime/Pattern/Scale五个研判因子、未释放/申请/释放统计、序列增长斜率（B/拍）与拍数，以及完整符号化栈文本。章节首行输出节拍序列元信息（top-k=256、max-stacks=1024、拍数与窗口时长）。未归因块所在行为未知桶行，栈文本缺失标注`(unresolved stack <stack id>)`。序列数据不可得时对应Growth/Pattern因子显示`-`并标注降级原因（no_series/series_evicted/insufficient_series/no_warmup_thread）。|
-|Resident Baselines（常驻基线子块）|窗口内未释放量可观的常驻栈列表，按未释放量降序，不占TOP N名额，每行判据来源标注`resident/early`（G≈0且早期分配）或`resident/turnover`（未释放/申请占比低且尾部不涨）。闭窗报告不截断；中间概览截断为不超过TOP N行。开窗前free超过窗口内总申请一半时，报告额外输出缓存周转NOTE提示。|
+|Resident Baselines（常驻基线子块）|窗口内未释放量可观的常驻栈列表，按未释放量降序，不占TOP N名额，每行判据来源标注`resident/early`（G≈0且早期分配）或`resident/turnover`（未释放/申请占比低且尾部不涨）。闭窗报告不截断；中间概览截断为不超过TOP N行。开窗前free超过窗口内总申请的一半时，报告额外输出缓存周转NOTE提示。|
 
 ### 窗口内中间概览（巡检）<a id="窗口内中间概览巡检"></a>
 
@@ -252,7 +252,7 @@ Host堆内存泄漏检测的输出文件保存在`{output}/msmemscope_{*PID*}_{_
 |差异项|说明|
 |--|--|
 |报告头部行与Window行|头部行标注`(interim snapshot)`（如`====== Host Leak Overview (interim snapshot): stage=1, pid=1234 ======`）；Window行标注`(interim snapshot, window open)`，窗口时长为开窗时刻至快照时刻。|
-|Snapshot freeze（冻结标注）|快照聚合期间到达的申请只计入统计计数、不进入本次快照的块表，概览如实标注其数量与字节（仅冻结期有申请时输出）。|
+|Snapshot freeze（冻结标注）|快照聚合期间到达的申请只计入统计值、不进入本次快照的块表，概览如实标注其数量与字节（仅冻结期有申请时输出）。|
 |Snapshot degraded（快照降级标注）|本次快照读取存在部分分片锁获取失败时标注：块表读取=前缀数据、栈表读取=归因不完整、序列/开窗前free读取=部分缺失。仅影响本次快照，窗口继续正常记账。|
 |常驻子块|截断为不超过TOP N行（闭窗报告不截断）。|
 |逐块明细|中间概览不生成block_detail CSV。|
@@ -346,7 +346,7 @@ Step间内存问题可通过输出文件查询定位，输出文件详解可参�
  - 内存块监测功能仅支持Aten单算子和ATB算子，且可以通过--level指定op维度和kernel维度的内存块监测。
  - Ascend for PyTorch场景下，kernel算子的监测仅支持调用Python接口的方式，暂不支持watch命令行方式。调用Python接口的监测方式请参见[3](#3)。
  - 需控制内存监测算子的范围和内存块大小，避免由于设置过大，导致的dump数据耗时增加，以及磁盘空间占用过多的问题。
- - 内存块监测功能暂不支持场景：VLLM-Ascend，原因为VLLM-Ascend不支持设置`ASCEND_LAUNCH_BLOCKING=1`环境变量。
+ - 内存块监测功能暂不支持场景：vLLM-Ascend，原因为vLLM-Ascend不支持设置`ASCEND_LAUNCH_BLOCKING=1`环境变量。
 
 ### 使用示例
 
@@ -362,7 +362,7 @@ Step间内存问题可通过输出文件查询定位，输出文件详解可参�
     msmemscope ${Application} --watch=start:outid,end,full-content
     ```
 
-    **表 1**  参数说明
+    **表 1** 参数说明
 
     |参数|说明|
     |--|--|
@@ -371,7 +371,7 @@ Step间内存问题可通过输出文件查询定位，输出文件详解可参�
 
 3. <a id="3"></a>在用户的可执行脚本中，调用Python接口指定被监测的Tensor。
 
-    增加Python的watcher模块的接口，其中watch接口表示开始监测该内存块，remove接口表示取消监测该内存块。内存块监测有两种开启方式，示例代码中的参数说明可参见[**表 2**  开启内存块监测的参数说明](#开启内存块监测的参数说明)。
+    增加Python的watcher模块的接口，其中watch接口表示开始监测该内存块，remove接口表示取消监测该内存块。内存块监测有两种开启方式，示例代码中的参数说明可参见[**表 2** 开启内存块监测的参数说明](#开启内存块监测的参数说明)。
 
     > [!NOTE]
     >
@@ -411,7 +411,7 @@ Step间内存问题可通过输出文件查询定位，输出文件详解可参�
         msmemscope.watcher.remove(test_tensor.data_ptr(), length=1000)
         ```
 
-    **表 2**  开启内存块监测的参数说明 <a id="开启内存块监测的参数说明"></a>
+    **表 2** 开启内存块监测的参数说明 <a id="开启内存块监测的参数说明"></a>
 
     |参数|说明|
     |--|--|
@@ -420,7 +420,7 @@ Step间内存问题可通过输出文件查询定位，输出文件详解可参�
     |test_tensor.data_ptr()|必选，表示被监测Tensor的地址。仅当使用方式二开启内存块监测时需输入该参数。|
     |length|必选，表示输入监测内存块的长度，当输入length时，无关键字的参数只能为地址整型变量。length的大小建议小于等于已知被监测Tensor的内存块的大小。仅当使用方式二开启内存块监测时需输入该参数。|
 
-4. 命令执行完成后，内存块监测生成的结果目录如下。
+4. 命令执行完成后，内存块监测生成的结果目录如下：
 
     ```text
     ├── memscopeDumpResults
@@ -449,7 +449,7 @@ msMemScope工具通过增加Python接口，支持用户自行对代码段做描�
 
     |场景|说明|
     |----|-----|
-    |训练|支持对Ascend for PyTorch（Python原生训练）和pytorch fsdp、fsdp2的训练过程开启内存拆解，可对训练过程中的权重、梯度、优化器状态、激活值等内存申请进行拆解分析。|
+    |训练|支持对Ascend for PyTorch（Python原生训练）和Pytorch fsdp、fsdp2的训练过程开启内存拆解，可对训练过程中的权重、梯度、优化器状态、激活值等内存申请进行拆解分析。|
     |推理|支持为vLLM推理框架开启内存拆解功能，可对推理过程中的load_weight、profile_run、kv_cache和activate等环节的内存占用进行拆解分析。|
     |强化学习|强化学习（verl）涉及推理和训练两个阶段，目前暂不支持内存拆解（verl的内存拆解能力规划中）；如需获取verl场景的内存快照，可使用一键分析功能，具体可参见[一键分析功能介绍](#一键分析功能介绍)。|
 
@@ -466,7 +466,7 @@ msMemScope工具通过增加Python接口，支持用户自行对代码段做描�
 
 > [!NOTE]
 >
-> 版本键说明："2.6+"表示2.6及以上版本；"2.6-2.9"表示2.6~2.9各分支的全部版本（含补丁，不含2.10）；"2.10+"表示2.10及以上版本。
+> 版本键说明：“2.6+”表示2.6及以上版本；“2.6-2.9”表示2.6~2.9各分支的全部版本（含补丁，不含2.10）；“2.10+”表示2.10及以上版本。
 
 ### 使用示例
 
@@ -524,9 +524,9 @@ msMemScope工具通过增加Python接口，支持用户自行对代码段做描�
 
 低效内存（Inefficient Memory）是指在模型运行过程中，Device侧有关内存申请、释放以及访问操作的时机不合理的某个Tensor对象。
 
-msMemScope工具针对op算子粒度支持**过早申请**（Early Allocation）、**过迟释放**（Late Deallocation）、**临时闲置**（Temporary Idleness）三种低效内存的识别，具体说明如[**表 1**  低效内存说明](#低效内存说明)所示。
+msMemScope工具针对op算子粒度支持**过早申请**（Early Allocation）、**过迟释放**（Late Deallocation）、**临时闲置**（Temporary Idleness）三种低效内存的识别，具体说明如[**表 1** 低效内存说明](#低效内存说明)所示。
 
-**表 1**  低效内存说明 <a id="低效内存说明"></a>
+**表 1** 低效内存说明 <a id="低效内存说明"></a>
 
 |分类|说明|
 |--|--|
@@ -693,7 +693,7 @@ msMemScope联动NPU Sanitizer提供了**自定义算子打点**功能：开发�
 
 流程分为四步：
 
-1. **使能 Sanitizer**：通过 `msmemscope.enable_npu_sanitizer()` 联动使能NPU Sanitizer。
+1. **使能Sanitizer**：通过 `msmemscope.enable_npu_sanitizer()` 联动使能NPU Sanitizer。
 2. **打点上报**：在自定义算子调用处，调用MSTX原生接口（Python：`mstx.mark()`，C：`mstxMarkA()`），按规范格式传入一条字符串。Python场景中第二个参数传入`torch_npu.npu.current_stream().npu_stream`指定打点所在的stream，C场景中传入当前上下文的`stream`对象。
 3. **劫持解析**：msMemScope在C++层识别`sanitizer-op:`前缀的消息，解析`name`、`read`、`write`字段。
 4. **触发分析**：组装kernel launch事件，调用原生Sanitizer的`_handle_kernel_launch`接口送入分析管线。

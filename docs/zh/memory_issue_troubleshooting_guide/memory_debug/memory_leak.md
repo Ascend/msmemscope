@@ -32,8 +32,8 @@
 | 场景                                                      | 环境变量                                                   |
 | --------------------------------------------------------- | ---------------------------------------------------------- |
 | 使用 TorchNPU 进行内存分配的场景，开启虚拟内存优化内存池空闲内存 | **export PYTORCH_NPU_ALLOC_CONF=expandable_segments:True** |
-| GE优化内存池空闲内存占用：CANN 8.0.RC3.beta1 及以上版本| **export GE_USE_STATIC_MEMORY=3**                          |
-| ATB场景优化算子workspace内存复用                          | **export ATB_WORKSPACE_MEM_ALLOC_GLOBAL=1**                |
+| GE优化内存池空闲内存占用：CANN 8.0.RC3.beta1 及以上版本| **export GE_USE_STATIC_MEMORY=3**                         |
+| ATB场景优化算子workspace内存复用                          | **export ATB_WORKSPACE_MEM_ALLOC_GLOBAL=1**               |
 
 ## 排查方法
 

@@ -32,8 +32,8 @@ Some memory management configurations are set through environment variables. The
 | Scenario                                                     | Environment Variable                                                  |
 | --------------------------------------------------------- | ---------------------------------------------------------- |
 | TorchNPU used for memory allocation, with virtual memory enabled to optimize the idle memory in the memory pool| **export PYTORCH_NPU_ALLOC_CONF=expandable_segments:True** |
-| GE used for idle memory optimization in the memory pool: CANN 8.0.RC3.beta1 or later| **export GE_USE_STATIC_MEMORY=3**                          |
-| Optimizing operator workspace reuse in the ATB scenario                         | **export ATB_WORKSPACE_MEM_ALLOC_GLOBAL=1**                |
+| GE used for idle memory optimization in the memory pool: CANN 8.0.RC3.beta1 or later| **export GE_USE_STATIC_MEMORY=3**                         |
+| Optimizing operator workspace reuse in the ATB scenario                         | **export ATB_WORKSPACE_MEM_ALLOC_GLOBAL=1**               |
 
 ## Troubleshooting Method
 
