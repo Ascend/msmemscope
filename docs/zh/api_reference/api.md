@@ -10,7 +10,7 @@ msMemScope工具提供快速分析接口和基于analyzer类的离线分析两�
 
 - 快速分析接口
 
-    msMemScope工具提供快速分析接口，推荐直接使用快速分析接口进行离线分析，接口列表如[**表 1**  接口列表](#接口列表-1)所示。
+    msMemScope工具提供快速分析接口，推荐直接使用快速分析接口进行离线分析，接口列表如[**表 1** 接口列表](#接口列表-1)所示。
 
     **表 1** 接口列表 <a id="接口列表-1"></a>
 
@@ -25,7 +25,7 @@ msMemScope工具提供快速分析接口和基于analyzer类的离线分析两�
 
 - analyzer类
 
-    可以直接从msMemScope工具导入analyzer类，进行离线分析，涉及的接口如[**表 2**  analyzer类接口说明](#analyzer类接口说明)所示。但是代码实现较为繁琐，不推荐使用该方式。
+    可以直接从msMemScope工具导入analyzer类，进行离线分析，涉及的接口如[**表 2** analyzer类接口说明](#analyzer类接口说明)所示。但是代码实现较为繁琐，不推荐使用该方式。
 
     实现示例代码如下：
 
@@ -103,7 +103,7 @@ print(config_list)
 
 **函数原型**
 
-```shell
+```python
 get_analyzer_config(analyzer_type: str) -> Dict[str, Any]
 ```
 
@@ -151,7 +151,7 @@ msMemScope工具提供的对外分析接口，支持内存泄漏分析和自定�
 
 **函数原型**
 
-```shell
+```python
 analyze(analyzer_type: str, **kwargs):
 ```
 
@@ -193,7 +193,7 @@ msMemScope工具对外提供内存泄漏快速分析接口。
 
 **函数原型**
 
-```shell
+```python
 check_leaks(input_path: str, mstx_info: str, start_index: int)
 ```
 
@@ -229,7 +229,7 @@ msMemScope工具对外提供的自定义低效内存识别快速分析接口。
 
 **函数原型**
 
-```shell
+```python
 check_inefficient(input_path: str, mem_size: int = 0, inefficient_type: List[str] = None, idle_threshold: int = 3000)    # 如果无输入采用默认值
 ```
 
@@ -264,13 +264,13 @@ msmemscope.check_inefficient(input_path="user/ineff.csv",mem_size=0,
 
 **功能说明**
 
-msMemScope工具对外提供的NPU Sanitizer使能接口。该接口内部会调用`torch_npu.npu._sanitizer.enable_npu_sanitizer()`使能原生Sanitizer，同时通知C++层激活对`sanitizer-op:`前缀MSTX打点消息的捕获。使能后，开发者在自定义算子调用处通过MSTX接口按规范格式上报的信息将被截获并转换为kernel launch事件，送入原生Sanitizer分析管线进行同步错误检测。
+msMemScope工具对外提供的NPU Sanitizer使能接口。该接口内部会调用`torch_npu.npu._sanitizer.enable_npu_sanitizer()`使能原生Sanitizer，同时通知C++层激活对`sanitizer-op:`前缀MSTX打点消息的捕获。使能后，开发者在自定义算子调用处通过MSTX接口按规范格式上报的信息将被截获并转换为Kernel Launch事件，送入原生Sanitizer分析管线进行同步错误检测。
 
 接口详情可参见[NPU Sanitizer自定义算子打点功能介绍](../user_guide/memory_analysis.md#npu-sanitizer自定义算子打点功能介绍)。
 
 **函数原型**
 
-```shell
+```python
 enable_npu_sanitizer() -> None
 ```
 

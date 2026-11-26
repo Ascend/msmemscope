@@ -18,13 +18,13 @@
 
 <span style="font-size:14px;">
 
-🔹 **[2026.04.29]**：MindStudio Memscope 26.0.0版本上线！支持OOM场景采集显存快照。
+🔹 **[2026.04.29]**：MindStudio MemScope 26.0.0版本上线！支持OOM场景采集显存快照。
 
-🔹 **[2026.04.08]**：MindStudio Memscope 26.0.beta.1版本上线！显存占用一键拆解功能新增支持vllm、mindspeed场景。
+🔹 **[2026.04.08]**：MindStudio MemScope 26.0.beta.1版本上线！显存占用一键拆解功能新增支持vLLM、MindSpeed场景。
 
-🔹 **[2026.02.01]**：MindStudio Memscope 26.0.0-alpha.1版本上线！ 支持Python API采集方式使用、支持Ascend for PyTorch框架下采集内存快照、支持识别显存页表属性并进行落盘、支持获取Driver新增的显存分配接口。
+🔹 **[2026.02.01]**：MindStudio MemScope 26.0.0-alpha.1版本上线！支持Python API采集方式使用、支持Ascend for PyTorch框架下采集内存快照、支持识别显存页表属性并进行落盘、支持获取Driver新增的显存分配接口。
 
-🔹 **[2025.12.30]**：MindStudio Memscope 项目首次上线
+🔹 **[2025.12.30]**：MindStudio MemScope 项目首次上线。
 
 </span>
 
@@ -70,7 +70,7 @@ msMemScope 工具提供内存采集、内存分析两大功能。
         msMemScope 工具基于采集的内存数据，提供泄漏、对比、监测、拆解、低效内存识别五项分析能力，帮助开发者快速诊断和优化内存问题。
       </td>
       <td>内存泄漏分析</td>
-      <td>针对内存长时间未释放和内存泄漏等问题，需要进行内存分析时，msMemScope 工具提供内存泄漏分析和 kernelLaunch 粒度的内存变化分析功能，进行告警定位与分析。</td>
+      <td>针对内存长时间未释放和内存泄漏等问题，需要进行内存分析时，msMemScope 工具提供内存泄漏分析和Kernel Launch粒度的内存变化分析功能，进行告警定位与分析。</td>
     </tr>
     <tr>
       <td>内存对比分析</td>
@@ -93,36 +93,36 @@ msMemScope 工具提供内存采集、内存分析两大功能。
 
 ## 🚀 快速入门
 
-快速入门旨在帮助用户快速熟悉 msMemScope 工具，通过一个简单的PyTorch脚本介绍msMemScope工具的使用方法以及功能。详情请参见 《[msMemScope 快速入门](./docs/zh/quick_start/quick_start.md)》。
+快速入门旨在帮助用户快速熟悉 msMemScope 工具，通过一个简单的PyTorch脚本介绍msMemScope工具的使用方法以及功能。详情请参见《[msMemScope 快速入门](./docs/zh/quick_start/quick_start.md)》。
 
 ## 📦 安装指南
 
-msMemScope 工具支持在线安装、离线安装和源码安装三种方式进行安装，可根据实际需求选择合适的安装方式，请参见 《[msMemScope 安装指南](./docs/zh/install_guide/install_guide.md)》。
+msMemScope 工具支持在线安装、离线安装和源码安装三种方式，可根据实际需求选择合适的安装方式，请参见《[msMemScope 安装指南](./docs/zh/install_guide/install_guide.md)》。
 
 msMemScope 工具当前支持 CANN、Ascend for PyTorch、MindSpore 以及 Aten 算子的内存采集，具体版本支持情况如下表所示。
 
 | 产品 | 说明 |
 |------|------|
-| CANN | CANN 8.2.RC1 及之后版本的 ATB 算子（Ascend Transformers Boost）。 |
+| CANN | CANN 8.2.RC1 及之后版本的 ATB 算子（Ascend Transformer Boost）。 |
 | Ascend for PyTorch | Ascend for PyTorch 7.0.0 及之后版本。 |
 | MindSpore | MindSpore 2.7.0 及之后版本。 |
 | Aten 算子 | 当采集 Aten 算子下发与访问事件时，需使用 PyTorch 2.3.1 或更高版本。 |
 
 ## 📘 使用指南
 
-工具的详细使用方法，请参见 《[msMemScope 使用指南](./docs/zh/user_guide/memory_analysis.md)》。
+工具的详细使用方法，请参见《[msMemScope 使用指南](./docs/zh/user_guide/memory_analysis.md)》。
 
 ## 💡 典型案例
 
-通过典型问题场景帮助用户理解并掌握工具使用，请参见 《[msMemScope 典型案例](./docs/zh/best_practices/msmemscope_basic_cases.md)》。
+通过典型问题场景帮助用户理解并掌握工具使用，请参见《[msMemScope 典型案例](./docs/zh/best_practices/msmemscope_basic_cases.md)》。
 
 ## 📚 API 参考
 
-msMemScope 工具提供 API 接口，便于快速分析内存情况，请参见 《[API 参考](./docs/zh/api_reference/api.md)》。
+msMemScope 工具提供 API 接口，便于快速分析内存情况，请参见《[API 参考](./docs/zh/api_reference/api.md)》。
 
 ## 🛠️ 贡献指南
 
-欢迎参与项目贡献，请参见 《[贡献指南](./docs/zh/development_guide/contributing_guide.md)》。
+欢迎参与项目贡献，请参见《[贡献指南](./docs/zh/development_guide/contributing_guide.md)》。
 
 ## 🌌 智能检索
 
@@ -144,7 +144,7 @@ msMemScope 工具提供 API 接口，便于快速分析内存情况，请参见 
 
 |                                                                         即时互动（微信群）                                                                          |                                                                               官方资讯（公众号）                                                                                | 深度支持（助手/论坛）                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
 |:----------------------------------------------------------------------------------------------------------------------------------------------------------:|:----------------------------------------------------------------------------------------------------------------------------------------------------------------------:|:--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| <img src="https://raw.gitcode.com/Ascend/docs/files/master/common/Writing_Template/figures/qr_code_wechat_work.png" width="120"><br><sub>*扫码加入技术交流群*</sub> | <img src="https://raw.gitcode.com/Ascend/docs/files/master/common/Writing_Template/figures/qr_code_wechat_official_account.png" width="120"><br><sub>*扫码关注官方公众号*</sub> | 扫码入群并关注公众号，直达 MindStudio 用户与开发者最快捷的交流平台：<br> **快速提问：** 与社区小伙伴即时探讨技术问题<br>**掌握动态：** 第一时间获取版本发布与功能更新通知<br> **经验共享：** 与广大开发者交流最佳实践与实战心得  <br> <br> **更多支持渠道**：👉 昇腾助手：[![WeChat](https://img.shields.io/badge/WeChat-07C160?style=flat-square&logo=wechat&logoColor=white)](https://gitcode.com/Ascend/msit/blob/master/docs/zh/figures/readme/xiaozhushou.png) 👉 昇腾论坛：[![Website](https://img.shields.io/badge/Website-%231e37ff?style=flat-square&logo=RSS&logoColor=white)](https://www.hiascend.com/forum/) |
+| <img src="https://raw.gitcode.com/Ascend/docs/files/master/common/Writing_Template/figures/qr_code_wechat_work.png" width="120" alt="MindStudio MemScope技术交流微信群二维码，扫码加入开发者交流群"><br><sub>*扫码加入技术交流群*</sub> | <img src="https://raw.gitcode.com/Ascend/docs/files/master/common/Writing_Template/figures/qr_code_wechat_official_account.png" width="120" alt="MindStudio MemScope官方公众号二维码，扫码关注获取版本发布与功能更新通知"><br><sub>*扫码关注官方公众号*</sub> | 扫码入群并关注公众号，直达 MindStudio 用户与开发者最快捷的交流平台：<br> **快速提问：** 与社区小伙伴即时探讨技术问题<br>**掌握动态：** 第一时间获取版本发布与功能更新通知<br> **经验共享：** 与广大开发者交流最佳实践与实战心得  <br> <br> **更多支持渠道**：👉 昇腾助手：[![WeChat](https://img.shields.io/badge/WeChat-07C160?style=flat-square&logo=wechat&logoColor=white)](https://gitcode.com/Ascend/msit/blob/master/docs/zh/figures/readme/xiaozhushou.png) 👉 昇腾论坛：[![Website](https://img.shields.io/badge/Website-%231e37ff?style=flat-square&logo=RSS&logoColor=white)](https://www.hiascend.com/forum/) |
 
 ## 🙏 致谢
 
