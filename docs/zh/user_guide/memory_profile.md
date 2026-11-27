@@ -91,7 +91,7 @@ msMemScope工具的安装，请参见《[msMemScope工具安装指南](../instal
 
 - 自定义采集
 
-    msMemScope工具支持通过Python接口自定义Trace事件，可通过调用API接口自定义Trace事件，关注核心代码或代码块，避免落盘全量Trace事件，提高数据采集效率。自定义Trace事件可通过`msmemscope.RecordFunction`接口设置，支持上下文（标记函数）和装饰器两种模式（标记代码块）。
+    msMemScope工具支持通过Python接口自定义Trace事件，可通过调用API接口自定义Trace事件，关注核心代码或代码块，避免落盘全量Trace事件，提高数据采集效率。自定义Trace事件可通过`msmemscope.RecordFunction`接口设置，支持上下文（标记代码块）和装饰器（标记函数）两种模式。
 
     1. 在msMemScope工具中，使用`msmemscope.RecordFunction`接口，落盘自定义Trace事件数据。代码示例如下：
 
@@ -243,7 +243,7 @@ msmemscope.stop()  # 退出采集
 > - 当--analysis参数取值包含oom时，会自动联动开启alloc和free事件采集（仅影响采集行为，不影响--events参数的落盘配置）。OOM数据仅采集OOM发生时刻前后未释放的记录，不影响正常的malloc/free热路径性能。
 > - 当--device参数包含cpu时，CPU内存事件（Event Type为HOST）会落盘到device_cpu/目录。CPU内存事件仅落盘，不参与泄漏分析、低效内存识别、内存拆解、OOM分析等任何分析项。offload锁页内存与CPU tensor数据内存统一为HOST类型，通过Attr中pinned:true或total字段区分。CPU tensor采集依赖Python钩子，仅在start()后生效（命令行方式在NPU初始化后生效），start()前已存在的CPU tensor不在采集范围内。CPU tensor数据内存目前仅支持采集`torch.tensor`、`Tensor.to("cpu")`、`Tensor.cpu()`等常见入口创建的张量。
 > - 当参数--level=kernel，且使用Hugging Face的tokenizers库时，可能会遇到“当前发生进程fork，并行被禁用”的告警提示。这个告警信息本身不会影响功能，可以选择忽略。如果希望避免这类告警，可执行export TOKENIZERS\_PARALLELISM=false来关闭并行的行为。
-> - 当--collect-mode=deferred，且使用Python接口进行采集数据时，内存分析功能不可用，内存块监测、拆解和低效内存识别功能只对采集范围内的数据可用。
+> - 当--collect-mode=deferred，且使用Python接口进行数据采集时，内存分析功能不可用，内存块监测、拆解和低效内存识别功能只对采集范围内的数据可用。
 > - MindStudio Insight工具仅支持展示db格式的内存数据文件，基本操作请参见[MindStudio Insight基础操作](https://gitcode.com/Ascend/msinsight/blob/master/docs/zh/user_guide/basic_operations.md)。
 
 ### 输出说明
@@ -350,7 +350,7 @@ msMemScope工具可以结合mstx打点能力进行内存采集，同时msMemScop
 |display config|显示目标进程当前生效配置。|
 |display memory summary|内存概览：按卡输出device_used/process_used/hal_current/hal_peak，以及锁页内存（Host pinned）、CPU tensor（Host tensor）、各内存池（pta/pta_workspace/mindspore/atb）的当前值与峰值（无数据不展示）。|
 |display memory block [--pool \<pool\>] [--TOPN \<N\>]|按大小降序输出TOP N个未释放内存块（addr/size/alloc_ts/allocation_id）。`--pool`可选，取值为host/hal/pta/pta_workspace/atb/mindspore，不指定表示全部池；`--TOPN`取值范围1~100，默认10。|
-|display host_leak summary|查询Host堆泄漏检测窗口的中间概览（窗口开启时有效，不闭窗、不影响记账）；窗口关闭时回显`no active window`。内容与标注详见[窗口内中间概览（巡检）](./memory_analysis.md#窗口内中间概览巡检)。|
+|display host_leak summary|查询Host堆内存泄漏检测窗口的中间概览（窗口开启时有效，不闭窗、不影响记账）；窗口关闭时回显`no active window`。内容与标注详见[窗口内中间概览（巡检）](./memory_analysis.md#窗口内中间概览巡检)。|
 |set config \<参数\>|更新目标进程配置（CLI风格参数，如`--analysis=host-leaks --host-leak-mode=summary`），仅停止态（未在采集）可用，采集期间下发被拒绝。|
 |exit|退出会话并解除附加。|
 |help|显示全部控制字帮助。|

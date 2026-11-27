@@ -83,7 +83,7 @@ msMemScope支持对指定范围内的内存事件进行离线泄漏分析。使�
 
 3. 执行以下命令，调用Python接口，对输出文件中的csv文件进行离线泄漏分析。
 
-    ```Python
+    ```python
     import msmemscope
     msmemscope.check_leaks(input_path="user/memscope.csv",mstx_info="test",start_index=0)
     ```
@@ -342,7 +342,7 @@ Step间内存问题可通过输出文件查询定位，输出文件详解可参�
  - 内存块监测功能仅支持Aten单算子和ATB算子，且可以通过--level指定op维度和kernel维度的内存块监测。
  - Ascend for PyTorch场景下，kernel算子的监测仅支持调用Python接口的方式，暂不支持watch命令行方式。调用Python接口的监测方式请参见[3](#3)。
  - 需控制内存监测算子的范围和内存块大小，避免由于设置过大，导致的dump数据耗时增加，以及磁盘空间占用过多的问题。
- - 内存块监测功能暂不支持场景：VLLM-Ascend，原因为VLLM-Ascend不支持设置`ASCEND_LAUNCH_BLOCKING=1`环境变量。
+ - 内存块监测功能暂不支持场景：vLLM-Ascend，原因为vLLM-Ascend不支持设置`ASCEND_LAUNCH_BLOCKING=1`环境变量。
 
 ### 使用示例
 
@@ -685,14 +685,14 @@ msmemscope.stop()
 
 NPU Sanitizer（`torch_npu.npu._sanitizer`）用于检测NPU多流程序中的同步错误（如数据竞争、未同步的跨流访问等）。对于经过 `torch.ops` 注册的ATen算子，Sanitizer通过`TorchDispatchMode`自动截获下发信息。但对于自定义算子或封装直调底层kernel的算子，自动截获机制无法生效。
 
-msMemScope联动NPU Sanitizer提供了**自定义算子打点**功能：开发者在自定义算子调用处通过MSTX接口上报一条格式化字符串，msMemScope将其转换为Sanitizer可识别的kernel launch事件，送入原生分析管线进行同步错误检测。
+msMemScope联动NPU Sanitizer提供了**自定义算子打点**功能：开发者在自定义算子调用处通过MSTX接口上报一条格式化字符串，msMemScope将其转换为Sanitizer可识别的Kernel Launch事件，送入原生分析管线进行同步错误检测。
 
 流程分为四步：
 
 1. **使能 Sanitizer**：通过 `msmemscope.enable_npu_sanitizer()` 联动使能NPU Sanitizer。
 2. **打点上报**：在自定义算子调用处，调用MSTX原生接口（Python：`mstx.mark()`，C：`mstxMarkA()`），按规范格式传入一条字符串。Python场景中第二个参数传入`torch_npu.npu.current_stream().npu_stream`指定打点所在的stream，C场景中传入当前上下文的`stream`对象。
 3. **劫持解析**：msMemScope在C++层识别`sanitizer-op:`前缀的消息，解析`name`、`read`、`write`字段。
-4. **触发分析**：组装kernel launch事件，调用原生Sanitizer的`_handle_kernel_launch`接口送入分析管线。
+4. **触发分析**：组装Kernel Launch事件，调用原生Sanitizer的`_handle_kernel_launch`接口送入分析管线。
 
 ### 消息字符串格式
 
@@ -712,7 +712,7 @@ sanitizer-op: name=<operator_name>;read=<alias:addr:size>,...;write=<alias:addr:
 
 **约束规则**
 
-- `;` 为顶级字段分隔符，`=` 为键值分隔符，`,` 为列表项分隔符，`:` 为参数名-地址-大小分隔符
+- `;` 为顶层字段分隔符，`=` 为键值分隔符，`,` 为列表项分隔符，`:` 为参数名-地址-大小分隔符
 - 地址支持十进制和十六进制（`0x`前缀）两种格式
 - 同一地址同时出现在 `read` 和 `write` 中，表示in-place读写
 - 参数名由调用者自拟即可，长度小于32字节

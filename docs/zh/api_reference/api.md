@@ -73,7 +73,7 @@ msMemScope工具提供快速分析接口和基于analyzer类的离线分析两�
 
 **函数原型**
 
-```python
+```shell
 list_analyzers() -> List[str]
 ```
 
@@ -139,7 +139,7 @@ msMemScope工具提供的对外分析接口，支持内存泄漏分析和自定�
 
   提供对指定范围内的内存泄漏进行离线分析的功能，支持对msMemScope生成的落盘csv文件进行离线分析，并在检测到指定范围内的内存泄漏时触发告警。当前功能仅适用于HAL内存泄漏分析。
 
-  使用该接口前，需要在指定范围内通过mstx的mark进行打点，并使用msMemScope启动用户进程，以获取落盘csv文件。之后，通过该接口输入待分析的csv文件、打点信息以及起始index，即可进行离线泄漏分析。
+  使用该接口前，需要在指定范围内通过mstx的mark进行打点，并使用msMemScope启动用户进程，以获取落盘csv文件。之后，通过该接口输入待分析的csv文件、打点信息以及起始索引，即可进行离线泄漏分析。
 
 - 自定义低效内存识别
 
@@ -264,7 +264,7 @@ msmemscope.check_inefficient(input_path="user/ineff.csv",mem_size=0,
 
 **功能说明**
 
-msMemScope工具对外提供的NPU Sanitizer使能接口。该接口内部会调用`torch_npu.npu._sanitizer.enable_npu_sanitizer()`使能原生Sanitizer，同时通知C++层激活对`sanitizer-op:`前缀MSTX打点消息的捕获。使能后，开发者在自定义算子调用处通过MSTX接口按规范格式上报的信息将被截获并转换为kernel launch事件，送入原生Sanitizer分析管线进行同步错误检测。
+msMemScope工具对外提供的NPU Sanitizer使能接口。该接口内部会调用`torch_npu.npu._sanitizer.enable_npu_sanitizer()`使能原生Sanitizer，同时通知C++层激活对`sanitizer-op:`前缀MSTX打点消息的捕获。使能后，开发者在自定义算子调用处通过MSTX接口按规范格式上报的信息将被截获并转换为Kernel Launch事件，送入原生Sanitizer分析管线进行同步错误检测。
 
 接口详情可参见[NPU Sanitizer自定义算子打点功能介绍](../user_guide/memory_analysis.md#npu-sanitizer自定义算子打点功能介绍)。
 

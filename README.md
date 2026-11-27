@@ -18,13 +18,13 @@
 
 <span style="font-size:14px;">
 
-🔹 **[2026.04.29]**：MindStudio Memscope 26.0.0版本上线！支持OOM场景采集显存快照。
+🔹 **[2026.04.29]**：MindStudio MemScope 26.0.0版本上线！支持OOM场景采集内存快照。
 
-🔹 **[2026.04.08]**：MindStudio Memscope 26.0.beta.1版本上线！显存占用一键拆解功能新增支持vllm、mindspeed场景。
+🔹 **[2026.04.08]**：MindStudio MemScope 26.0.beta.1版本上线！显存占用一键拆解功能新增支持vLLM、MindSpeed场景。
 
-🔹 **[2026.02.01]**：MindStudio Memscope 26.0.0-alpha.1版本上线！ 支持Python API采集方式使用、支持Ascend for PyTorch框架下采集内存快照、支持识别显存页表属性并进行落盘、支持获取Driver新增的显存分配接口。
+🔹 **[2026.02.01]**：MindStudio MemScope 26.0.0-alpha.1版本上线！ 支持Python API采集方式使用、支持Ascend for PyTorch框架下采集内存快照、支持识别显存页表属性并进行落盘、支持获取Driver新增的显存分配接口。
 
-🔹 **[2025.12.30]**：MindStudio Memscope 项目首次上线
+🔹 **[2025.12.30]**：MindStudio MemScope 项目首次上线。
 
 </span>
 
@@ -103,7 +103,7 @@ msMemScope 工具当前支持 CANN、Ascend for PyTorch、MindSpore 以及 Aten 
 
 | 产品 | 说明 |
 |------|------|
-| CANN | CANN 8.2.RC1 及之后版本的 ATB 算子（Ascend Transformers Boost）。 |
+| CANN | CANN 8.2.RC1 及之后版本的 ATB 算子（Ascend Transformer Boost）。 |
 | Ascend for PyTorch | Ascend for PyTorch 7.0.0 及之后版本。 |
 | MindSpore | MindSpore 2.7.0 及之后版本。 |
 | Aten 算子 | 当采集 Aten 算子下发与访问事件时，需使用 PyTorch 2.3.1 或更高版本。 |
